@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost:4000/api";
+const BASE_URL = "https://api.38.224.68.30.nip.io/api";
 
 const request = async (endpoint, options = {}) => {
   const token = localStorage.getItem("token");
