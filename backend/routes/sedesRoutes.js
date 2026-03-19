@@ -4,9 +4,16 @@ const { getAll, create, update, remove } = require("../controllers/sedesControll
 const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
 
-router.get("/",       verificarToken, verificarRol("admin"), getAll)
-router.post("/",      verificarToken, verificarRol("admin"), create)
-router.put("/:id",    verificarToken, verificarRol("admin"), update)
-router.delete("/:id", verificarToken, verificarRol("admin"), remove)
+const soloSuperadmin = (req, res, next) => {
+  if (req.user.rol !== "superadmin") {
+    return res.status(403).json({ message: "Solo el superadmin puede realizar esta acción" })
+  }
+  next()
+}
+
+router.get("/",       verificarToken, verificarRol("admin", "superadmin"), getAll)
+router.post("/",      verificarToken, verificarRol("admin", "superadmin"), create)
+router.put("/:id",    verificarToken, verificarRol("admin", "superadmin"), update)
+router.delete("/:id", verificarToken, verificarRol("admin", "superadmin"), soloSuperadmin, remove)
 
 module.exports = router

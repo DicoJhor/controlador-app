@@ -6,6 +6,8 @@ import api from "../../services/api";
 
 const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
 
+const TIPOS_EQUIPO = ["ONU", "Triplexor", "Roseta", "Patchcord", "Otro"];
+
 function formatFecha(fecha) {
   if (!fecha) return "—";
   const d = new Date(fecha);
@@ -29,7 +31,10 @@ const IC = {
   image:  "M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2z M8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z M21 15l-5-5L5 19",
 };
 
-const emptyForm = { tecnico_id: "", cliente: "", direccion: "", serie: "" };
+const emptyForm = { tecnico_id: "", cliente: "", direccion: "", serie: "", tipo_equipo: "" };
+
+// Equipos que no requieren serie
+const SIN_SERIE = ["Roseta", "Patchcord", "Triplexor"];
 
 export default function CtrlRecojos() {
   const [ordenes,  setOrdenes]  = useState([]);
@@ -42,10 +47,7 @@ export default function CtrlRecojos() {
   const [saving,   setSaving]   = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      recojosService.getAll(),
-      stockService.getStats()
-    ])
+    Promise.all([recojosService.getAll(), stockService.getStats()])
       .then(([dataOrdenes, dataStats]) => {
         setOrdenes(dataOrdenes);
         setTecnicos(dataStats.misTecnicos);
@@ -57,17 +59,21 @@ export default function CtrlRecojos() {
   const filtered = ordenes.filter(o =>
     (o.cliente ?? "").toLowerCase().includes(search.toLowerCase()) ||
     (o.serie ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (o.tecnico ?? "").toLowerCase().includes(search.toLowerCase())
+    (o.tecnico ?? "").toLowerCase().includes(search.toLowerCase()) ||
+    (o.tipo_equipo ?? "").toLowerCase().includes(search.toLowerCase())
   );
+
+  const requiereSerie = form.tipo_equipo && !SIN_SERIE.includes(form.tipo_equipo);
 
   const handleCrear = async () => {
     setSaving(true);
     try {
       const nueva = await recojosService.create({
-        tecnico_id: Number(form.tecnico_id),
-        cliente:    form.cliente || null,
-        direccion:  form.direccion || null,
-        serie:      form.serie,
+        tecnico_id:  Number(form.tecnico_id),
+        cliente:     form.cliente || null,
+        direccion:   form.direccion || null,
+        serie:       requiereSerie ? form.serie : null,
+        tipo_equipo: form.tipo_equipo,
       });
       const tecnico = tecnicos.find(t => t.id === Number(form.tecnico_id));
       setOrdenes(prev => [{ ...nueva, tecnico: tecnico?.nombre ?? "—" }, ...prev]);
@@ -94,6 +100,9 @@ export default function CtrlRecojos() {
     onChange: e => setForm(prev => ({ ...prev, [key]: e.target.value }))
   });
 
+  const formValido = form.tecnico_id && form.tipo_equipo &&
+    (!requiereSerie || form.serie.trim() !== "");
+
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando recojos...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
@@ -103,7 +112,7 @@ export default function CtrlRecojos() {
         <div className="search-box">
           <Icon d={IC.search} size={16} color="var(--text-muted)" />
           <input
-            placeholder="Buscar por cliente, serie o técnico..."
+            placeholder="Buscar por cliente, serie, equipo o técnico..."
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -122,7 +131,8 @@ export default function CtrlRecojos() {
                 <th>Técnico</th>
                 <th>Cliente</th>
                 <th>Dirección</th>
-                <th>Serie ONU</th>
+                <th>Equipo</th>
+                <th>Serie</th>
                 <th>Fecha</th>
                 <th>Estado</th>
                 <th></th>
@@ -131,7 +141,7 @@ export default function CtrlRecojos() {
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                  <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
                     Sin órdenes de recojo
                   </td>
                 </tr>
@@ -140,7 +150,10 @@ export default function CtrlRecojos() {
                   <td className="fw-600">{o.tecnico}</td>
                   <td>{o.cliente ?? "—"}</td>
                   <td className="text-sm">{o.direccion ?? "—"}</td>
-                  <td><span className="mono">{o.serie}</span></td>
+                  <td>
+                    <span className="badge badge-blue">{o.tipo_equipo ?? "—"}</span>
+                  </td>
+                  <td><span className="mono">{o.serie ?? "—"}</span></td>
                   <td className="text-sm text-muted">{formatFecha(o.created_at)}</td>
                   <td>
                     <span className={`badge badge-${o.estado === "pendiente" ? "warning" : "active"}`}>
@@ -155,13 +168,8 @@ export default function CtrlRecojos() {
                       </button>
                     ) : (
                       o.foto
-                        ? 
-                        <a
-                            href={`${BASE_URL}/uploads/${o.foto}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-outline btn-sm"
-                          >
+                        ? <a href={`${BASE_URL}/uploads/${o.foto}`} target="_blank" rel="noreferrer"
+                            className="btn btn-outline btn-sm">
                             <Icon d={IC.image} size={13} />
                             Ver foto
                           </a>
@@ -184,33 +192,43 @@ export default function CtrlRecojos() {
               <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>
                 Cancelar
               </button>
-              <button className="btn btn-primary" onClick={handleCrear}
-                disabled={saving || !form.tecnico_id || !form.serie}>
+              <button className="btn btn-primary" onClick={handleCrear} disabled={saving || !formValido}>
                 {saving ? "Creando..." : "Crear orden"}
               </button>
             </>
           }
         >
           <div className="form-group">
-            <label className="form-label">Técnico</label>
+            <label className="form-label">Técnico *</label>
             <select className="form-input" {...field("tecnico_id")}>
               <option value="">Seleccionar técnico</option>
-              {tecnicos.map(t => (
-                <option key={t.id} value={t.id}>{t.nombre}</option>
-              ))}
+              {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
             </select>
           </div>
+
+          <div className="form-group">
+            <label className="form-label">Tipo de equipo *</label>
+            <select className="form-input" {...field("tipo_equipo")}>
+              <option value="">Seleccionar equipo...</option>
+              {TIPOS_EQUIPO.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+
+          {requiereSerie && (
+            <div className="form-group">
+              <label className="form-label">Número de serie *</label>
+              <input className="form-input" placeholder="Ej: ONU-88721" {...field("serie")} />
+            </div>
+          )}
+
           <div className="form-group">
             <label className="form-label">Cliente</label>
             <input className="form-input" placeholder="Nombre del cliente" {...field("cliente")} />
           </div>
+
           <div className="form-group">
             <label className="form-label">Dirección</label>
             <input className="form-input" placeholder="Dirección del recojo" {...field("direccion")} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Serie ONU</label>
-            <input className="form-input" placeholder="Ej: ONU-88721" {...field("serie")} />
           </div>
         </Modal>
       )}

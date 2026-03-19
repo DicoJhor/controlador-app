@@ -4,6 +4,7 @@ import { RoleBadge, EstadoBadge } from "../../components/ui/Badge";
 import { ROLES } from "../../utils/constants";
 import usuariosService from "../../services/usuariosService";
 import sedesService from "../../services/sedesService";
+import { useAuth } from "../../hooks/useAuth";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
@@ -39,12 +40,10 @@ export default function AdminUsuarios() {
   const [showPass,  setShowPass]  = useState(false);
   const [saving,    setSaving]    = useState(false);
 
-  // ── Cargar usuarios y sedes al montar ──────────────────────
+  const { isAdmin, isSuperadmin } = useAuth();
+
   useEffect(() => {
-    Promise.all([
-      usuariosService.getAll(),
-      sedesService.getAll()
-    ])
+    Promise.all([usuariosService.getAll(), sedesService.getAll()])
       .then(([dataUsuarios, dataSedes]) => {
         setUsuarios(dataUsuarios);
         setSedes(dataSedes);
@@ -56,7 +55,6 @@ export default function AdminUsuarios() {
       });
   }, []);
 
-  // ── Filtrado ───────────────────────────────────────────────
   const filtered = usuarios.filter(u => {
     const matchSearch = u.nombre.toLowerCase().includes(search.toLowerCase()) ||
                         u.email.toLowerCase().includes(search.toLowerCase());
@@ -64,7 +62,6 @@ export default function AdminUsuarios() {
     return matchSearch && matchRol;
   });
 
-  // ── Abrir modales ──────────────────────────────────────────
   const openCrear = () => {
     setForm(emptyForm);
     setSelected(null);
@@ -84,7 +81,6 @@ export default function AdminUsuarios() {
     setModal("eliminar");
   };
 
-  // ── Guardar (crear o editar) ───────────────────────────────
   const handleGuardar = async () => {
     setSaving(true);
     try {
@@ -120,7 +116,6 @@ export default function AdminUsuarios() {
     }
   };
 
-  // ── Eliminar ───────────────────────────────────────────────
   const handleEliminar = async () => {
     setSaving(true);
     try {
@@ -141,7 +136,6 @@ export default function AdminUsuarios() {
 
   const needsSede = form.rol === ROLES.CONTROLADOR || form.rol === ROLES.TECNICO;
 
-  // ── Helper para mostrar nombre de sede ────────────────────
   const getNombreSede = (sede_id) => {
     const sede = sedes.find(s => s.id === sede_id);
     return sede ? sede.nombre : null;
@@ -164,7 +158,9 @@ export default function AdminUsuarios() {
         </div>
         <select className="filter-select" value={filterRol} onChange={e => setFilterRol(e.target.value)}>
           <option value="todos">Todos los roles</option>
-          <option value={ROLES.ADMIN}>Admin</option>
+          {isSuperadmin && <option value={ROLES.SUPERADMIN}>Super Admin</option>}
+          {isSuperadmin && <option value={ROLES.ADMIN}>Admin</option>}
+          {!isSuperadmin && <option value={ROLES.ADMIN}>Admin</option>}
           <option value={ROLES.CONTROLADOR}>Controlador</option>
           <option value={ROLES.TECNICO}>Técnico</option>
         </select>
@@ -218,9 +214,11 @@ export default function AdminUsuarios() {
                       <button className="btn btn-outline btn-sm btn-icon" onClick={() => openEditar(u)}>
                         <Icon d={IC.edit} size={13} />
                       </button>
-                      <button className="btn btn-danger-outline btn-sm btn-icon" onClick={() => openEliminar(u)}>
-                        <Icon d={IC.trash} size={13} />
-                      </button>
+                      {isSuperadmin && (
+                        <button className="btn btn-danger-outline btn-sm btn-icon" onClick={() => openEliminar(u)}>
+                          <Icon d={IC.trash} size={13} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -262,7 +260,8 @@ export default function AdminUsuarios() {
               <label className="form-label">Rol</label>
               <select className="form-input" {...field("rol")}>
                 <option value="">Seleccionar...</option>
-                <option value={ROLES.ADMIN}>Admin</option>
+                {isSuperadmin && <option value={ROLES.SUPERADMIN}>Super Admin</option>}
+                {isSuperadmin && <option value={ROLES.ADMIN}>Admin</option>}
                 <option value={ROLES.CONTROLADOR}>Controlador</option>
                 <option value={ROLES.TECNICO}>Técnico</option>
               </select>
@@ -301,7 +300,7 @@ export default function AdminUsuarios() {
         </Modal>
       )}
 
-      {/* Modal eliminar */}
+      {/* Modal eliminar — solo superadmin llega aquí */}
       {modal === "eliminar" && (
         <Modal
           title="Eliminar usuario"

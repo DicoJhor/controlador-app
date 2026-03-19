@@ -14,8 +14,157 @@ function Icon({ d, size = 16, color = "currentColor" }) {
 }
 
 const IC = {
-  alert: "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
+  alert:   "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
+  chevron: "M6 9l6 6 6-6",
 };
+
+function StockBajoPanel({ items }) {
+  const [expandido, setExpandido] = useState(false);
+  const criticos = items.filter(i => i.stock === 0);
+  const bajos    = items.filter(i => i.stock > 0);
+
+  const porSede = items.reduce((acc, item) => {
+    const key = item.sede ?? "Sin sede";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(item);
+    return acc;
+  }, {});
+
+  return (
+    <div style={{
+      background: "#FFF5F5",
+      border: "1px solid #FED7D7",
+      borderLeft: "4px solid var(--danger)",
+      borderRadius: 10,
+      marginBottom: 24,
+      overflow: "hidden",
+    }}>
+      {/* Cabecera */}
+      <div
+        onClick={() => setExpandido(e => !e)}
+        style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "14px 20px", cursor: "pointer",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 8,
+            background: "#FED7D7", display: "flex",
+            alignItems: "center", justifyContent: "center", flexShrink: 0,
+          }}>
+            <Icon d={IC.alert} size={16} color="var(--danger)" />
+          </div>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "#C53030" }}>
+              {items.length} producto(s) con stock bajo mínimo en {Object.keys(porSede).length} sede(s)
+            </div>
+            <div style={{ fontSize: 12, color: "#E53E3E", marginTop: 2 }}>
+              {criticos.length > 0 && (
+                <span style={{ fontWeight: 600 }}>⚠ {criticos.length} sin stock ·&nbsp;</span>
+              )}
+              {bajos.length} por debajo del mínimo — clic para ver detalle
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {criticos.length > 0 && (
+            <span style={{
+              background: "var(--danger)", color: "white",
+              fontSize: 11, fontWeight: 700,
+              padding: "2px 10px", borderRadius: 20,
+            }}>
+              {criticos.length} SIN STOCK
+            </span>
+          )}
+          <span style={{
+            background: "#FED7D7", color: "#C53030",
+            fontSize: 11, fontWeight: 700,
+            padding: "2px 10px", borderRadius: 20,
+          }}>
+            {bajos.length} BAJO MÍNIMO
+          </span>
+          <svg width={16} height={16} viewBox="0 0 24 24" fill="none"
+            stroke="#C53030" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+            style={{ transition: "transform .2s", transform: expandido ? "rotate(180deg)" : "rotate(0deg)" }}>
+            <path d="M6 9l6 6 6-6" />
+          </svg>
+        </div>
+      </div>
+
+      {/* Detalle expandible agrupado por sede */}
+      {expandido && (
+        <div style={{ borderTop: "1px solid #FED7D7" }}>
+          {Object.entries(porSede).map(([sede, productos]) => {
+            const criticosSede = productos.filter(i => i.stock === 0);
+            return (
+              <div key={sede} style={{ borderBottom: "1px solid #FED7D7" }}>
+                {/* Header sede */}
+                <div style={{
+                  padding: "8px 20px", background: "#FFF0F0",
+                  display: "flex", alignItems: "center", gap: 8,
+                }}>
+                  <svg width={13} height={13} viewBox="0 0 24 24" fill="none"
+                    stroke="#C53030" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" />
+                  </svg>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: "#C53030", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {sede}
+                  </span>
+                  <span style={{ fontSize: 11, color: "#E53E3E" }}>
+                    — {productos.length} producto(s)
+                  </span>
+                  {criticosSede.length > 0 && (
+                    <span style={{
+                      background: "var(--danger)", color: "white",
+                      fontSize: 10, fontWeight: 700,
+                      padding: "1px 6px", borderRadius: 10, marginLeft: 4,
+                    }}>
+                      {criticosSede.length} sin stock
+                    </span>
+                  )}
+                </div>
+
+                {/* Productos de esta sede */}
+                <div style={{ padding: "10px 20px 12px", display: "flex", flexWrap: "wrap", gap: 8 }}>
+                  {productos.map((item, i) => {
+                    const sinStock = item.stock === 0;
+                    const pct      = sinStock ? 0 : Math.round((item.stock / item.minimo) * 100);
+                    return (
+                      <div key={i} style={{
+                        display: "flex", alignItems: "center", gap: 8,
+                        background: "white",
+                        border: `1px solid ${sinStock ? "#FEB2B2" : "#FED7D7"}`,
+                        borderRadius: 8, padding: "6px 12px", fontSize: 13,
+                      }}>
+                        <span style={{ fontWeight: 600 }}>{item.nombre}</span>
+                        {sinStock ? (
+                          <span style={{
+                            background: "var(--danger)", color: "white",
+                            fontSize: 10, fontWeight: 700,
+                            padding: "1px 6px", borderRadius: 10,
+                          }}>
+                            0 / {item.minimo} mín.
+                          </span>
+                        ) : (
+                          <>
+                            <span style={{ color: "#E53E3E", fontWeight: 600 }}>{item.stock}</span>
+                            <span style={{ color: "#A0AEC0", fontSize: 11 }}>/ {item.minimo} mín. ({pct}%)</span>
+                          </>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AdminDashboard() {
   const [stats,   setStats]   = useState(null);
@@ -73,13 +222,9 @@ export default function AdminDashboard() {
         />
       </div>
 
-      {/* Alerta stock bajo */}
-      {stats.stockBajo.length > 0 && (
-        <div className="alert alert-danger">
-          <Icon d={IC.alert} size={15} color="var(--danger)" />
-          <strong>{stats.stockBajo.length} producto(s) con stock bajo mínimo:&nbsp;</strong>
-          {stats.stockBajo.map(i => `${i.nombre} (${i.stock}/${i.minimo})`).join(" · ")}
-        </div>
+      {/* Panel stock bajo */}
+      {stats.stockBajo?.length > 0 && (
+        <StockBajoPanel items={stats.stockBajo} />
       )}
 
       <div className="grid-2">

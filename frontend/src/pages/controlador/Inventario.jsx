@@ -22,11 +22,12 @@ const IC = {
   check:  "M20 6L9 17l-5-5",
   plus:   "M12 5v14 M5 12h14",
   trash:  "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+  ruler:  "M2 12h20 M12 2v20",
 };
 
 const emptyEntrada = { producto_id: "", cantidad: "", motivo: "", comentario: "" };
 const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
-const emptyItem    = { producto_id: "", cantidad: "" };
+const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
 
 function StockBar({ stock, minimo }) {
   if (!minimo) return <span className="mono">{formatNumber(stock)}</span>;
@@ -57,9 +58,7 @@ export default function CtrlInventario() {
   const [saving,   setSaving]   = useState(false);
   const [success,  setSuccess]  = useState(null);
 
-  useEffect(() => {
-    cargarDatos();
-  }, []);
+  useEffect(() => { cargarDatos(); }, []);
 
   const cargarDatos = () =>
     Promise.all([stockService.getStock(), stockService.getStats()])
@@ -115,7 +114,12 @@ export default function CtrlInventario() {
 
   const salidaValida = salida.tecnico_id && salida.motivo &&
     salida.items.length > 0 &&
-    salida.items.every(i => i.producto_id && i.cantidad && Number(i.cantidad) > 0)
+    salida.items.every(i => {
+      if (!i.producto_id || !i.cantidad || Number(i.cantidad) <= 0) return false;
+      const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+      if (prod?.es_medible && (!i.metros || Number(i.metros) <= 0)) return false;
+      return true;
+    });
 
   const handleSalida = async () => {
     setSaving(true);
@@ -127,6 +131,7 @@ export default function CtrlInventario() {
         items:      salida.items.map(i => ({
           producto_id: Number(i.producto_id),
           cantidad:    Number(i.cantidad),
+          metros:      i.metros !== "" ? Number(i.metros) : undefined,
         }))
       });
       const data = await stockService.getStock();
@@ -147,7 +152,6 @@ export default function CtrlInventario() {
     onChange: (e) => setEntrada(prev => ({ ...prev, [key]: e.target.value }))
   });
 
-  // Ítems ya agregados en salida (para no repetir)
   const productosYaAgregados = salida.items.map(i => String(i.producto_id));
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
@@ -190,13 +194,13 @@ export default function CtrlInventario() {
             <thead>
               <tr>
                 <th>Código</th><th>Ítem</th><th>Categoría</th>
-                <th>Stock sede</th><th>Mínimo</th><th>Estado</th>
+                <th>Stock sede</th><th>Metros disp.</th><th>Mínimo</th><th>Estado</th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                  <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
                     Sin productos en esta sede
                   </td>
                 </tr>
@@ -216,6 +220,18 @@ export default function CtrlInventario() {
                         : <span className="text-muted">—</span>}
                     </td>
                     <td><StockBar stock={item.cantidad} minimo={item.stock_minimo} /></td>
+                    <td>
+                      {item.es_medible && item.metros_disponibles !== null ? (
+                        <div>
+                          <span className="mono fw-600" style={{ color: "var(--info)" }}>
+                            {formatNumber(item.metros_disponibles)}m
+                          </span>
+                          <div className="text-sm text-muted">{item.metros_por_unidad}m/rollo</div>
+                        </div>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
                     <td className="mono text-muted">{item.stock_minimo}</td>
                     <td>
                       {low  ? <Badge variant="danger">⚠ Bajo stock</Badge>
@@ -253,13 +269,14 @@ export default function CtrlInventario() {
               {stock.map(i => (
                 <option key={i.producto_id} value={i.producto_id}>
                   {i.producto} — stock actual: {i.cantidad}
+                  {i.es_medible ? ` (${i.metros_disponibles ?? 0}m disponibles)` : ""}
                 </option>
               ))}
             </select>
           </div>
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Cantidad</label>
+              <label className="form-label">Cantidad (rollos/unidades)</label>
               <input className="form-input" type="number" min="1" placeholder="0" {...fieldE("cantidad")} />
             </div>
             <div className="form-group">
@@ -294,7 +311,6 @@ export default function CtrlInventario() {
             </>
           }
         >
-          {/* Técnico y motivo */}
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Técnico</label>
@@ -318,7 +334,6 @@ export default function CtrlInventario() {
             </div>
           </div>
 
-          {/* Lista de ítems */}
           <div className="form-group">
             <label className="form-label">Ítems a asignar</label>
 
@@ -330,6 +345,7 @@ export default function CtrlInventario() {
 
             {salida.items.map((item, idx) => {
               const productoInfo = stock.find(s => String(s.producto_id) === String(item.producto_id));
+              const esMedible = !!productoInfo?.es_medible;
               return (
                 <div key={idx} style={styles.itemRow}>
                   <div style={{ flex: 2 }}>
@@ -343,10 +359,13 @@ export default function CtrlInventario() {
                           disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}
                         >
                           {s.producto} — disp: {s.cantidad}
+                          {s.es_medible ? ` (${s.metros_disponibles ?? 0}m)` : ""}
                         </option>
                       ))}
                     </select>
                   </div>
+
+                  {/* Cantidad en rollos/unidades */}
                   <div style={{ flex: 1 }}>
                     <input className="form-input" type="number" min="1"
                       max={productoInfo?.cantidad}
@@ -355,6 +374,21 @@ export default function CtrlInventario() {
                       onChange={e => updateItem(idx, "cantidad", e.target.value)}
                     />
                   </div>
+
+                  {/* Metros — solo si es medible */}
+                  {esMedible && (
+                    <div style={{ flex: 1 }}>
+                      <input className="form-input" type="number" min="1"
+                        max={productoInfo?.metros_disponibles ?? undefined}
+                        placeholder="Metros"
+                        value={item.metros}
+                        onChange={e => updateItem(idx, "metros", e.target.value)}
+                        style={{ borderColor: "var(--info)" }}
+                        title={`Máx: ${productoInfo?.metros_disponibles ?? "?"}m disponibles`}
+                      />
+                    </div>
+                  )}
+
                   <button className="btn btn-danger-outline btn-sm btn-icon"
                     onClick={() => removeItem(idx)} type="button">
                     <Icon d={IC.trash} size={13} />
@@ -362,6 +396,17 @@ export default function CtrlInventario() {
                 </div>
               );
             })}
+
+            {/* Leyenda metros */}
+            {salida.items.some(i => {
+              const p = stock.find(s => String(s.producto_id) === String(i.producto_id));
+              return !!p?.es_medible;
+            }) && (
+              <div style={{ fontSize: 12, color: "var(--info)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                <Icon d={IC.ruler} size={12} color="var(--info)" />
+                Los campos azules indican metros a descontar del rollo.
+              </div>
+            )}
 
             <button className="btn btn-outline btn-sm" style={{ marginTop: 8 }}
               onClick={agregarItem} type="button">

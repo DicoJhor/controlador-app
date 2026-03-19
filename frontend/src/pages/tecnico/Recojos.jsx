@@ -99,7 +99,8 @@ export default function TecRecojos() {
               <tr>
                 <th>Cliente</th>
                 <th>Dirección</th>
-                <th>Serie ONU</th>
+                <th>Equipo</th>
+                <th>Serie</th>
                 <th>Fecha</th>
                 <th>Estado</th>
                 <th>Acción</th>
@@ -108,7 +109,7 @@ export default function TecRecojos() {
             <tbody>
               {ordenes.length === 0 ? (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                  <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
                     Sin órdenes de recojo
                   </td>
                 </tr>
@@ -116,7 +117,10 @@ export default function TecRecojos() {
                 <tr key={o.id}>
                   <td className="fw-600">{o.cliente ?? "—"}</td>
                   <td className="text-sm">{o.direccion ?? "—"}</td>
-                  <td><span className="mono">{o.serie}</span></td>
+                  <td>
+                    <span className="badge badge-blue">{o.tipo_equipo ?? "—"}</span>
+                  </td>
+                  <td><span className="mono">{o.serie ?? "—"}</span></td>
                   <td className="text-sm text-muted">{formatFecha(o.created_at)}</td>
                   <td>
                     <span className={`badge badge-${o.estado === "pendiente" ? "warning" : "active"}`}>
@@ -130,13 +134,8 @@ export default function TecRecojos() {
                       </button>
                     ) : (
                       o.foto
-                        ? 
-                        <a
-                            href={`${BASE_URL}/uploads/${o.foto}`}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="btn btn-outline btn-sm"
-                          >
+                        ? <a href={`${BASE_URL}/uploads/${o.foto}`} target="_blank" rel="noreferrer"
+                            className="btn btn-outline btn-sm">
                             <Icon d={IC.image} size={13} />
                             Ver foto
                           </a>
@@ -168,12 +167,18 @@ export default function TecRecojos() {
         >
           <div style={{ marginBottom: 12 }}>
             <div className="text-sm text-muted">Cliente</div>
-            <div className="fw-600">{selected.cliente}</div>
+            <div className="fw-600">{selected.cliente ?? "—"}</div>
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <div className="text-sm text-muted">Serie ONU</div>
-            <div className="mono fw-600">{selected.serie}</div>
+          <div style={{ marginBottom: 12 }}>
+            <div className="text-sm text-muted">Tipo de equipo</div>
+            <span className="badge badge-blue">{selected.tipo_equipo ?? "—"}</span>
           </div>
+          {selected.serie && (
+            <div style={{ marginBottom: 16 }}>
+              <div className="text-sm text-muted">Serie</div>
+              <div className="mono fw-600">{selected.serie}</div>
+            </div>
+          )}
 
           <div className="form-group">
             <label className="form-label">Comentario <span>(opcional)</span></label>
@@ -195,11 +200,8 @@ export default function TecRecojos() {
             />
             {preview && (
               <div style={{ marginTop: 10 }}>
-                <img
-                  src={preview}
-                  alt="preview"
-                  style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, objectFit: "cover" }}
-                />
+                <img src={preview} alt="preview"
+                  style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 8, objectFit: "cover" }} />
               </div>
             )}
           </div>

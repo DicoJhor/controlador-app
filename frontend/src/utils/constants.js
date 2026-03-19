@@ -1,7 +1,8 @@
 export const ROLES = {
-  ADMIN: "admin",
+  SUPERADMIN: "superadmin",
+  ADMIN:       "admin",
   CONTROLADOR: "controlador",
-  TECNICO: "tecnico",
+  TECNICO:     "tecnico",
 };
 
 export const MOTIVOS_SALIDA = {

@@ -30,6 +30,7 @@ const IC = {
 };
 
 const roleRedirect = {
+  [ROLES.SUPERADMIN]: "/admin/dashboard",
   [ROLES.ADMIN]: "/admin/dashboard",
   [ROLES.CONTROLADOR]: "/controlador/dashboard",
   [ROLES.TECNICO]: "/tecnico/dashboard",

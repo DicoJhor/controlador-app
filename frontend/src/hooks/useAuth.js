@@ -8,6 +8,7 @@ export function useAuth() {
 
   return {
     ...ctx,
+    isSuperadmin:  ctx.role === ROLES.SUPERADMIN,  // ← nuevo
     isAdmin:       ctx.role === ROLES.ADMIN,
     isControlador: ctx.role === ROLES.CONTROLADOR,
     isTecnico:     ctx.role === ROLES.TECNICO,

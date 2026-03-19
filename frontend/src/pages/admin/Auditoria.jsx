@@ -1,8 +1,11 @@
-import { useState, useEffect } from "react";
-import { Badge, MotivoBadge } from "../../components/ui/Badge";
+import { useState, useEffect, useRef } from "react";
+import { Badge } from "../../components/ui/Badge";
+import Modal from "../../components/ui/Modal";
 import { formatDate } from "../../utils/formatters";
 import auditoriaService from "../../services/auditoriaService";
 import sedesService from "../../services/sedesService";
+
+import logoEnet from "../../assets/logo_enet.png";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
@@ -17,96 +20,544 @@ const IC = {
   search:   "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4 M7 10l5 5 5-5 M12 15V3",
   comment:  "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z",
+  entrada:  "M5 12h14 M12 5l7 7-7 7",
+  salida:   "M19 12H5 M12 19l-7-7 7-7",
+  envio:    "M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z",
+  consumo:  "M9 11l3 3L22 4 M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11",
+  calendar: "M3 4h18v18H3V4z M16 2v4 M8 2v4 M3 10h18",
+  pdf:      "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
+  excel:    "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M8 13h2 M8 17h2 M14 13h2",
 };
 
+const TIPO_CONFIG = {
+  entrada: { label: "Entrada",          variant: "entrada", color: "#16a34a" },
+  salida:  { label: "Salida a técnico", variant: "salida",  color: "#dc2626" },
+  envio:   { label: "Envío a sede",     variant: "blue",    color: "#2563eb" },
+  consumo: { label: "Consumo técnico",  variant: "warning", color: "#d97706" },
+};
+
+function TipoBadge({ tipo }) {
+  const cfg = TIPO_CONFIG[tipo] ?? { label: tipo, variant: "blue" };
+  return <Badge variant={cfg.variant}>{cfg.label}</Badge>;
+}
+
+function StatCard({ label, value, icon, color, active, onClick }) {
+  return (
+    <div onClick={onClick} style={{
+      background: active ? color + "18" : "var(--surface)",
+      border: `1px solid ${active ? color : "var(--border)"}`,
+      borderRadius: 10, padding: "14px 18px",
+      display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 140,
+      cursor: "pointer", transition: "all 0.15s",
+    }}>
+      <div style={{
+        width: 36, height: 36, borderRadius: 8, background: color + "18",
+        display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+      }}>
+        <Icon d={icon} size={17} color={color} />
+      </div>
+      <div>
+        <div style={{ fontSize: 22, fontWeight: 700, color: "var(--text)", lineHeight: 1.1 }}>{value}</div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{label}</div>
+      </div>
+    </div>
+  );
+}
+
+function DetalleMovimiento({ m }) {
+  switch (m.tipo) {
+    case "entrada":
+      return (
+        <div>
+          <div className="fw-600" style={{ fontSize: 13 }}>{m.item}</div>
+          <div className="text-sm text-muted">
+            {m.motivo ? <><span style={{ color: "var(--success)" }}>●</span> {m.motivo}</> : <>Por: {m.usuario ?? "—"}</>}
+          </div>
+        </div>
+      );
+    case "salida":
+      return (
+        <div>
+          <div className="fw-600" style={{ fontSize: 13 }}>{m.item}</div>
+          <div className="text-sm text-muted">Técnico: {m.usuario ?? "—"}</div>
+        </div>
+      );
+    case "envio": {
+      const partes  = (m.item ?? "").split(" → ");
+      const destino = partes[1] ?? m.sede;
+      return (
+        <div>
+          <div className="fw-600" style={{ fontSize: 13 }}>{partes[0] ?? m.item}</div>
+          <div className="text-sm text-muted" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+            <Icon d={IC.envio} size={11} color="var(--info)" />
+            Hacia: <strong>{destino}</strong>
+            {m.motivo && <> · {m.motivo}</>}
+          </div>
+        </div>
+      );
+    }
+    case "consumo":
+      return (
+        <div>
+          <div className="fw-600" style={{ fontSize: 13 }}>{m.item}</div>
+          <div className="text-sm text-muted">Técnico: {m.usuario ?? "—"}</div>
+        </div>
+      );
+    default:
+      return <span className="fw-600">{m.item}</span>;
+  }
+}
+
+function agruparPorFecha(movimientos) {
+  const grupos = {};
+  for (const m of movimientos) {
+    const key = m.fecha ? new Date(m.fecha).toISOString().split("T")[0] : "sin-fecha";
+    if (!grupos[key]) grupos[key] = [];
+    grupos[key].push(m);
+  }
+  return Object.entries(grupos).sort((a, b) => b[0].localeCompare(a[0]));
+}
+
+const emptyExport = { fechaDesde: "", fechaHasta: "", sede: "todas", tipo: "todos", formato: "pdf" };
+
 export default function AdminAuditoria() {
-  const [movimientos,  setMovimientos]  = useState([]);
-  const [sedes,        setSedes]        = useState([]);
-  const [loading,      setLoading]      = useState(true);
-  const [error,        setError]        = useState(null);
-  const [search,       setSearch]       = useState("");
-  const [filterSede,   setFilterSede]   = useState("todas");
-  const [filterTipo,   setFilterTipo]   = useState("todos");
-  const [filterMotivo, setFilterMotivo] = useState("todos");
+  const [movimientos, setMovimientos] = useState([]);
+  const [sedes,       setSedes]       = useState([]);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(null);
+  const [search,      setSearch]      = useState("");
+  const [filterSede,  setFilterSede]  = useState("todas");
+  const [filterTipo,  setFilterTipo]  = useState("todos");
+  const [modalExport, setModalExport] = useState(false);
+  const [exportForm,  setExportForm]  = useState(emptyExport);
 
   useEffect(() => {
-    Promise.all([
-      auditoriaService.getAll(),
-      sedesService.getAll()
-    ])
-      .then(([dataMovimientos, dataSedes]) => {
-        setMovimientos(dataMovimientos);
-        setSedes(dataSedes);
-        setLoading(false);
-      })
-      .catch(() => {
-        setError("No se pudieron cargar los movimientos");
-        setLoading(false);
-      });
+    Promise.all([auditoriaService.getAll(), sedesService.getAll()])
+      .then(([data, sds]) => { setMovimientos(data); setSedes(sds); setLoading(false); })
+      .catch(() => { setError("No se pudieron cargar los movimientos"); setLoading(false); });
   }, []);
 
   const filtered = movimientos.filter(m => {
-    const matchSearch  = (m.item ?? "").toLowerCase().includes(search.toLowerCase()) ||
-                         (m.usuario ?? "").toLowerCase().includes(search.toLowerCase());
-    const matchSede    = filterSede   === "todas" || m.sede === filterSede;
-    const matchTipo    = filterTipo   === "todos" || m.tipo === filterTipo;
-    const matchMotivo  = filterMotivo === "todos" || m.motivo === filterMotivo;
-    return matchSearch && matchSede && matchTipo && matchMotivo;
+    const matchSearch = (m.item ?? "").toLowerCase().includes(search.toLowerCase()) ||
+                        (m.usuario ?? "").toLowerCase().includes(search.toLowerCase()) ||
+                        (m.motivo ?? "").toLowerCase().includes(search.toLowerCase()) ||
+                        (m.sede ?? "").toLowerCase().includes(search.toLowerCase());
+    const sedeDestino = m.tipo === "envio" ? (m.item ?? "").split(" → ")[1] ?? "" : "";
+    const matchSede   = filterSede === "todas" || m.sede === filterSede || sedeDestino === filterSede;
+    const matchTipo   = filterTipo === "todos" || m.tipo === filterTipo;
+    return matchSearch && matchSede && matchTipo;
   });
 
-  const handleExportar = () => {
-    if (filtered.length === 0) return;
-    const headers = ["Fecha", "Tipo", "Ítem", "Cantidad", "Sede", "Usuario", "Rol", "Motivo", "Comentario"];
-    const rows = filtered.map(m => [
-      formatDate(m.fecha), m.tipo, m.item, m.cantidad,
-      m.sede ?? "", m.usuario ?? "", m.rol ?? "",
-      m.motivo ?? "", m.comentario ?? ""
-    ]);
-    const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
+  const grupos  = agruparPorFecha(filtered);
+  const totales = {
+    entrada: filtered.filter(m => m.tipo === "entrada").length,
+    salida:  filtered.filter(m => m.tipo === "salida").length,
+    envio:   filtered.filter(m => m.tipo === "envio").length,
+    consumo: filtered.filter(m => m.tipo === "consumo").length,
+  };
+
+  const toggleTipo = (tipo) => setFilterTipo(t => t === tipo ? "todos" : tipo);
+
+  const aplicarFiltrosExport = () => movimientos.filter(m => {
+    const sedeDestino = m.tipo === "envio" ? (m.item ?? "").split(" → ")[1] ?? "" : "";
+    const matchSede   = exportForm.sede === "todas" || m.sede === exportForm.sede || sedeDestino === exportForm.sede;
+    const matchTipo   = exportForm.tipo === "todos" || m.tipo === exportForm.tipo;
+    let matchFecha    = true;
+    if (m.fecha) {
+      const d = new Date(m.fecha).toISOString().split("T")[0];
+      if (exportForm.fechaDesde && d < exportForm.fechaDesde) matchFecha = false;
+      if (exportForm.fechaHasta && d > exportForm.fechaHasta) matchFecha = false;
+    }
+    return matchSede && matchTipo && matchFecha;
+  });
+
+  // ── Excel profesional (HTML → .xls que Excel abre con estilos) ──
+  const exportarExcel = (datos) => {
+    const sedeLabel  = exportForm.sede === "todas" ? "Todas las sedes" : exportForm.sede;
+    const tipoLabel  = exportForm.tipo === "todos" ? "Todos" : (TIPO_CONFIG[exportForm.tipo]?.label ?? exportForm.tipo);
+    const fechaLabel = exportForm.fechaDesde || exportForm.fechaHasta
+      ? `${exportForm.fechaDesde || "—"} al ${exportForm.fechaHasta || "—"}`
+      : "Sin filtro";
+
+    const tipoColors = {
+      entrada: "#16a34a", salida: "#dc2626", envio: "#2563eb", consumo: "#d97706"
+    };
+
+    // Resumen por tipo
+    const resumen = {
+      entrada: datos.filter(m => m.tipo === "entrada").length,
+      salida:  datos.filter(m => m.tipo === "salida").length,
+      envio:   datos.filter(m => m.tipo === "envio").length,
+      consumo: datos.filter(m => m.tipo === "consumo").length,
+    };
+
+    // Filas de detalle
+    const filas = datos.map((m, i) => {
+      const color = tipoColors[m.tipo] ?? "#333";
+      const bg    = i % 2 === 0 ? "#fafafa" : "#ffffff";
+      return `
+        <tr style="background:${bg}">
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px">${formatDate(m.fecha)}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;color:${color};font-weight:bold">${TIPO_CONFIG[m.tipo]?.label ?? m.tipo}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;font-weight:bold">${m.item ?? "—"}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;text-align:center;font-weight:bold">${m.cantidad}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px">${m.sede ?? "—"}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px">${m.usuario ?? "—"}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px">${m.motivo ?? "—"}</td>
+          <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px">${m.comentario ?? "—"}</td>
+        </tr>`;
+    }).join("");
+
+    // Filas por sede
+    const porSede = {};
+    datos.forEach(m => {
+      const s = m.sede ?? "Sin sede";
+      if (!porSede[s]) porSede[s] = [];
+      porSede[s].push(m);
+    });
+    const filasSede = Object.entries(porSede).map(([sede, movs], i) => `
+      <tr style="background:${i % 2 === 0 ? "#fafafa" : "#fff"}">
+        <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;font-weight:bold">${sede}</td>
+        <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;text-align:center;color:#16a34a;font-weight:bold">${movs.filter(m=>m.tipo==="entrada").length}</td>
+        <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;text-align:center;color:#dc2626;font-weight:bold">${movs.filter(m=>m.tipo==="salida").length}</td>
+        <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;text-align:center;color:#2563eb;font-weight:bold">${movs.filter(m=>m.tipo==="envio").length}</td>
+        <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;text-align:center;color:#d97706;font-weight:bold">${movs.filter(m=>m.tipo==="consumo").length}</td>
+        <td style="border:1px solid #ddd;padding:6px 10px;font-size:11px;text-align:center;font-weight:bold">${movs.length}</td>
+      </tr>`).join("");
+
+    const thStyle = `style="background:#1a1a1a;color:white;padding:8px 10px;font-size:11px;font-weight:bold;border:1px solid #1a1a1a;text-align:center"`;
+
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
+      <head>
+        <meta charset="UTF-8">
+        <!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets>
+          <x:ExcelWorksheet><x:Name>Resumen</x:Name><x:WorksheetOptions><x:Selected/></x:WorksheetOptions></x:ExcelWorksheet>
+          <x:ExcelWorksheet><x:Name>Detalle</x:Name></x:ExcelWorksheet>
+          <x:ExcelWorksheet><x:Name>Por sede</x:Name></x:ExcelWorksheet>
+        </x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]-->
+      </head>
+      <body>
+
+        <!-- HOJA 1: RESUMEN -->
+        <table style="font-family:Arial;margin-bottom:20px">
+          <tr><td colspan="2" style="font-size:16px;font-weight:bold;padding:10px 0;color:#1a1a1a">ENET FIBER PERÚ</td></tr>
+          <tr><td colspan="2" style="font-size:12px;color:#555;padding-bottom:16px">Reporte de Auditoría de Inventario</td></tr>
+          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px;width:180px">Generado el:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${new Date().toLocaleString("es-PE")}</td></tr>
+          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Sede:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${sedeLabel}</td></tr>
+          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Tipo:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${tipoLabel}</td></tr>
+          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Período:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${fechaLabel}</td></tr>
+          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Total registros:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;font-weight:bold">${datos.length}</td></tr>
+          <tr><td colspan="2" style="padding:12px 0"></td></tr>
+          <tr><td colspan="2" style="font-size:12px;font-weight:bold;padding:6px 0;color:#1a1a1a">RESUMEN POR TIPO</td></tr>
+          <tr><th ${thStyle}>Tipo de movimiento</th><th ${thStyle}>Cantidad</th></tr>
+          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;color:#16a34a;font-weight:bold">Entradas de material</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;text-align:center;color:#16a34a;font-weight:bold">${resumen.entrada}</td></tr>
+          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;color:#dc2626;font-weight:bold">Salidas a técnico</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;text-align:center;color:#dc2626;font-weight:bold">${resumen.salida}</td></tr>
+          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;color:#2563eb;font-weight:bold">Envíos a sede</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;text-align:center;color:#2563eb;font-weight:bold">${resumen.envio}</td></tr>
+          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;color:#d97706;font-weight:bold">Consumo técnico</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;text-align:center;color:#d97706;font-weight:bold">${resumen.consumo}</td></tr>
+          <tr><td style="border:1px solid #1a1a1a;padding:7px 12px;font-size:11px;font-weight:bold;background:#1a1a1a;color:white">TOTAL</td><td style="border:1px solid #1a1a1a;padding:7px 12px;font-size:11px;font-weight:bold;background:#1a1a1a;color:white;text-align:center">${datos.length}</td></tr>
+        </table>
+
+        <br><br>
+
+        <!-- HOJA 2: DETALLE -->
+        <table style="font-family:Arial;width:100%;border-collapse:collapse;margin-bottom:20px">
+          <tr><td colspan="8" style="font-size:13px;font-weight:bold;padding:8px 0;color:#1a1a1a">DETALLE DE MOVIMIENTOS</td></tr>
+          <tr>
+            <th ${thStyle}>Fecha</th>
+            <th ${thStyle}>Tipo</th>
+            <th ${thStyle}>Producto / Ítem</th>
+            <th ${thStyle}>Cant.</th>
+            <th ${thStyle}>Sede</th>
+            <th ${thStyle}>Usuario</th>
+            <th ${thStyle}>Guía / Motivo</th>
+            <th ${thStyle}>Comentario</th>
+          </tr>
+          ${filas}
+          <tr>
+            <td colspan="3" style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px">TOTAL: ${datos.length} registros</td>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px;text-align:center">${datos.length}</td>
+            <td colspan="4" style="border:1px solid #1a1a1a;background:#1a1a1a"></td>
+          </tr>
+        </table>
+
+        <br><br>
+
+        <!-- HOJA 3: POR SEDE -->
+        <table style="font-family:Arial;border-collapse:collapse">
+          <tr><td colspan="6" style="font-size:13px;font-weight:bold;padding:8px 0;color:#1a1a1a">RESUMEN POR SEDE</td></tr>
+          <tr>
+            <th ${thStyle}>Sede</th>
+            <th ${thStyle} style="color:#16a34a">Entradas</th>
+            <th ${thStyle} style="color:#dc2626">Salidas</th>
+            <th ${thStyle} style="color:#2563eb">Envíos</th>
+            <th ${thStyle} style="color:#d97706">Consumos</th>
+            <th ${thStyle}>Total</th>
+          </tr>
+          ${filasSede}
+          <tr>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px">TOTAL GENERAL</td>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px;text-align:center">${resumen.entrada}</td>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px;text-align:center">${resumen.salida}</td>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px;text-align:center">${resumen.envio}</td>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px;text-align:center">${resumen.consumo}</td>
+            <td style="border:1px solid #1a1a1a;padding:7px 10px;background:#1a1a1a;color:white;font-weight:bold;font-size:11px;text-align:center">${datos.length}</td>
+          </tr>
+        </table>
+
+      </body>
+      </html>`;
+
+    const blob = new Blob([html], { type: "application/vnd.ms-excel;charset=utf-8" });
     const url  = URL.createObjectURL(blob);
     const a    = document.createElement("a");
     a.href     = url;
-    a.download = `auditoria_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `auditoria_enet_${new Date().toISOString().slice(0, 10)}.xls`;
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // ── PDF tipo informe ───────────────────────────────────────
+  const exportarPDF = (datos) => {
+    const sedeLabel  = exportForm.sede === "todas" ? "Todas las sedes" : exportForm.sede;
+    const tipoLabel  = exportForm.tipo === "todos" ? "Todos los tipos" : (TIPO_CONFIG[exportForm.tipo]?.label ?? exportForm.tipo);
+    const fechaLabel = exportForm.fechaDesde || exportForm.fechaHasta
+      ? `${exportForm.fechaDesde || "—"} al ${exportForm.fechaHasta || "—"}`
+      : "Sin filtro de fecha";
+
+    // Resumen por tipo
+    const resumen = {
+      entrada: datos.filter(m => m.tipo === "entrada").length,
+      salida:  datos.filter(m => m.tipo === "salida").length,
+      envio:   datos.filter(m => m.tipo === "envio").length,
+      consumo: datos.filter(m => m.tipo === "consumo").length,
+    };
+
+    // Agrupar por fecha para el informe
+    const gruposExp = agruparPorFecha(datos);
+
+    const filasPorGrupo = gruposExp.map(([fechaKey, items]) => `
+      <div class="grupo">
+        <div class="grupo-header">
+          <span class="grupo-fecha">${fechaKey === "sin-fecha" ? "Sin fecha" : formatDate(fechaKey)}</span>
+          <span class="grupo-count">${items.length} movimiento${items.length !== 1 ? "s" : ""}</span>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Tipo</th>
+              <th>Producto / Ítem</th>
+              <th>Cant.</th>
+              <th>Sede</th>
+              <th>Usuario</th>
+              <th>Guía / Motivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(m => {
+              const cfg = TIPO_CONFIG[m.tipo] ?? { label: m.tipo, color: "#666" };
+              const itemText = m.tipo === "envio"
+                ? `${(m.item ?? "").split(" → ")[0]} <span style="color:${cfg.color}">→ ${(m.item ?? "").split(" → ")[1] ?? ""}</span>`
+                : (m.item ?? "—");
+              return `
+                <tr>
+                  <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
+                  <td class="bold">${itemText}</td>
+                  <td class="center">${m.cantidad}</td>
+                  <td>${m.sede ?? "—"}</td>
+                  <td>${m.usuario ?? "—"}</td>
+                  <td class="small">${m.motivo ?? ""}${m.comentario ? `<br><span class="muted">${m.comentario}</span>` : ""}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    `).join("");
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Informe de Auditoría — Enet Fiber Perú</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Arial', sans-serif; font-size: 11px; color: #1a1a1a; background: white; }
+    .page { padding: 36px 40px; max-width: 900px; margin: 0 auto; }
+
+    /* Header */
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 3px solid #1a1a1a; }
+    .header-left { display: flex; align-items: center; gap: 16px; }
+    .logo { height: 52px; object-fit: contain; }
+    .company-name { font-size: 18px; font-weight: 800; color: #1a1a1a; letter-spacing: -0.3px; }
+    .report-title { font-size: 12px; color: #666; margin-top: 2px; }
+    .header-right { text-align: right; font-size: 10px; color: #888; line-height: 1.6; }
+
+    /* Filtros aplicados */
+    .filtros { background: #f8f8f8; border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 24px; flex-wrap: wrap; }
+    .filtro-item { display: flex; flex-direction: column; gap: 2px; }
+    .filtro-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #888; font-weight: 600; }
+    .filtro-value { font-size: 11px; font-weight: 700; color: #1a1a1a; }
+
+    /* Tarjetas resumen */
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 24px; }
+    .stat { border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 14px; }
+    .stat-num { font-size: 24px; font-weight: 800; line-height: 1; }
+    .stat-label { font-size: 10px; color: #888; margin-top: 4px; }
+    .stat-bar { height: 3px; border-radius: 2px; margin-top: 8px; }
+
+    /* Grupos */
+    .grupo { margin-bottom: 20px; page-break-inside: avoid; }
+    .grupo-header { display: flex; align-items: center; gap: 10px; padding: 6px 0; margin-bottom: 6px; border-bottom: 1.5px solid #e5e5e5; }
+    .grupo-fecha { font-weight: 700; font-size: 12px; }
+    .grupo-count { font-size: 10px; color: #888; background: #f0f0f0; padding: 2px 8px; border-radius: 10px; }
+
+    /* Tabla */
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #1a1a1a; color: white; padding: 7px 10px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
+    td { padding: 6px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: top; font-size: 10px; }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: #fafafa; }
+    .badge { padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+    .bold { font-weight: 600; }
+    .center { text-align: center; font-weight: 700; }
+    .small { font-size: 10px; }
+    .muted { color: #888; }
+
+    /* Footer */
+    .footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e5e5e5; display: flex; justify-content: space-between; font-size: 9px; color: #aaa; }
+
+    @media print {
+      body { font-size: 10px; }
+      .page { padding: 20px; }
+      .grupo { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Encabezado -->
+  <div class="header">
+    <div class="header-left">
+      <img src="${logoEnet}" class="logo" alt="Enet Fiber Perú" />
+      <div>
+        <div class="company-name">Enet Fiber Perú</div>
+        <div class="report-title">Informe de Auditoría de Inventario</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div><strong>Fecha de emisión:</strong> ${new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "long", year: "numeric" })}</div>
+      <div><strong>Hora:</strong> ${new Date().toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit" })}</div>
+      <div><strong>Total registros:</strong> ${datos.length}</div>
+    </div>
+  </div>
+
+  <!-- Filtros aplicados -->
+  <div class="filtros">
+    <div class="filtro-item">
+      <span class="filtro-label">Período</span>
+      <span class="filtro-value">${fechaLabel}</span>
+    </div>
+    <div class="filtro-item">
+      <span class="filtro-label">Sede</span>
+      <span class="filtro-value">${sedeLabel}</span>
+    </div>
+    <div class="filtro-item">
+      <span class="filtro-label">Tipo de movimiento</span>
+      <span class="filtro-value">${tipoLabel}</span>
+    </div>
+  </div>
+
+  <!-- Resumen estadístico -->
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-num" style="color:#16a34a">${resumen.entrada}</div>
+      <div class="stat-label">Entradas de material</div>
+      <div class="stat-bar" style="background:#16a34a;width:${datos.length ? Math.round((resumen.entrada/datos.length)*100) : 0}%"></div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" style="color:#dc2626">${resumen.salida}</div>
+      <div class="stat-label">Salidas a técnico</div>
+      <div class="stat-bar" style="background:#dc2626;width:${datos.length ? Math.round((resumen.salida/datos.length)*100) : 0}%"></div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" style="color:#2563eb">${resumen.envio}</div>
+      <div class="stat-label">Envíos a sede</div>
+      <div class="stat-bar" style="background:#2563eb;width:${datos.length ? Math.round((resumen.envio/datos.length)*100) : 0}%"></div>
+    </div>
+    <div class="stat">
+      <div class="stat-num" style="color:#d97706">${resumen.consumo}</div>
+      <div class="stat-label">Consumos técnico</div>
+      <div class="stat-bar" style="background:#d97706;width:${datos.length ? Math.round((resumen.consumo/datos.length)*100) : 0}%"></div>
+    </div>
+  </div>
+
+  <!-- Movimientos agrupados por fecha -->
+  ${filasPorGrupo}
+
+  <!-- Footer -->
+  <div class="footer">
+    <span>Enet Fiber Perú — Sistema de Control de Materiales</span>
+    <span>Generado el ${new Date().toLocaleString("es-PE")} · ${datos.length} registros</span>
+  </div>
+
+</div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank");
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 600);
+  };
+
+  const handleExportar = () => {
+    const datos = aplicarFiltrosExport();
+    if (datos.length === 0) { alert("No hay registros con los filtros seleccionados."); return; }
+    if (exportForm.formato === "excel") exportarExcel(datos);
+    else exportarPDF(datos);
+    setModalExport(false);
+  };
+
+  const expField = (key) => ({
+    value: exportForm[key],
+    onChange: e => setExportForm(prev => ({ ...prev, [key]: e.target.value }))
+  });
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando movimientos...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
   return (
     <div>
+      {/* Tarjetas */}
+      <div style={{ display: "flex", gap: 12, marginBottom: 20, flexWrap: "wrap" }}>
+        {Object.entries(TIPO_CONFIG).map(([tipo, cfg]) => (
+          <StatCard key={tipo} label={cfg.label} value={totales[tipo]}
+            icon={IC[tipo]} color={cfg.color}
+            active={filterTipo === tipo} onClick={() => toggleTipo(tipo)} />
+        ))}
+      </div>
+
       {/* Toolbar */}
       <div className="toolbar">
         <div className="search-box">
           <Icon d={IC.search} size={16} color="var(--text-muted)" />
-          <input
-            placeholder="Buscar por ítem o usuario..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+          <input placeholder="Buscar por ítem, usuario, guía o sede..."
+            value={search} onChange={e => setSearch(e.target.value)} />
         </div>
         <select className="filter-select" value={filterSede} onChange={e => setFilterSede(e.target.value)}>
           <option value="todas">Todas las sedes</option>
           {sedes.map(s => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
         </select>
         <select className="filter-select" value={filterTipo} onChange={e => setFilterTipo(e.target.value)}>
-          <option value="todos">Entrada y salida</option>
-          <option value="entrada">Solo entradas</option>
-          <option value="salida">Solo salidas</option>
+          <option value="todos">Todos los tipos</option>
+          {Object.entries(TIPO_CONFIG).map(([tipo, cfg]) => (
+            <option key={tipo} value={tipo}>{cfg.label}</option>
+          ))}
         </select>
-        <select className="filter-select" value={filterMotivo} onChange={e => setFilterMotivo(e.target.value)}>
-          <option value="todos">Todos los motivos</option>
-          <option value="nueva_conexion">Nueva conexión</option>
-          <option value="averia">Avería</option>
-          <option value="mantenimiento">Mantenimiento</option>
-          <option value="compra">Compra</option>
-          <option value="reposicion">Reposición</option>
-          <option value="transferencia">Transferencia</option>
-          <option value="instalacion">Instalación</option>
-        </select>
-        <button className="btn btn-outline" onClick={handleExportar}>
+        <button className="btn btn-outline" onClick={() => { setExportForm(emptyExport); setModalExport(true); }}>
           <Icon d={IC.download} size={15} />
           Exportar
         </button>
@@ -114,83 +565,147 @@ export default function AdminAuditoria() {
 
       {/* Contador */}
       <div style={{ marginBottom: 12, fontSize: 13, color: "var(--text-muted)" }}>
-        {filtered.length} registro(s) encontrado(s)
+        {filtered.length} registro(s) en {grupos.length} día(s)
+        {filterSede !== "todas" && <> · Sede: <strong>{filterSede}</strong></>}
+        {filterTipo !== "todos" && <> · Tipo: <strong>{TIPO_CONFIG[filterTipo]?.label}</strong></>}
       </div>
 
-      {/* Tabla */}
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Fecha</th>
-                <th>Tipo</th>
-                <th>Ítem</th>
-                <th>Cant.</th>
-                <th>Sede</th>
-                <th>Usuario</th>
-                <th>Motivo</th>
-                <th>Comentario</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
-                    Sin registros con los filtros aplicados
-                  </td>
-                </tr>
-              ) : filtered.map((m, i) => (
-                <tr key={i}>
-                  <td className="text-sm text-muted" style={{ whiteSpace: "nowrap" }}>
-                    {formatDate(m.fecha)}
-                  </td>
-                  <td>
-                    <Badge variant={m.tipo === "entrada" ? "entrada" : "salida"}>
-                      {m.tipo}
-                    </Badge>
-                  </td>
-                  <td className="fw-600">{m.item}</td>
-                  <td className="mono">{m.cantidad}</td>
-                  <td className="text-sm">{m.sede ?? "—"}</td>
-                  <td>
-                    <div className="fw-600" style={{ fontSize: 13 }}>{m.usuario ?? "—"}</div>
-                    <div className="text-sm text-muted" style={{ textTransform: "capitalize" }}>
-                      {m.rol ?? ""}
-                    </div>
-                  </td>
-                  <td>
-                    {m.motivo
-                      ? <MotivoBadge motivo={m.motivo} />
-                      : <span className="text-muted">—</span>
-                    }
-                  </td>
-                  <td>
-                    {m.comentario ? (
-                      <div style={styles.comentario}>
-                        <Icon d={IC.comment} size={12} color="var(--text-muted)" />
-                        <span className="text-sm">{m.comentario}</span>
-                      </div>
-                    ) : (
-                      <span className="text-muted">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {grupos.length === 0 && (
+        <div className="card" style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+          Sin registros con los filtros aplicados
         </div>
-      </div>
+      )}
+
+      {grupos.map(([fechaKey, items]) => (
+        <div key={fechaKey} style={{ marginBottom: 20 }}>
+          <div style={{
+            display: "flex", alignItems: "center", gap: 8,
+            marginBottom: 8, paddingBottom: 6, borderBottom: "2px solid var(--border)",
+          }}>
+            <Icon d={IC.calendar} size={14} color="var(--text-muted)" />
+            <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>
+              {fechaKey === "sin-fecha" ? "Sin fecha" : formatDate(fechaKey)}
+            </span>
+            <span style={{ fontSize: 12, color: "var(--text-muted)", background: "var(--hover)", borderRadius: 12, padding: "2px 8px" }}>
+              {items.length} movimiento{items.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="card" style={{ marginBottom: 0 }}>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Tipo</th><th>Detalle</th><th>Cant.</th>
+                    <th>Sede</th><th>Comentario</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {items.map((m, i) => (
+                    <tr key={i}>
+                      <td style={{ whiteSpace: "nowrap" }}><TipoBadge tipo={m.tipo} /></td>
+                      <td><DetalleMovimiento m={m} /></td>
+                      <td className="mono fw-600">{m.cantidad}</td>
+                      <td className="text-sm">{m.sede ?? "—"}</td>
+                      <td>
+                        {m.comentario ? (
+                          <div style={{ display: "flex", alignItems: "flex-start", gap: 4, maxWidth: 200 }}>
+                            <Icon d={IC.comment} size={11} color="var(--text-muted)" />
+                            <span className="text-sm text-muted">{m.comentario}</span>
+                          </div>
+                        ) : <span className="text-muted">—</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      ))}
+
+      {/* Modal exportar */}
+      {modalExport && (
+        <Modal
+          title="Exportar auditoría"
+          onClose={() => setModalExport(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModalExport(false)}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleExportar}>
+                <Icon d={exportForm.formato === "pdf" ? IC.pdf : IC.excel} size={14} />
+                Exportar {exportForm.formato === "pdf" ? "PDF" : "Excel"}
+              </button>
+            </>
+          }
+        >
+          {/* Selector de formato */}
+          <div className="form-group">
+            <label className="form-label">Formato</label>
+            <div style={{ display: "flex", gap: 10 }}>
+              {[
+                { key: "pdf",   label: "PDF",   sub: "Informe imprimible con logo",  icon: IC.pdf   },
+                { key: "excel", label: "Excel",  sub: "3 hojas: resumen, detalle, sedes", icon: IC.excel },
+              ].map(f => (
+                <div key={f.key} onClick={() => setExportForm(prev => ({ ...prev, formato: f.key }))}
+                  style={{
+                    flex: 1, padding: "12px 14px", borderRadius: 8, cursor: "pointer",
+                    border: `2px solid ${exportForm.formato === f.key ? "var(--primary)" : "var(--border)"}`,
+                    background: exportForm.formato === f.key ? "var(--primary-bg, #f0f4ff)" : "var(--surface)",
+                    display: "flex", alignItems: "center", gap: 10, transition: "all 0.15s",
+                  }}>
+                  <Icon d={f.icon} size={18} color={exportForm.formato === f.key ? "var(--primary)" : "var(--text-muted)"} />
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: 13 }}>{f.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{f.sub}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Rango de fechas */}
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Desde</label>
+              <input className="form-input" type="date" {...expField("fechaDesde")} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Hasta</label>
+              <input className="form-input" type="date" {...expField("fechaHasta")} />
+            </div>
+          </div>
+
+          {/* Sede y tipo */}
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Sede</label>
+              <select className="form-input" {...expField("sede")}>
+                <option value="todas">Todas las sedes</option>
+                {sedes.map(s => <option key={s.id} value={s.nombre}>{s.nombre}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Tipo</label>
+              <select className="form-input" {...expField("tipo")}>
+                <option value="todos">Todos</option>
+                {Object.entries(TIPO_CONFIG).map(([tipo, cfg]) => (
+                  <option key={tipo} value={tipo}>{cfg.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div style={{
+            padding: "10px 14px", background: "var(--hover)",
+            borderRadius: 8, fontSize: 13, color: "var(--text-muted)"
+          }}>
+            Se exportarán <strong style={{ color: "var(--text)" }}>
+              {aplicarFiltrosExport().length}
+            </strong> registro(s) con los filtros seleccionados.
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
-
-const styles = {
-  comentario: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: 5,
-    maxWidth: 200,
-    color: "var(--text-secondary)",
-  },
-};

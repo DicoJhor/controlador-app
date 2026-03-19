@@ -4,7 +4,7 @@ exports.getAll = async (req, res) => {
   try {
     const sede_id = req.user.sede_id
     const [rows] = await db.query(`
-      SELECT r.id, r.cliente, r.direccion, r.serie, r.estado,
+      SELECT r.id, r.cliente, r.direccion, r.serie, r.tipo_equipo, r.estado,
              r.comentario, r.foto, r.created_at,
              u.nombre as tecnico, u.id as tecnico_id
       FROM recojos r
@@ -21,17 +21,21 @@ exports.getAll = async (req, res) => {
 
 exports.create = async (req, res) => {
   try {
-    const { tecnico_id, cliente, direccion, serie } = req.body
+    const { tecnico_id, cliente, direccion, serie, tipo_equipo } = req.body
     const registrado_por = req.user.id
 
-    if (!tecnico_id || !serie)
-      return res.status(400).json({ message: "Técnico y serie son obligatorios" })
+    if (!tecnico_id || !tipo_equipo)
+      return res.status(400).json({ message: "Técnico y tipo de equipo son obligatorios" })
 
     const [result] = await db.query(
-      "INSERT INTO recojos (tecnico_id, cliente, direccion, serie, estado, registrado_por) VALUES (?, ?, ?, ?, 'pendiente', ?)",
-      [tecnico_id, cliente || null, direccion || null, serie, registrado_por]
+      `INSERT INTO recojos (tecnico_id, cliente, direccion, serie, tipo_equipo, estado, registrado_por)
+       VALUES (?, ?, ?, ?, ?, 'pendiente', ?)`,
+      [tecnico_id, cliente || null, direccion || null, serie || null, tipo_equipo, registrado_por]
     )
-    res.status(201).json({ id: result.insertId, tecnico_id, cliente, direccion, serie, estado: "pendiente" })
+    res.status(201).json({
+      id: result.insertId, tecnico_id, cliente, direccion,
+      serie: serie || null, tipo_equipo, estado: "pendiente"
+    })
   } catch (err) {
     console.error("❌ Error create recojo:", err.message)
     res.status(500).json({ message: "Error al crear recojo", error: err.message })
@@ -48,7 +52,6 @@ exports.confirmar = async (req, res) => {
       "UPDATE recojos SET estado = 'recogido', comentario = ?, foto = ? WHERE id = ?",
       [comentario || null, foto, id]
     )
-
     res.json({ message: "Recojo confirmado", foto })
   } catch (err) {
     console.error("❌ Error confirmar recojo:", err.message)
@@ -61,7 +64,7 @@ exports.getMisRecojos = async (req, res) => {
   try {
     const tecnico_id = req.user.id
     const [rows] = await db.query(`
-      SELECT id, cliente, direccion, serie, estado,
+      SELECT id, cliente, direccion, serie, tipo_equipo, estado,
              comentario, foto, created_at
       FROM recojos
       WHERE tecnico_id = ?
@@ -85,7 +88,6 @@ exports.confirmarTecnico = async (req, res) => {
       "UPDATE recojos SET estado = 'recogido', comentario = ?, foto = ? WHERE id = ? AND tecnico_id = ?",
       [comentario || null, foto, id, tecnico_id]
     )
-
     res.json({ message: "Recojo confirmado", foto })
   } catch (err) {
     console.error("❌ Error confirmarTecnico:", err.message)

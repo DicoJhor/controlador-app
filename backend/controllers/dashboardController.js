@@ -14,7 +14,7 @@ exports.getStats = async (req, res) => {
 
     // Stock total de productos
     const [[{ stockTotal }]] = await db.query(
-      "SELECT COALESCE(SUM(stock_total), 0) as stockTotal FROM productos"
+      "SELECT COALESCE(SUM(cantidad), 0) as stockTotal FROM stock_sede WHERE sede_id = 2"
     )
 
     // Movimientos de hoy (entradas + entregas)
@@ -28,9 +28,17 @@ exports.getStats = async (req, res) => {
 
     // Productos con stock bajo mínimo
     const [stockBajo] = await db.query(`
-      SELECT nombre, stock_total as stock, stock_minimo as minimo
-      FROM productos
-      WHERE stock_minimo > 0 AND stock_total <= stock_minimo
+      SELECT
+        p.nombre,
+        ss.cantidad as stock,
+        p.stock_minimo as minimo,
+        s.nombre as sede,
+        s.id as sede_id
+      FROM productos p
+      JOIN stock_sede ss ON ss.producto_id = p.id
+      JOIN sedes s ON s.id = ss.sede_id
+      WHERE p.stock_minimo > 0 AND ss.cantidad <= p.stock_minimo
+      ORDER BY ss.cantidad ASC, s.nombre ASC
     `)
 
     // Últimos 5 movimientos (entradas + entregas combinados)

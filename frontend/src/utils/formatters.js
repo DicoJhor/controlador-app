@@ -1,11 +1,12 @@
 /**
  * Formatea una fecha ISO a formato legible
- * @param {string} dateStr - "2025-03-10"
+ * @param {string} dateStr - "2025-03-10" o "2025-03-10T00:00:00.000Z"
  * @returns {string} - "10 mar 2025"
  */
 export const formatDate = (dateStr) => {
   if (!dateStr) return "—";
-  const date = new Date(dateStr + "T00:00:00");
+  const date = new Date(dateStr);
+  if (isNaN(date)) return "—";
   return date.toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "short",
@@ -21,6 +22,7 @@ export const formatDate = (dateStr) => {
 export const formatDateTime = (isoString) => {
   if (!isoString) return "—";
   const date = new Date(isoString);
+  if (isNaN(date)) return "—";
   return date.toLocaleDateString("es-AR", {
     day: "2-digit",
     month: "short",

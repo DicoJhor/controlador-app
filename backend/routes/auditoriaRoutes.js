@@ -4,6 +4,6 @@ const { getMovimientos } = require("../controllers/auditoriaController")
 const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
 
-router.get("/", verificarToken, verificarRol("admin"), getMovimientos)
+router.get("/", verificarToken, verificarRol("admin", "superadmin"), getMovimientos)
 
 module.exports = router

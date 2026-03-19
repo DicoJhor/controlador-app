@@ -13,6 +13,8 @@ const dashboardRoutes = require("./routes/dashboardRoutes")
 const auditoriaRoutes = require("./routes/auditoriaRoutes")
 const recojosRoutes = require("./routes/recojosRoutes")
 const tecnicoRoutes = require("./routes/tecnicoRoutes")
+const enviosRoutes = require("./routes/enviosRoutes")
+const activosRouter = require("./routes/activosRoutes")
 
 const app = express()
 
@@ -20,7 +22,10 @@ const app = express()
 
 // CORS configurado para frontend (Vite)
 app.use(cors({
-  origin: process.env.FRONTEND_URL || "http://localhost:5173",
+  origin: [
+    process.env.FRONTEND_URL || "http://localhost:5173",
+  "http://localhost:5173"
+  ],
   credentials: true
 }))
 
@@ -38,6 +43,9 @@ app.use("/api/dashboard", dashboardRoutes)
 app.use("/api/auditoria", auditoriaRoutes)
 app.use("/api/recojos", recojosRoutes)
 app.use("/api/tecnico", tecnicoRoutes)
+app.use("/api/envios", enviosRoutes)
+app.use("/api/activos", activosRouter)
+
 
 // ── Ruta de prueba ─────────────────────────────────────
 

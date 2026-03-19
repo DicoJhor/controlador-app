@@ -37,6 +37,7 @@ import TecRecojos   from "../pages/tecnico/Recojos";
  */
 function RoleRedirect() {
   const { role } = useAuth();
+  if (role === ROLES.SUPERADMIN)        return <Navigate to="/admin/dashboard"       replace />;
   if (role === ROLES.ADMIN)        return <Navigate to="/admin/dashboard"       replace />;
   if (role === ROLES.CONTROLADOR)  return <Navigate to="/controlador/dashboard" replace />;
   if (role === ROLES.TECNICO)      return <Navigate to="/tecnico/dashboard"     replace />;
@@ -58,7 +59,7 @@ export default function AppRouter() {
         </Route>
 
         {/* ── Admin ── */}
-        <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN]} />}>
+        <Route element={<ProtectedRoute allowedRoles={[ROLES.ADMIN, ROLES.SUPERADMIN]} />}>
           <Route element={<MainLayout />}>
             <Route path="/admin/dashboard"  element={<AdminDashboard />} />
             <Route path="/admin/sedes"      element={<AdminSedes />} />

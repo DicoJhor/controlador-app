@@ -8,7 +8,8 @@ exports.verStock = async (req, res) => {
       SELECT 
         ss.id, ss.cantidad,
         p.id as producto_id, p.nombre as producto,
-        p.codigo, p.categoria, p.unidad, p.stock_minimo
+        p.codigo, p.categoria, p.unidad, p.stock_minimo,
+        p.es_medible, p.metros_por_unidad, p.metros_disponibles
       FROM stock_sede ss
       JOIN productos p ON ss.producto_id = p.id
       WHERE ss.sede_id = ?
@@ -56,6 +57,18 @@ exports.entradaStock = async (req, res) => {
       "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
       [cantidad, producto_id]
     )
+
+    // Si es medible, sumar metros
+    const [[prod]] = await db.query(
+      "SELECT es_medible, metros_por_unidad FROM productos WHERE id = ?",
+      [producto_id]
+    )
+    if (prod?.es_medible && prod?.metros_por_unidad) {
+      await db.query(
+        "UPDATE productos SET metros_disponibles = COALESCE(metros_disponibles, 0) + ? WHERE id = ?",
+        [cantidad * prod.metros_por_unidad, producto_id]
+      )
+    }
 
     res.json({ message: "Entrada registrada correctamente" })
   } catch (err) {
@@ -118,7 +131,10 @@ exports.salidaStock = async (req, res) => {
 
 // REGISTRAR SALIDA MÚLTIPLE
 exports.salidaStockMultiple = async (req, res) => {
+  const conn = await db.getConnection()
   try {
+    await conn.beginTransaction()
+
     const { tecnico_id, motivo, comentario, items } = req.body
     const sede_id = req.user.sede_id
     const registrado_por = req.user.id
@@ -126,50 +142,72 @@ exports.salidaStockMultiple = async (req, res) => {
     if (!tecnico_id || !motivo || !items || items.length === 0)
       return res.status(400).json({ message: "Faltan campos obligatorios" })
 
-    // Verificar stock suficiente para todos antes de procesar
+    // Verificar stock antes de procesar
     for (const item of items) {
-      const [[stockActual]] = await db.query(
+      const [[stockActual]] = await conn.query(
         "SELECT cantidad FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
         [sede_id, item.producto_id]
       )
       if (!stockActual || stockActual.cantidad < item.cantidad)
         return res.status(400).json({ message: `Stock insuficiente para el ítem ID ${item.producto_id}` })
+
+      // Si es medible, verificar metros
+      const [[prod]] = await conn.query(
+        "SELECT es_medible, metros_disponibles FROM productos WHERE id = ?",
+        [item.producto_id]
+      )
+      if (prod?.es_medible && item.metros !== undefined) {
+        if ((prod.metros_disponibles ?? 0) < item.metros)
+          return res.status(400).json({ message: `Metros insuficientes para el ítem ID ${item.producto_id}. Disponibles: ${prod.metros_disponibles}m` })
+      }
     }
 
     // Procesar cada ítem
     for (const item of items) {
-      await db.query(
+      await conn.query(
         "INSERT INTO entregas_tecnicos (producto_id, tecnico_id, cantidad, fecha, registrado_por) VALUES (?, ?, ?, NOW(), ?)",
         [item.producto_id, tecnico_id, item.cantidad, registrado_por]
       )
 
-      await db.query(
+      await conn.query(
         "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
         [item.cantidad, sede_id, item.producto_id]
       )
 
-      const [asignacion] = await db.query(
+      const [asignacion] = await conn.query(
         "SELECT id FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
         [tecnico_id, item.producto_id, sede_id]
       )
 
       if (asignacion.length > 0) {
-        await db.query(
+        await conn.query(
           "UPDATE asignaciones_tecnicos SET cantidad = cantidad + ? WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
           [item.cantidad, tecnico_id, item.producto_id, sede_id]
         )
       } else {
-        await db.query(
+        await conn.query(
           "INSERT INTO asignaciones_tecnicos (tecnico_id, producto_id, sede_id, cantidad, fecha) VALUES (?, ?, ?, ?, NOW())",
           [tecnico_id, item.producto_id, sede_id, item.cantidad]
         )
       }
+
+      // Si es medible y se pasaron metros, descontar metros
+      if (item.metros !== undefined && item.metros > 0) {
+        await conn.query(
+          "UPDATE productos SET metros_disponibles = metros_disponibles - ? WHERE id = ?",
+          [item.metros, item.producto_id]
+        )
+      }
     }
 
+    await conn.commit()
     res.json({ message: "Salida múltiple registrada correctamente" })
   } catch (err) {
+    await conn.rollback()
     console.error("❌ Error salidaStockMultiple:", err.message)
     res.status(500).json({ message: "Error al registrar salida", error: err.message })
+  } finally {
+    conn.release()
   }
 }
 
