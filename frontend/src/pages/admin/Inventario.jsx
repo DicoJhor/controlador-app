@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Modal from "../../components/ui/Modal";
 import { Badge } from "../../components/ui/Badge";
 import { formatNumber } from "../../utils/formatters";
@@ -25,20 +25,30 @@ const IC = {
   send:     "M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z",
   remove:   "M18 6L6 18 M6 6l12 12",
   building: "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z",
+  chevron:  "M6 9l6 6 6-6",
+  tag:      "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z M7 7h.01",
 };
 
-const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros"];
+const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros", "ropa"];
+const TALLAS     = ["XS", "S", "M", "L", "XL", "XXL"];
+const GENEROS    = ["masculino", "femenino", "unisex"];
 
 const emptyForm = {
   codigo: "", nombre: "", descripcion: "", categoria: "",
   unidad: "", stock_total: "", stock_minimo: "",
-  es_medible: false, metros_por_unidad: "", metros_disponibles: ""
+  es_medible: false, metros_por_unidad: "", metros_disponibles: "",
+  tiene_variantes: false,
 };
 
 const emptyEnvio = {
   sede_id: "", guia: "", comentario: "",
   fecha_envio: new Date().toISOString().split("T")[0],
   productos: []
+};
+
+const emptyVarianteForm = {
+  talla: "S", genero: "masculino",
+  stock_total: "", stock_minimo: "", codigo: ""
 };
 
 function StockBar({ stock, minimo }) {
@@ -58,6 +68,32 @@ function StockBar({ stock, minimo }) {
   );
 }
 
+function VarianteBadge({ talla, genero }) {
+  const generoLabel = { masculino: "M", femenino: "F", unisex: "U" };
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      {genero && (
+        <span style={{
+          background: genero === "masculino" ? "#EFF6FF" : genero === "femenino" ? "#FDF2F8" : "#F0FDF4",
+          color: genero === "masculino" ? "#1D4ED8" : genero === "femenino" ? "#9D174D" : "#166534",
+          fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 6,
+        }}>
+          {generoLabel[genero] ?? genero}
+        </span>
+      )}
+      {talla && (
+        <span style={{
+          background: "#F8FAFC", color: "#475569",
+          fontSize: 11, fontWeight: 700, padding: "1px 6px",
+          borderRadius: 6, border: "1px solid #E2E8F0",
+        }}>
+          {talla}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function AdminInventario() {
   const { isSuperadmin } = useAuth();
 
@@ -72,13 +108,11 @@ export default function AdminInventario() {
   const [form,          setForm]          = useState(emptyForm);
   const [saving,        setSaving]        = useState(false);
 
-  // Vista por sede
-  const [vistaMode,     setVistaMode]     = useState("central");
-  const [sedeVista,     setSedeVista]     = useState("");
-  const [stockSede,     setStockSede]     = useState([]);
-  const [loadingSede,   setLoadingSede]   = useState(false);
+  const [vistaMode,   setVistaMode]   = useState("central");
+  const [sedeVista,   setSedeVista]   = useState("");
+  const [stockSede,   setStockSede]   = useState([]);
+  const [loadingSede, setLoadingSede] = useState(false);
 
-  // Entrada de stock
   const [entradaForm,   setEntradaForm]   = useState({
     guia: "", sede_id: "2", comentario: "",
     fecha: new Date().toISOString().split("T")[0], productos: []
@@ -86,10 +120,17 @@ export default function AdminInventario() {
   const [entradaSearch, setEntradaSearch] = useState("");
   const SEDE_CENTRAL = 2;
 
-  // Envío
   const [envioForm,   setEnvioForm]   = useState(emptyEnvio);
   const [envioSearch, setEnvioSearch] = useState("");
   const [envioError,  setEnvioError]  = useState("");
+
+  const [variantesMap,      setVariantesMap]      = useState({});
+  const [expandedProduct,   setExpandedProduct]   = useState(null);
+  const [loadingVariantes,  setLoadingVariantes]  = useState({});
+  const [varianteModal,     setVarianteModal]     = useState(false);
+  const [varianteSelected,  setVarianteSelected]  = useState(null);
+  const [varianteForm,      setVarianteForm]      = useState(emptyVarianteForm);
+  const [varianteProductoId, setVarianteProductoId] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -97,7 +138,7 @@ export default function AdminInventario() {
       sedesService.getAll(),
     ]).then(([prods, sds]) => {
       setProductos(prods);
-      setSedes(sds.filter(s => s.id !==2));
+      setSedes(sds.filter(s => s.id !== 2));
       setLoading(false);
     }).catch(() => {
       setError("No se pudieron cargar los datos");
@@ -105,7 +146,6 @@ export default function AdminInventario() {
     });
   }, []);
 
-  // Cargar stock de sede seleccionada
   useEffect(() => {
     if (vistaMode === "sede" && sedeVista) {
       setLoadingSede(true);
@@ -116,7 +156,6 @@ export default function AdminInventario() {
     }
   }, [vistaMode, sedeVista]);
 
-  // Al cambiar a vista sede, seleccionar primera sede por defecto
   useEffect(() => {
     if (vistaMode === "sede" && !sedeVista && sedes.length > 0) {
       setSedeVista(String(sedes[0].id));
@@ -136,10 +175,113 @@ export default function AdminInventario() {
   );
 
   const lowStockCount = productos.filter(p =>
-    p.stock_minimo > 0 && p.stock_total <= p.stock_minimo
+    p.stock_minimo > 0 && p.stock_total <= p.stock_minimo && !p.tiene_variantes
   ).length;
 
   const sedeName = sedes.find(s => String(s.id) === String(sedeVista))?.nombre ?? "";
+
+  // ── Variantes helpers ──────────────────────────────────
+  const toggleVariantes = async (productoId) => {
+    if (expandedProduct === productoId) { setExpandedProduct(null); return; }
+    setExpandedProduct(productoId);
+    if (!variantesMap[productoId]) {
+      setLoadingVariantes(prev => ({ ...prev, [productoId]: true }));
+      try {
+        const data = await productosService.getVariantes(productoId);
+        setVariantesMap(prev => ({ ...prev, [productoId]: data }));
+      } catch {
+        alert("No se pudieron cargar las variantes");
+      } finally {
+        setLoadingVariantes(prev => ({ ...prev, [productoId]: false }));
+      }
+    }
+  };
+
+  const openCrearVariante = (productoId) => {
+    setVarianteProductoId(productoId);
+    setVarianteSelected(null);
+    setVarianteForm(emptyVarianteForm);
+    setVarianteModal("crear");
+  };
+
+  const openEditarVariante = (variante, productoId) => {
+    setVarianteProductoId(productoId);
+    setVarianteSelected(variante);
+    setVarianteForm({
+      talla:        variante.talla ?? "",
+      genero:       variante.genero ?? "",
+      stock_total:  String(variante.stock_total),
+      stock_minimo: String(variante.stock_minimo),
+      codigo:       variante.codigo ?? "",
+    });
+    setVarianteModal("editar");
+  };
+
+  const openEliminarVariante = (variante, productoId) => {
+    setVarianteProductoId(productoId);
+    setVarianteSelected(variante);
+    setVarianteModal("eliminar");
+  };
+
+  const handleGuardarVariante = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        talla:        varianteForm.talla || null,
+        genero:       varianteForm.genero || null,
+        stock_total:  Number(varianteForm.stock_total) || 0,
+        stock_minimo: Number(varianteForm.stock_minimo) || 0,
+        codigo:       varianteForm.codigo || null,
+      };
+      if (varianteModal === "crear") {
+        const nueva = await productosService.crearVariante(varianteProductoId, payload);
+        setVariantesMap(prev => ({
+          ...prev,
+          [varianteProductoId]: [...(prev[varianteProductoId] ?? []), nueva],
+        }));
+        setProductos(prev => prev.map(p =>
+          p.id === varianteProductoId ? { ...p, tiene_variantes: 1 } : p
+        ));
+      } else {
+        const updated = await productosService.actualizarVariante(varianteSelected.id, payload);
+        setVariantesMap(prev => ({
+          ...prev,
+          [varianteProductoId]: prev[varianteProductoId].map(v =>
+            v.id === varianteSelected.id ? updated : v
+          ),
+        }));
+      }
+      setVarianteModal(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleEliminarVariante = async () => {
+    setSaving(true);
+    try {
+      await productosService.eliminarVariante(varianteSelected.id);
+      const restantes = (variantesMap[varianteProductoId] ?? []).filter(v => v.id !== varianteSelected.id);
+      setVariantesMap(prev => ({ ...prev, [varianteProductoId]: restantes }));
+      if (restantes.length === 0) {
+        setProductos(prev => prev.map(p =>
+          p.id === varianteProductoId ? { ...p, tiene_variantes: 0 } : p
+        ));
+      }
+      setVarianteModal(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const varianteField = (key) => ({
+    value: varianteForm[key],
+    onChange: (e) => setVarianteForm(prev => ({ ...prev, [key]: e.target.value })),
+  });
 
   // ── Envío helpers ──────────────────────────────────────
   const prodEnvioFiltrados = productos.filter(p =>
@@ -147,24 +289,102 @@ export default function AdminInventario() {
     (p.codigo ?? "").toLowerCase().includes(envioSearch.toLowerCase())
   );
 
-  const agregarProductoEnvio = (prod) => {
-    setEnvioForm(prev => {
-      if (prev.productos.find(p => p.producto_id === prod.id)) return prev;
-      return { ...prev, productos: [...prev.productos, {
-        producto_id: prod.id, nombre: prod.nombre, codigo: prod.codigo,
-        stock_total: prod.stock_total, unidad: prod.unidad, cantidad: 1
-      }]};
-    });
+  const agregarProductoEnvio = async (prod) => {
+    if (prod.tiene_variantes) {
+      if (!variantesMap[prod.id]) {
+        try {
+          const data = await productosService.getVariantes(prod.id);
+          setVariantesMap(prev => ({ ...prev, [prod.id]: data }));
+        } catch {
+          alert("No se pudieron cargar las variantes");
+          return;
+        }
+      }
+      setEnvioForm(prev => {
+        if (prev.productos.find(p => p.producto_id === prod.id)) return prev;
+        return {
+          ...prev,
+          productos: [...prev.productos, {
+            producto_id:     prod.id,
+            nombre:          prod.nombre,
+            codigo:          prod.codigo,
+            tiene_variantes: true,
+            variantes:       [],
+          }]
+        };
+      });
+    } else {
+      setEnvioForm(prev => {
+        if (prev.productos.find(p => p.producto_id === prod.id)) return prev;
+        return {
+          ...prev,
+          productos: [...prev.productos, {
+            producto_id:     prod.id,
+            nombre:          prod.nombre,
+            codigo:          prod.codigo,
+            stock_total:     prod.stock_total,
+            unidad:          prod.unidad,
+            cantidad:        1,
+            tiene_variantes: false,
+          }]
+        };
+      });
+    }
     setEnvioSearch("");
   };
 
   const quitarProductoEnvio = (producto_id) =>
-    setEnvioForm(prev => ({ ...prev, productos: prev.productos.filter(p => p.producto_id !== producto_id) }));
+    setEnvioForm(prev => ({
+      ...prev,
+      productos: prev.productos.filter(p => p.producto_id !== producto_id)
+    }));
 
   const setCantidadEnvio = (producto_id, valor) =>
-    setEnvioForm(prev => ({ ...prev, productos: prev.productos.map(p =>
-      p.producto_id === producto_id ? { ...p, cantidad: Number(valor) } : p
-    )}));
+    setEnvioForm(prev => ({
+      ...prev,
+      productos: prev.productos.map(p =>
+        p.producto_id === producto_id ? { ...p, cantidad: Number(valor) } : p
+      )
+    }));
+
+  const toggleVarianteEnvio = (producto_id, variante) => {
+    setEnvioForm(prev => ({
+      ...prev,
+      productos: prev.productos.map(p => {
+        if (p.producto_id !== producto_id) return p;
+        const yaEsta = p.variantes.find(v => v.variante_id === variante.id);
+        if (yaEsta) {
+          return { ...p, variantes: p.variantes.filter(v => v.variante_id !== variante.id) };
+        } else {
+          return {
+            ...p,
+            variantes: [...p.variantes, {
+              variante_id: variante.id,
+              talla:       variante.talla,
+              genero:      variante.genero,
+              stock_total: variante.stock_total,
+              cantidad:    1,
+            }]
+          };
+        }
+      })
+    }));
+  };
+
+  const setCantidadVarianteEnvio = (producto_id, variante_id, valor) => {
+    setEnvioForm(prev => ({
+      ...prev,
+      productos: prev.productos.map(p => {
+        if (p.producto_id !== producto_id) return p;
+        return {
+          ...p,
+          variantes: p.variantes.map(v =>
+            v.variante_id === variante_id ? { ...v, cantidad: Number(valor) } : v
+          )
+        };
+      })
+    }));
+  };
 
   const handleEnviar = async () => {
     setEnvioError("");
@@ -172,10 +392,43 @@ export default function AdminInventario() {
     if (!envioForm.guia.trim())           return setEnvioError("Ingresá el número de guía.");
     if (!envioForm.fecha_envio)           return setEnvioError("Ingresá la fecha de envío.");
     if (envioForm.productos.length === 0) return setEnvioError("Agregá al menos un producto.");
+
     for (const p of envioForm.productos) {
-      if (!p.cantidad || p.cantidad <= 0) return setEnvioError(`Cantidad inválida en "${p.nombre}".`);
-      if (p.cantidad > p.stock_total)     return setEnvioError(`Stock insuficiente para "${p.nombre}". Disponible: ${p.stock_total}.`);
+      if (p.tiene_variantes) {
+        if (!p.variantes || p.variantes.length === 0)
+          return setEnvioError(`Seleccioná al menos una variante de "${p.nombre}".`);
+        for (const v of p.variantes) {
+          if (!v.cantidad || v.cantidad <= 0)
+            return setEnvioError(`Cantidad inválida en "${p.nombre}" — ${v.genero} ${v.talla}.`);
+          if (v.cantidad > v.stock_total)
+            return setEnvioError(`Stock insuficiente para "${p.nombre}" ${v.genero} ${v.talla}. Disponible: ${v.stock_total}.`);
+        }
+      } else {
+        if (!p.cantidad || p.cantidad <= 0)
+          return setEnvioError(`Cantidad inválida en "${p.nombre}".`);
+        if (p.cantidad > p.stock_total)
+          return setEnvioError(`Stock insuficiente para "${p.nombre}". Disponible: ${p.stock_total}.`);
+      }
     }
+
+    const productosPayload = [];
+    for (const p of envioForm.productos) {
+      if (p.tiene_variantes) {
+        for (const v of p.variantes) {
+          productosPayload.push({
+            producto_id: p.producto_id,
+            variante_id: v.variante_id,
+            cantidad:    v.cantidad,
+          });
+        }
+      } else {
+        productosPayload.push({
+          producto_id: p.producto_id,
+          cantidad:    p.cantidad,
+        });
+      }
+    }
+
     setSaving(true);
     try {
       await enviosService.create({
@@ -183,12 +436,19 @@ export default function AdminInventario() {
         guia:        envioForm.guia,
         comentario:  envioForm.comentario,
         fecha_envio: envioForm.fecha_envio,
-        productos:   envioForm.productos.map(p => ({ producto_id: p.producto_id, cantidad: p.cantidad }))
+        productos:   productosPayload,
       });
+
       setProductos(prev => prev.map(p => {
         const item = envioForm.productos.find(e => e.producto_id === p.id);
-        return item ? { ...p, stock_total: p.stock_total - item.cantidad } : p;
+        if (!item) return p;
+        if (item.tiene_variantes) {
+          const totalEnviado = item.variantes.reduce((sum, v) => sum + v.cantidad, 0);
+          return { ...p, stock_total: p.stock_total - totalEnviado };
+        }
+        return { ...p, stock_total: p.stock_total - item.cantidad };
       }));
+
       setEnvioForm(emptyEnvio);
       setModal(false);
     } catch (err) {
@@ -208,6 +468,7 @@ export default function AdminInventario() {
       es_medible: !!p.es_medible,
       metros_por_unidad: p.metros_por_unidad ?? "",
       metros_disponibles: p.metros_disponibles ?? "",
+      tiene_variantes: !!p.tiene_variantes,
     });
     setSelected(p);
     setModal("editar");
@@ -242,7 +503,6 @@ export default function AdminInventario() {
         const updated = res.productos?.find(u => u.id === p.id);
         return updated ? { ...p, ...updated } : p;
       }));
-      // Si estamos en vista sede, recargar stock de esa sede
       if (vistaMode === "sede" && sedeVista) {
         const data = await productosService.getStockBySede(sedeVista);
         setStockSede(data);
@@ -292,19 +552,30 @@ export default function AdminInventario() {
         es_medible: form.es_medible ? 1 : 0,
         metros_por_unidad: form.es_medible ? (Number(form.metros_por_unidad) || null) : null,
         metros_disponibles: form.es_medible ? (Number(form.metros_disponibles) || null) : null,
+        tiene_variantes: form.tiene_variantes ? 1 : 0,
       };
+
       if (modal === "crear") {
         const nuevo = await productosService.create(payload);
         setProductos(prev => [...prev, nuevo]);
+        setModal(false);
+        if (form.tiene_variantes) {
+          setVariantesMap(prev => ({ ...prev, [nuevo.id]: [] }));
+          setExpandedProduct(nuevo.id);
+          setTimeout(() => {
+            document.getElementById(`producto-row-${nuevo.id}`)?.scrollIntoView({
+              behavior: "smooth", block: "center"
+            });
+          }, 150);
+        }
       } else {
         await productosService.update(selected.id, { ...payload, estado: selected.estado });
         setProductos(prev => prev.map(p => p.id === selected.id ? { ...p, ...payload } : p));
-        // Si estamos en vista sede, actualizar también stockSede
         if (vistaMode === "sede") {
           setStockSede(prev => prev.map(p => p.id === selected.id ? { ...p, ...payload } : p));
         }
+        setModal(false);
       }
-      setModal(false);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -353,7 +624,6 @@ export default function AdminInventario() {
           />
         </div>
 
-        {/* Toggle Central / Por sede */}
         <div style={{ display: "flex", background: "var(--hover)", borderRadius: 8, padding: 3, gap: 2 }}>
           <button onClick={() => { setVistaMode("central"); setSearch(""); }}
             style={{
@@ -379,14 +649,12 @@ export default function AdminInventario() {
           </button>
         </div>
 
-        {/* Selector de sede */}
         {vistaMode === "sede" && (
           <select className="filter-select" value={sedeVista} onChange={e => setSedeVista(e.target.value)}>
             {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
           </select>
         )}
 
-        {/* Filtro categoría — solo en central */}
         {vistaMode === "central" && (
           <select className="filter-select" value={filterCat} onChange={e => setFilterCat(e.target.value)}>
             <option value="todas">Todas las categorías</option>
@@ -396,7 +664,6 @@ export default function AdminInventario() {
           </select>
         )}
 
-        {/* Acciones en central — admin y superadmin */}
         {vistaMode === "central" && (
           <>
             <button className="btn btn-outline" onClick={openEnvio}>
@@ -414,7 +681,6 @@ export default function AdminInventario() {
           </>
         )}
 
-        {/* Acciones en sede — solo superadmin */}
         {vistaMode === "sede" && isSuperadmin && (
           <button className="btn btn-outline" onClick={openEntrada}>
             <Icon d="M5 12h14 M12 5l7 7-7 7" size={15} />
@@ -443,45 +709,154 @@ export default function AdminInventario() {
                     </td>
                   </tr>
                 ) : filtered.map(p => {
-                  const low  = p.stock_minimo > 0 && p.stock_total <= p.stock_minimo;
-                  const warn = p.stock_minimo > 0 && p.stock_total <= p.stock_minimo * 1.5;
+                  const low  = !p.tiene_variantes && p.stock_minimo > 0 && p.stock_total <= p.stock_minimo;
+                  const warn = !p.tiene_variantes && p.stock_minimo > 0 && p.stock_total <= p.stock_minimo * 1.5;
+                  const isExpanded = expandedProduct === p.id;
+                  const variantes  = variantesMap[p.id] ?? [];
+
                   return (
-                    <tr key={p.id}>
-                      <td><span className="mono">{p.codigo ?? "—"}</span></td>
-                      <td>
-                        <div className="fw-600">{p.nombre}</div>
-                        {p.descripcion && <div className="text-sm text-muted">{p.descripcion}</div>}
-                      </td>
-                      <td>{p.categoria ? <Badge variant="blue">{p.categoria}</Badge> : <span className="text-muted">—</span>}</td>
-                      <td className="text-sm">{p.unidad ?? "—"}</td>
-                      <td><StockBar stock={p.stock_total} minimo={p.stock_minimo} /></td>
-                      <td className="mono text-muted">{p.stock_minimo}</td>
-                      <td>
-                        {p.es_medible && p.metros_disponibles !== null ? (
-                          <div>
-                            <span className="mono fw-600" style={{ color: "var(--info)" }}>{p.metros_disponibles}m</span>
-                            <div className="text-sm text-muted">{p.metros_por_unidad}m/rollo</div>
-                          </div>
-                        ) : <span className="text-muted">—</span>}
-                      </td>
-                      <td>
-                        {low  ? <Badge variant="danger">⚠ Bajo stock</Badge>
-                              : warn ? <Badge variant="warning">Atención</Badge>
-                              : <Badge variant="active">OK</Badge>}
-                      </td>
-                      <td>
-                        <div style={{ display: "flex", gap: 6 }}>
-                          <button className="btn btn-outline btn-sm btn-icon" onClick={() => openEditar(p)}>
-                            <Icon d={IC.edit} size={13} />
-                          </button>
-                          {isSuperadmin && (
-                            <button className="btn btn-danger-outline btn-sm btn-icon" onClick={() => openEliminar(p)}>
-                              <Icon d={IC.trash} size={13} />
-                            </button>
+                    <React.Fragment key={p.id}>
+                      <tr id={`producto-row-${p.id}`}
+                        style={{ background: isExpanded ? "var(--hover)" : "transparent" }}>
+                        <td><span className="mono">{p.codigo ?? "—"}</span></td>
+                        <td>
+                          <div className="fw-600">{p.nombre}</div>
+                          {p.descripcion && <div className="text-sm text-muted">{p.descripcion}</div>}
+                        </td>
+                        <td>{p.categoria ? <Badge variant="blue">{p.categoria}</Badge> : <span className="text-muted">—</span>}</td>
+                        <td className="text-sm">{p.unidad ?? "—"}</td>
+                        <td>
+                          <StockBar stock={p.stock_total} minimo={p.stock_minimo} />
+                          {p.tiene_variantes && (
+                            <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                              {variantesMap[p.id]
+                                ? `${variantesMap[p.id].length} variante(s)`
+                                : "Expandir para ver"
+                              }
+                            </div>
                           )}
-                        </div>
-                      </td>
-                    </tr>
+                        </td>
+                        <td className="mono text-muted">{p.tiene_variantes ? "—" : p.stock_minimo}</td>
+                        <td>
+                          {p.es_medible && p.metros_disponibles !== null ? (
+                            <div>
+                              <span className="mono fw-600" style={{ color: "var(--info)" }}>{p.metros_disponibles}m</span>
+                              <div className="text-sm text-muted">{p.metros_por_unidad}m/rollo</div>
+                            </div>
+                          ) : <span className="text-muted">—</span>}
+                        </td>
+                        <td>
+                          {p.tiene_variantes
+                            ? <Badge variant="blue">Con variantes</Badge>
+                            : low   ? <Badge variant="danger">⚠ Bajo stock</Badge>
+                            : warn  ? <Badge variant="warning">Atención</Badge>
+                            : <Badge variant="active">OK</Badge>
+                          }
+                        </td>
+                        <td>
+                          <div style={{ display: "flex", gap: 6 }}>
+                            {p.tiene_variantes && (
+                              <button className="btn btn-outline btn-sm"
+                                onClick={() => toggleVariantes(p.id)}
+                                style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                <Icon d={IC.tag} size={12} />
+                                Variantes
+                                <span style={{
+                                  display: "inline-block", transition: "transform .2s",
+                                  transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)"
+                                }}>
+                                  <Icon d={IC.chevron} size={12} />
+                                </span>
+                              </button>
+                            )}
+                            <button className="btn btn-outline btn-sm btn-icon" onClick={() => openEditar(p)}>
+                              <Icon d={IC.edit} size={13} />
+                            </button>
+                            {isSuperadmin && (
+                              <button className="btn btn-danger-outline btn-sm btn-icon" onClick={() => openEliminar(p)}>
+                                <Icon d={IC.trash} size={13} />
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={9} style={{ padding: 0, background: "#F8FAFC" }}>
+                            <div style={{ padding: "12px 20px 16px", borderTop: "1px solid var(--border)" }}>
+                              {loadingVariantes[p.id] ? (
+                                <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Cargando variantes...</div>
+                              ) : (
+                                <>
+                                  {variantes.length > 0 && (
+                                    <table style={{ width: "100%", marginBottom: 12, fontSize: 13 }}>
+                                      <thead>
+                                        <tr>
+                                          <th style={thStyle}>Variante</th>
+                                          <th style={thStyle}>Código</th>
+                                          <th style={thStyle}>Stock</th>
+                                          <th style={thStyle}>Mínimo</th>
+                                          <th style={thStyle}>Estado</th>
+                                          <th style={thStyle}></th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {variantes.map(v => {
+                                          const vLow  = v.stock_minimo > 0 && v.stock_total <= v.stock_minimo;
+                                          const vWarn = v.stock_minimo > 0 && v.stock_total <= v.stock_minimo * 1.5;
+                                          return (
+                                            <tr key={v.id} style={{ background: "white" }}>
+                                              <td style={{ padding: "8px 12px" }}>
+                                                <VarianteBadge talla={v.talla} genero={v.genero} />
+                                              </td>
+                                              <td style={{ padding: "8px 12px" }}>
+                                                <span className="mono">{v.codigo ?? "—"}</span>
+                                              </td>
+                                              <td style={{ padding: "8px 12px" }}>
+                                                <StockBar stock={v.stock_total} minimo={v.stock_minimo} />
+                                              </td>
+                                              <td style={{ padding: "8px 12px" }} className="mono text-muted">
+                                                {v.stock_minimo}
+                                              </td>
+                                              <td style={{ padding: "8px 12px" }}>
+                                                {vLow  ? <Badge variant="danger">⚠ Bajo</Badge>
+                                                       : vWarn ? <Badge variant="warning">Atención</Badge>
+                                                       : <Badge variant="active">OK</Badge>}
+                                              </td>
+                                              <td style={{ padding: "8px 12px" }}>
+                                                <div style={{ display: "flex", gap: 6 }}>
+                                                  <button className="btn btn-outline btn-sm btn-icon"
+                                                    onClick={() => openEditarVariante(v, p.id)}>
+                                                    <Icon d={IC.edit} size={12} />
+                                                  </button>
+                                                  {isSuperadmin && (
+                                                    <button className="btn btn-danger-outline btn-sm btn-icon"
+                                                      onClick={() => openEliminarVariante(v, p.id)}>
+                                                      <Icon d={IC.trash} size={12} />
+                                                    </button>
+                                                  )}
+                                                </div>
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  )}
+                                  <button className="btn btn-outline btn-sm"
+                                    onClick={() => openCrearVariante(p.id)}
+                                    style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                    <Icon d={IC.plus} size={13} />
+                                    Agregar variante
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
               </tbody>
@@ -590,6 +965,8 @@ export default function AdminInventario() {
             <label className="form-label">Comentario</label>
             <input className="form-input" placeholder="Opcional..." {...envioField("comentario")} />
           </div>
+
+          {/* Buscador */}
           <div className="form-group" style={{ position: "relative" }}>
             <label className="form-label">Agregar productos *</label>
             <div className="search-box">
@@ -602,30 +979,102 @@ export default function AdminInventario() {
                   ? <div style={{ padding: "10px 14px", color: "var(--text-muted)", fontSize: 13 }}>Sin resultados</div>
                   : prodEnvioFiltrados.map(p => (
                     <div key={p.id} onClick={() => agregarProductoEnvio(p)}
-                      style={{ padding: "8px 14px", cursor: "pointer", fontSize: 13, display: "flex", justifyContent: "space-between", borderBottom: "1px solid var(--border)" }}
+                      style={{ padding: "8px 14px", cursor: "pointer", fontSize: 13, display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)" }}
                       onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                       onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                       <span><strong>{p.codigo}</strong> — {p.nombre}</span>
-                      <span style={{ color: "var(--text-muted)" }}>Stock: {p.stock_total}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        {p.tiene_variantes && (
+                          <span style={{ fontSize: 11, background: "#EFF6FF", color: "#1D4ED8", padding: "1px 6px", borderRadius: 10, fontWeight: 600 }}>
+                            variantes
+                          </span>
+                        )}
+                        <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Stock: {p.stock_total}</span>
+                      </div>
                     </div>
                   ))}
               </div>
             )}
           </div>
+
+          {/* Lista de productos seleccionados */}
           {envioForm.productos.length > 0 && (
-            <div style={{ marginTop: 8 }}>
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
               {envioForm.productos.map(p => (
-                <div key={p.producto_id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px", marginBottom: 6, background: "var(--hover)", borderRadius: 8, border: "1px solid var(--border)" }}>
-                  <div style={{ flex: 1, fontSize: 13 }}>
-                    <span className="fw-600">{p.codigo}</span> — {p.nombre}
-                    <span style={{ color: "var(--text-muted)", marginLeft: 6 }}>(Disponible: {p.stock_total} {p.unidad ?? ""})</span>
+                <div key={p.producto_id} style={{
+                  background: "var(--hover)", borderRadius: 8,
+                  border: "1px solid var(--border)", overflow: "hidden"
+                }}>
+                  {/* Cabecera */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px" }}>
+                    <div style={{ flex: 1, fontSize: 13 }}>
+                      <span className="fw-600">{p.codigo}</span> — {p.nombre}
+                      {p.tiene_variantes && (
+                        <span style={{ fontSize: 11, background: "#EFF6FF", color: "#1D4ED8", padding: "1px 6px", borderRadius: 10, fontWeight: 600, marginLeft: 6 }}>
+                          {p.variantes?.length ?? 0} seleccionada(s)
+                        </span>
+                      )}
+                      {!p.tiene_variantes && (
+                        <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 12 }}>
+                          (Disponible: {p.stock_total} {p.unidad ?? ""})
+                        </span>
+                      )}
+                    </div>
+                    {!p.tiene_variantes && (
+                      <input type="number" min={1} max={p.stock_total} value={p.cantidad}
+                        onChange={e => setCantidadEnvio(p.producto_id, e.target.value)}
+                        style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", fontSize: 13, background: "var(--surface)", color: "var(--text)" }} />
+                    )}
+                    <button className="btn btn-danger-outline btn-sm btn-icon"
+                      onClick={() => quitarProductoEnvio(p.producto_id)}>
+                      <Icon d={IC.remove} size={12} />
+                    </button>
                   </div>
-                  <input type="number" min={1} max={p.stock_total} value={p.cantidad}
-                    onChange={e => setCantidadEnvio(p.producto_id, e.target.value)}
-                    style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid var(--border)", fontSize: 13, background: "var(--surface)", color: "var(--text)" }} />
-                  <button className="btn btn-danger-outline btn-sm btn-icon" onClick={() => quitarProductoEnvio(p.producto_id)}>
-                    <Icon d={IC.remove} size={12} />
-                  </button>
+
+                  {/* Selector de variantes */}
+                  {p.tiene_variantes && (
+                    <div style={{ borderTop: "1px solid var(--border)", padding: "8px 10px", background: "white" }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                        Seleccionar variantes a enviar:
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {(variantesMap[p.producto_id] ?? []).map(v => {
+                          const seleccionada = p.variantes?.find(sv => sv.variante_id === v.id);
+                          return (
+                            <div key={v.id} style={{
+                              display: "flex", alignItems: "center", gap: 8,
+                              padding: "6px 8px", borderRadius: 6,
+                              background: seleccionada ? "#EFF6FF" : "var(--hover)",
+                              border: `1px solid ${seleccionada ? "#BFDBFE" : "var(--border)"}`,
+                              cursor: "pointer",
+                            }}
+                              onClick={() => toggleVarianteEnvio(p.producto_id, v)}
+                            >
+                              <input type="checkbox"
+                                checked={!!seleccionada}
+                                onChange={() => toggleVarianteEnvio(p.producto_id, v)}
+                                style={{ cursor: "pointer" }}
+                              />
+                              <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 6 }}>
+                                <VarianteBadge talla={v.talla} genero={v.genero} />
+                                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                                  Stock: {v.stock_total}
+                                </span>
+                              </div>
+                              {seleccionada && (
+                                <input type="number" min={1} max={v.stock_total}
+                                  value={seleccionada.cantidad}
+                                  onChange={e => setCantidadVarianteEnvio(p.producto_id, v.id, e.target.value)}
+                                  onClick={e => e.stopPropagation()}
+                                  style={{ width: 70, padding: "4px 8px", borderRadius: 6, border: "1px solid #BFDBFE", fontSize: 13, background: "white", color: "var(--text)" }}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -719,7 +1168,7 @@ export default function AdminInventario() {
         </Modal>
       )}
 
-      {/* Modal Crear / Editar */}
+      {/* Modal Crear / Editar producto */}
       {(modal === "crear" || modal === "editar") && (
         <Modal
           title={modal === "crear" ? "Nuevo Producto" : `Editar — ${selected?.nombre}`}
@@ -759,25 +1208,29 @@ export default function AdminInventario() {
               <label className="form-label">Unidad</label>
               <input className="form-input" placeholder="metros, unidad, caja..." {...field("unidad")} />
             </div>
-            <div className="form-group">
-              <label className="form-label">Stock mínimo</label>
-              <input className="form-input" type="number" min="0" placeholder="0" {...field("stock_minimo")} />
-            </div>
+            {!form.tiene_variantes && (
+              <div className="form-group">
+                <label className="form-label">Stock mínimo</label>
+                <input className="form-input" type="number" min="0" placeholder="0" {...field("stock_minimo")} />
+              </div>
+            )}
           </div>
-          {modal === "crear" && (
+          {modal === "crear" && !form.tiene_variantes && (
             <div className="form-group">
               <label className="form-label">Stock inicial</label>
               <input className="form-input" type="number" min="0" placeholder="0" {...field("stock_total")} />
             </div>
           )}
-          <div className="form-group" style={{ marginTop: 8 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
-              <input type="checkbox" checked={!!form.es_medible}
-                onChange={e => setForm(prev => ({ ...prev, es_medible: e.target.checked, metros_por_unidad: "", metros_disponibles: "" }))} />
-              Este producto se mide en metros (cable, fibra, rollo...)
-            </label>
-          </div>
-          {form.es_medible && (
+          {!form.tiene_variantes && (
+            <div className="form-group" style={{ marginTop: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+                <input type="checkbox" checked={!!form.es_medible}
+                  onChange={e => setForm(prev => ({ ...prev, es_medible: e.target.checked, metros_por_unidad: "", metros_disponibles: "" }))} />
+                Este producto se mide en metros (cable, fibra, rollo...)
+              </label>
+            </div>
+          )}
+          {form.es_medible && !form.tiene_variantes && (
             <div className="form-row">
               <div className="form-group">
                 <label className="form-label">Metros por unidad/rollo</label>
@@ -789,10 +1242,29 @@ export default function AdminInventario() {
               </div>
             </div>
           )}
+          <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+              <input type="checkbox" checked={!!form.tiene_variantes}
+                onChange={e => setForm(prev => ({
+                  ...prev,
+                  tiene_variantes: e.target.checked,
+                  es_medible: false,
+                  stock_total: "",
+                  stock_minimo: "",
+                }))} />
+              Este producto tiene variantes (talla / género)
+            </label>
+            {form.tiene_variantes && (
+              <div style={{ marginTop: 10, padding: "10px 14px", background: "var(--hover)", borderRadius: 8, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon d={IC.tag} size={13} color="var(--text-muted)" />
+                Al guardar, se abrirá el panel de variantes automáticamente.
+              </div>
+            )}
+          </div>
         </Modal>
       )}
 
-      {/* Modal Eliminar */}
+      {/* Modal Eliminar producto */}
       {modal === "eliminar" && (
         <Modal title="Eliminar producto" onClose={() => setModal(false)}
           footer={
@@ -810,6 +1282,84 @@ export default function AdminInventario() {
           </div>
         </Modal>
       )}
+
+      {/* Modal Crear / Editar variante */}
+      {(varianteModal === "crear" || varianteModal === "editar") && (
+        <Modal
+          title={varianteModal === "crear" ? "Nueva variante" : "Editar variante"}
+          onClose={() => setVarianteModal(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setVarianteModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleGuardarVariante} disabled={saving}>
+                {saving ? "Guardando..." : varianteModal === "crear" ? "Agregar variante" : "Guardar cambios"}
+              </button>
+            </>
+          }
+        >
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Género</label>
+              <select className="form-input" {...varianteField("genero")}>
+                {GENEROS.map(g => (
+                  <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Talla</label>
+              <select className="form-input" {...varianteField("talla")}>
+                {TALLAS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Código de variante</label>
+            <input className="form-input" placeholder="Ej: PLO-M-S" {...varianteField("codigo")} />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Stock inicial</label>
+              <input className="form-input" type="number" min="0" placeholder="0" {...varianteField("stock_total")} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Stock mínimo</label>
+              <input className="form-input" type="number" min="0" placeholder="0" {...varianteField("stock_minimo")} />
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal Eliminar variante */}
+      {varianteModal === "eliminar" && (
+        <Modal title="Eliminar variante" onClose={() => setVarianteModal(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setVarianteModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-danger-outline" onClick={handleEliminarVariante} disabled={saving}>
+                {saving ? "Eliminando..." : "Eliminar"}
+              </button>
+            </>
+          }
+        >
+          <div className="alert alert-danger" style={{ marginBottom: 0 }}>
+            <Icon d={IC.alert} size={15} color="var(--danger)" />
+            ¿Eliminás la variante <strong>
+              {varianteSelected?.genero} — {varianteSelected?.talla}
+            </strong>? Esta acción no se puede deshacer.
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
+
+const thStyle = {
+  padding: "7px 12px",
+  background: "#F1F5F9",
+  color: "#475569",
+  fontWeight: 600,
+  fontSize: 12,
+  textAlign: "left",
+  borderBottom: "1px solid var(--border)",
+};

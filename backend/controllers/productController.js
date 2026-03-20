@@ -199,13 +199,31 @@ exports.obtenerStockPorSede = async (req, res) => {
       `SELECT
          p.id, p.codigo, p.nombre, p.descripcion,
          p.categoria, p.unidad, p.stock_minimo, p.estado,
-         p.es_medible, p.metros_por_unidad,
-         ss.cantidad as stock_total
+         p.es_medible, p.metros_por_unidad, p.tiene_variantes,
+         CASE
+           WHEN p.tiene_variantes = 1
+           THEN COALESCE((
+             SELECT SUM(ssv.cantidad)
+             FROM stock_sede_variante ssv
+             JOIN producto_variantes pv ON pv.id = ssv.variante_id
+             WHERE pv.producto_id = p.id AND ssv.sede_id = ?
+           ), 0)
+           ELSE COALESCE(ss.cantidad, 0)
+         END as stock_total
        FROM productos p
-       INNER JOIN stock_sede ss ON ss.producto_id = p.id AND ss.sede_id = ?
-       WHERE p.estado = 1 AND ss.cantidad > 0
+       LEFT JOIN stock_sede ss ON ss.producto_id = p.id AND ss.sede_id = ?
+       WHERE p.estado = 1
+       AND (
+         ss.cantidad > 0
+         OR p.tiene_variantes = 1
+         OR EXISTS (
+           SELECT 1 FROM stock_sede_variante ssv
+           JOIN producto_variantes pv ON pv.id = ssv.variante_id
+           WHERE pv.producto_id = p.id AND ssv.sede_id = ? AND ssv.cantidad > 0
+         )
+       )
        ORDER BY p.nombre`,
-      [id]
+      [id, id, id]
     )
     res.json(rows)
   } catch (err) {
