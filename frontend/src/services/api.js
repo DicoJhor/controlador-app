@@ -1,4 +1,5 @@
 const BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:4000/api";
+
 const request = async (endpoint, options = {}) => {
   const token = localStorage.getItem("token");
 
@@ -27,31 +28,33 @@ const request = async (endpoint, options = {}) => {
   return response.json();
 };
 
-const api = {
-  get:    (endpoint) => request(endpoint, { method: "GET" }),
-  post:   (endpoint, body) => request(endpoint, { method: "POST", body: JSON.stringify(body) }),
-  put:    (endpoint, body) => request(endpoint, { method: "PUT", body: JSON.stringify(body) }),
-  patch:  (endpoint, body) => request(endpoint, { method: "PATCH", body: JSON.stringify(body) }),
-  delete: (endpoint) => request(endpoint, { method: "DELETE" }),
+const formRequest = (method, endpoint, formData) => {
+  const token = localStorage.getItem("token");
+  return fetch(`${BASE_URL}${endpoint}`, {
+    method,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+  }).then(res => {
+    if (res.status === 401) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      window.location.href = "/login";
+      return;
+    }
+    if (!res.ok) return res.json().then(e => { throw new Error(e.message || `Error ${res.status}`) });
+    if (res.status === 204) return null;
+    return res.json();
+  });
+};
 
-  patchForm: (endpoint, formData) => {
-    const token = localStorage.getItem("token");
-    return fetch(`${BASE_URL}${endpoint}`, {
-      method: "PATCH",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-      body: formData,
-    }).then(res => {
-      if (res.status === 401) {
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        window.location.href = "/login";
-        return;
-      }
-      if (!res.ok) return res.json().then(e => { throw new Error(e.message || `Error ${res.status}`) });
-      if (res.status === 204) return null;
-      return res.json();
-    });
-  },
+const api = {
+  get:       (endpoint)       => request(endpoint, { method: "GET" }),
+  post:      (endpoint, body) => request(endpoint, { method: "POST",  body: JSON.stringify(body) }),
+  put:       (endpoint, body) => request(endpoint, { method: "PUT",   body: JSON.stringify(body) }),
+  patch:     (endpoint, body) => request(endpoint, { method: "PATCH", body: JSON.stringify(body) }),
+  delete:    (endpoint)       => request(endpoint, { method: "DELETE" }),
+  postForm:  (endpoint, formData) => formRequest("POST",  endpoint, formData),
+  patchForm: (endpoint, formData) => formRequest("PATCH", endpoint, formData),
 };
 
 export default api;

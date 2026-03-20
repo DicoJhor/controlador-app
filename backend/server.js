@@ -15,6 +15,7 @@ const recojosRoutes = require("./routes/recojosRoutes")
 const tecnicoRoutes = require("./routes/tecnicoRoutes")
 const enviosRoutes = require("./routes/enviosRoutes")
 const activosRouter = require("./routes/activosRoutes")
+const activacionesRouter = require("./routes/activacionesRoutes")
 
 const app = express()
 
@@ -45,6 +46,8 @@ app.use("/api/recojos", recojosRoutes)
 app.use("/api/tecnico", tecnicoRoutes)
 app.use("/api/envios", enviosRoutes)
 app.use("/api/activos", activosRouter)
+app.use("/api/activaciones", activacionesRouter)
+
 
 
 // ── Ruta de prueba ─────────────────────────────────────

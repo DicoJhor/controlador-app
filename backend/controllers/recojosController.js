@@ -1,5 +1,11 @@
 const db = require("../config/db")
 
+const toRelative = (file) => {
+  if (!file) return null
+  const dest = file.destination.replace(/\\/g, "/").replace(/^uploads\/?/, "")
+  return `${dest}/${file.filename}`
+}
+
 exports.getAll = async (req, res) => {
   try {
     const sede_id = req.user.sede_id
@@ -44,9 +50,9 @@ exports.create = async (req, res) => {
 
 exports.confirmar = async (req, res) => {
   try {
-    const { id } = req.params
+    const { id }         = req.params
     const { comentario } = req.body
-    const foto = req.file ? req.file.filename : null
+    const foto           = toRelative(req.file)
 
     await db.query(
       "UPDATE recojos SET estado = 'recogido', comentario = ?, foto = ? WHERE id = ?",
@@ -59,7 +65,6 @@ exports.confirmar = async (req, res) => {
   }
 }
 
-// Para técnico
 exports.getMisRecojos = async (req, res) => {
   try {
     const tecnico_id = req.user.id
@@ -79,10 +84,10 @@ exports.getMisRecojos = async (req, res) => {
 
 exports.confirmarTecnico = async (req, res) => {
   try {
-    const { id } = req.params
-    const tecnico_id = req.user.id
+    const { id }         = req.params
+    const tecnico_id     = req.user.id
     const { comentario } = req.body
-    const foto = req.file ? req.file.filename : null
+    const foto           = toRelative(req.file)
 
     await db.query(
       "UPDATE recojos SET estado = 'recogido', comentario = ?, foto = ? WHERE id = ? AND tecnico_id = ?",

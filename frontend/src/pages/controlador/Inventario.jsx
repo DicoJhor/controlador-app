@@ -4,6 +4,8 @@ import { Badge } from "../../components/ui/Badge";
 import { formatNumber } from "../../utils/formatters";
 import { MOTIVOS_ENTRADA, MOTIVOS_SALIDA } from "../../utils/constants";
 import stockService from "../../services/stockService";
+import activosService from "../../services/activosService";
+import { useAuth } from "../../hooks/useAuth";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
@@ -15,19 +17,30 @@ function Icon({ d, size = 16, color = "currentColor" }) {
 }
 
 const IC = {
-  search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
-  entry:  "M5 12h14 M12 5l7 7-7 7",
-  exit:   "M19 12H5 M12 19l-7-7 7-7",
-  alert:  "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
-  check:  "M20 6L9 17l-5-5",
-  plus:   "M12 5v14 M5 12h14",
-  trash:  "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
-  ruler:  "M2 12h20 M12 2v20",
+  search:  "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
+  entry:   "M5 12h14 M12 5l7 7-7 7",
+  exit:    "M19 12H5 M12 19l-7-7 7-7",
+  alert:   "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
+  check:   "M20 6L9 17l-5-5",
+  plus:    "M12 5v14 M5 12h14",
+  trash:   "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+  ruler:   "M2 12h20 M12 2v20",
+  edit:    "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
+  box:     "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z",
+  package: "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z M3.27 6.96L12 12.01l8.73-5.05 M12 22.08V12",
 };
 
-const emptyEntrada = { producto_id: "", cantidad: "", motivo: "", comentario: "" };
-const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
-const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
+const ESTADO_CONFIG = {
+  operativo:     { label: "Operativo",     color: "#16a34a", bg: "#dcfce7" },
+  dañado:        { label: "Dañado",        color: "#dc2626", bg: "#fee2e2" },
+  en_reparacion: { label: "En reparación", color: "#d97706", bg: "#fef3c7" },
+  de_baja:       { label: "De baja",       color: "#6b7280", bg: "#f3f4f6" },
+};
+
+const emptyEntrada   = { producto_id: "", cantidad: "", motivo: "", comentario: "" };
+const emptySalida    = { tecnico_id: "", motivo: "", comentario: "", items: [] };
+const emptyItem      = { producto_id: "", cantidad: "", metros: "" };
+const emptyActivoForm = { nombre: "", descripcion: "", nro_serie: "", estado: "operativo", area: "NOC" };
 
 function StockBar({ stock, minimo }) {
   if (!minimo) return <span className="mono">{formatNumber(stock)}</span>;
@@ -47,6 +60,13 @@ function StockBar({ stock, minimo }) {
 }
 
 export default function CtrlInventario() {
+  const { user } = useAuth();
+  const sedeId = user?.sede_id;
+
+  // ── Tab activo ─────────────────────────────────────────────
+  const [tab, setTab] = useState("stock"); // "stock" | "activos"
+
+  // ── Stock ──────────────────────────────────────────────────
   const [stock,    setStock]    = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -57,6 +77,14 @@ export default function CtrlInventario() {
   const [salida,   setSalida]   = useState(emptySalida);
   const [saving,   setSaving]   = useState(false);
   const [success,  setSuccess]  = useState(null);
+
+  // ── Activos ────────────────────────────────────────────────
+  const [activos,       setActivos]       = useState([]);
+  const [loadingActivos, setLoadingActivos] = useState(false);
+  const [areaActiva,    setAreaActiva]    = useState("NOC");
+  const [activoModal,   setActivoModal]   = useState(false);
+  const [activoSelected, setActivoSelected] = useState(null);
+  const [activoForm,    setActivoForm]    = useState(emptyActivoForm);
 
   useEffect(() => { cargarDatos(); }, []);
 
@@ -69,12 +97,81 @@ export default function CtrlInventario() {
       })
       .catch(() => { setError("No se pudo cargar el inventario"); setLoading(false); });
 
+  // Cargar activos al cambiar a tab activos
+  useEffect(() => {
+    if (tab === "activos" && activos.length === 0 && sedeId) {
+      setLoadingActivos(true);
+      activosService.getBySede(sedeId)
+        .then(data => setActivos(data))
+        .catch(() => alert("No se pudieron cargar los activos"))
+        .finally(() => setLoadingActivos(false));
+    }
+  }, [tab, sedeId]);
+
   const filtered = stock.filter(i =>
     i.producto.toLowerCase().includes(search.toLowerCase()) ||
     (i.codigo ?? "").toLowerCase().includes(search.toLowerCase())
   );
 
+  const activosFiltrados = activos.filter(a => a.area === areaActiva);
+
   const lowCount = stock.filter(i => i.stock_minimo > 0 && i.cantidad <= i.stock_minimo).length;
+
+  // ── Activos CRUD ───────────────────────────────────────────
+  const openCrearActivo = () => {
+    setActivoForm({ ...emptyActivoForm, area: areaActiva });
+    setActivoSelected(null);
+    setActivoModal("crear");
+  };
+
+  const openEditarActivo = (activo) => {
+    setActivoForm({
+      nombre:      activo.nombre,
+      descripcion: activo.descripcion ?? "",
+      nro_serie:   activo.nro_serie ?? "",
+      estado:      activo.estado,
+      area:        activo.area,
+    });
+    setActivoSelected(activo);
+    setActivoModal("editar");
+  };
+
+  const handleGuardarActivo = async () => {
+    setSaving(true);
+    try {
+      if (activoModal === "crear") {
+        const nuevo = await activosService.create({
+          sede_id:     sedeId,
+          area:        activoForm.area,
+          nombre:      activoForm.nombre,
+          descripcion: activoForm.descripcion || null,
+          nro_serie:   activoForm.nro_serie || null,
+          estado:      activoForm.estado,
+        });
+        setActivos(prev => [...prev, nuevo]);
+      } else {
+        const actualizado = await activosService.update(activoSelected.id, {
+          nombre:      activoForm.nombre,
+          descripcion: activoForm.descripcion || null,
+          nro_serie:   activoForm.nro_serie || null,
+          estado:      activoForm.estado,
+        });
+        setActivos(prev => prev.map(a =>
+          a.id === activoSelected.id ? actualizado : a
+        ));
+      }
+      setActivoModal(false);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const activoField = (key) => ({
+    value: activoForm[key],
+    onChange: (e) => setActivoForm(prev => ({ ...prev, [key]: e.target.value })),
+  });
 
   // ── Entrada ────────────────────────────────────────────────
   const handleEntrada = async () => {
@@ -166,91 +263,197 @@ export default function CtrlInventario() {
         </div>
       )}
 
-      {lowCount > 0 && (
+      {lowCount > 0 && tab === "stock" && (
         <div className="alert alert-warning">
           <Icon d={IC.alert} size={15} color="var(--warning)" />
           <strong>{lowCount} ítem(s) con stock bajo mínimo en tu sede.</strong>
         </div>
       )}
 
-      <div className="toolbar">
-        <div className="search-box">
-          <Icon d={IC.search} size={16} color="var(--text-muted)" />
-          <input placeholder="Buscar ítem..." value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
-        <button className="btn btn-outline" onClick={() => { setEntrada(emptyEntrada); setModal("entrada"); }}>
-          <Icon d={IC.entry} size={15} />
-          Registrar entrada
-        </button>
-        <button className="btn btn-primary" onClick={() => { setSalida(emptySalida); setModal("salida"); }}>
-          <Icon d={IC.exit} size={15} />
-          Asignar a técnico
-        </button>
+      {/* ── Tabs ── */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "var(--hover)", borderRadius: 10, padding: 4, width: "fit-content" }}>
+        {[
+          { key: "stock",   label: "Stock",   icon: IC.package },
+          { key: "activos", label: "Activos", icon: IC.box     },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            style={{
+              display: "flex", alignItems: "center", gap: 7,
+              padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 500, transition: "all .15s",
+              background: tab === t.key ? "white" : "transparent",
+              color: tab === t.key ? "var(--text)" : "var(--text-muted)",
+              boxShadow: tab === t.key ? "0 1px 3px rgba(0,0,0,.1)" : "none",
+            }}>
+            <Icon d={t.icon} size={14} color={tab === t.key ? "var(--primary)" : "var(--text-muted)"} />
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Código</th><th>Ítem</th><th>Categoría</th>
-                <th>Stock sede</th><th>Metros disp.</th><th>Mínimo</th><th>Estado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
-                    Sin productos en esta sede
-                  </td>
-                </tr>
-              ) : filtered.map(item => {
-                const low  = item.stock_minimo > 0 && item.cantidad <= item.stock_minimo;
-                const warn = item.stock_minimo > 0 && item.cantidad <= item.stock_minimo * 1.5;
-                return (
-                  <tr key={item.id}>
-                    <td><span className="mono">{item.codigo ?? "—"}</span></td>
-                    <td>
-                      <div className="fw-600">{item.producto}</div>
-                      {item.unidad && <div className="text-sm text-muted">{item.unidad}</div>}
-                    </td>
-                    <td>
-                      {item.categoria
-                        ? <Badge variant="blue">{item.categoria}</Badge>
-                        : <span className="text-muted">—</span>}
-                    </td>
-                    <td><StockBar stock={item.cantidad} minimo={item.stock_minimo} /></td>
-                    <td>
-                      {item.es_medible && item.metros_disponibles !== null ? (
-                        <div>
-                          <span className="mono fw-600" style={{ color: "var(--info)" }}>
-                            {formatNumber(item.metros_disponibles)}m
-                          </span>
-                          <div className="text-sm text-muted">{item.metros_por_unidad}m/rollo</div>
-                        </div>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </td>
-                    <td className="mono text-muted">{item.stock_minimo}</td>
-                    <td>
-                      {low  ? <Badge variant="danger">⚠ Bajo stock</Badge>
-                            : warn ? <Badge variant="warning">Atención</Badge>
-                            : <Badge variant="active">OK</Badge>}
-                    </td>
+      {/* ── Vista Stock ── */}
+      {tab === "stock" && (
+        <>
+          <div className="toolbar">
+            <div className="search-box">
+              <Icon d={IC.search} size={16} color="var(--text-muted)" />
+              <input placeholder="Buscar ítem..." value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <button className="btn btn-outline" onClick={() => { setEntrada(emptyEntrada); setModal("entrada"); }}>
+              <Icon d={IC.entry} size={15} />
+              Registrar entrada
+            </button>
+            <button className="btn btn-primary" onClick={() => { setSalida(emptySalida); setModal("salida"); }}>
+              <Icon d={IC.exit} size={15} />
+              Asignar a técnico
+            </button>
+          </div>
+
+          <div className="card">
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Código</th><th>Ítem</th><th>Categoría</th>
+                    <th>Stock sede</th><th>Metros disp.</th><th>Mínimo</th><th>Estado</th>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                        Sin productos en esta sede
+                      </td>
+                    </tr>
+                  ) : filtered.map(item => {
+                    const low  = item.stock_minimo > 0 && item.cantidad <= item.stock_minimo;
+                    const warn = item.stock_minimo > 0 && item.cantidad <= item.stock_minimo * 1.5;
+                    return (
+                      <tr key={item.id}>
+                        <td><span className="mono">{item.codigo ?? "—"}</span></td>
+                        <td>
+                          <div className="fw-600">{item.producto}</div>
+                          {item.unidad && <div className="text-sm text-muted">{item.unidad}</div>}
+                        </td>
+                        <td>
+                          {item.categoria
+                            ? <Badge variant="blue">{item.categoria}</Badge>
+                            : <span className="text-muted">—</span>}
+                        </td>
+                        <td><StockBar stock={item.cantidad} minimo={item.stock_minimo} /></td>
+                        <td>
+                          {item.es_medible && item.metros_disponibles !== null ? (
+                            <div>
+                              <span className="mono fw-600" style={{ color: "var(--info)" }}>
+                                {formatNumber(item.metros_disponibles)}m
+                              </span>
+                              <div className="text-sm text-muted">{item.metros_por_unidad}m/rollo</div>
+                            </div>
+                          ) : <span className="text-muted">—</span>}
+                        </td>
+                        <td className="mono text-muted">{item.stock_minimo}</td>
+                        <td>
+                          {low  ? <Badge variant="danger">⚠ Bajo stock</Badge>
+                                : warn ? <Badge variant="warning">Atención</Badge>
+                                : <Badge variant="active">OK</Badge>}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ── Vista Activos ── */}
+      {tab === "activos" && (
+        <>
+          {/* Sub-tabs NOC / ADMINISTRACIÓN */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 16 }}>
+            {["NOC", "ADMINISTRACION"].map(area => (
+              <button key={area} onClick={() => setAreaActiva(area)}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  padding: "6px 14px", borderRadius: 8, border: "none", cursor: "pointer",
+                  fontSize: 13, fontWeight: 500, transition: "all .15s",
+                  background: areaActiva === area ? "var(--primary)" : "var(--hover)",
+                  color: areaActiva === area ? "white" : "var(--text-muted)",
+                }}>
+                {area === "NOC" ? "NOC" : "Administración"}
+                <span style={{
+                  fontSize: 11, fontWeight: 700,
+                  background: "rgba(0,0,0,.1)",
+                  padding: "1px 6px", borderRadius: 10,
+                }}>
+                  {activos.filter(a => a.area === area).length}
+                </span>
+              </button>
+            ))}
+            <div style={{ flex: 1 }} />
+            <button className="btn btn-primary btn-sm" onClick={openCrearActivo}>
+              <Icon d={IC.plus} size={13} />
+              Agregar activo
+            </button>
+          </div>
+
+          <div className="card">
+            {loadingActivos ? (
+              <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando activos...</div>
+            ) : activosFiltrados.length === 0 ? (
+              <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+                Sin activos registrados en {areaActiva === "NOC" ? "NOC" : "Administración"}
+              </div>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Nombre</th>
+                      <th>Descripción</th>
+                      <th>N° Serie</th>
+                      <th>Estado</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activosFiltrados.map(a => {
+                      const est = ESTADO_CONFIG[a.estado] ?? ESTADO_CONFIG.operativo;
+                      return (
+                        <tr key={a.id}>
+                          <td className="fw-600">{a.nombre}</td>
+                          <td className="text-sm text-muted">{a.descripcion ?? "—"}</td>
+                          <td className="text-sm mono">{a.nro_serie ?? "—"}</td>
+                          <td>
+                            <span style={{
+                              background: est.bg, color: est.color,
+                              padding: "2px 10px", borderRadius: 20,
+                              fontSize: 11, fontWeight: 600,
+                            }}>
+                              {est.label}
+                            </span>
+                          </td>
+                          <td>
+                            <button className="btn btn-outline btn-sm btn-icon"
+                              onClick={() => openEditarActivo(a)}>
+                              <Icon d={IC.edit} size={13} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </>
+      )}
 
       {/* Modal entrada */}
       {modal === "entrada" && (
-        <Modal
-          title="Registrar Entrada"
-          onClose={() => setModal(false)}
+        <Modal title="Registrar Entrada" onClose={() => setModal(false)}
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
@@ -298,9 +501,7 @@ export default function CtrlInventario() {
 
       {/* Modal salida múltiple */}
       {modal === "salida" && (
-        <Modal
-          title="Asignar materiales a técnico"
-          onClose={() => setModal(false)}
+        <Modal title="Asignar materiales a técnico" onClose={() => setModal(false)}
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
@@ -314,8 +515,7 @@ export default function CtrlInventario() {
           <div className="form-row">
             <div className="form-group">
               <label className="form-label">Técnico</label>
-              <select className="form-input"
-                value={salida.tecnico_id}
+              <select className="form-input" value={salida.tecnico_id}
                 onChange={e => setSalida(prev => ({ ...prev, tecnico_id: e.target.value }))}>
                 <option value="">Seleccionar...</option>
                 {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
@@ -323,8 +523,7 @@ export default function CtrlInventario() {
             </div>
             <div className="form-group">
               <label className="form-label">Motivo</label>
-              <select className="form-input"
-                value={salida.motivo}
+              <select className="form-input" value={salida.motivo}
                 onChange={e => setSalida(prev => ({ ...prev, motivo: e.target.value }))}>
                 <option value="">Seleccionar...</option>
                 <option value={MOTIVOS_SALIDA.NUEVA_CONEXION}>Nueva conexión</option>
@@ -336,13 +535,11 @@ export default function CtrlInventario() {
 
           <div className="form-group">
             <label className="form-label">Ítems a asignar</label>
-
             {salida.items.length === 0 && (
               <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13 }}>
                 Agregá al menos un ítem.
               </div>
             )}
-
             {salida.items.map((item, idx) => {
               const productoInfo = stock.find(s => String(s.producto_id) === String(item.producto_id));
               const esMedible = !!productoInfo?.es_medible;
@@ -353,29 +550,21 @@ export default function CtrlInventario() {
                       onChange={e => updateItem(idx, "producto_id", e.target.value)}>
                       <option value="">Seleccionar ítem...</option>
                       {stock.map(s => (
-                        <option
-                          key={s.producto_id}
-                          value={s.producto_id}
-                          disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}
-                        >
+                        <option key={s.producto_id} value={s.producto_id}
+                          disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}>
                           {s.producto} — disp: {s.cantidad}
                           {s.es_medible ? ` (${s.metros_disponibles ?? 0}m)` : ""}
                         </option>
                       ))}
                     </select>
                   </div>
-
-                  {/* Cantidad en rollos/unidades */}
                   <div style={{ flex: 1 }}>
                     <input className="form-input" type="number" min="1"
                       max={productoInfo?.cantidad}
                       placeholder="Cant."
                       value={item.cantidad}
-                      onChange={e => updateItem(idx, "cantidad", e.target.value)}
-                    />
+                      onChange={e => updateItem(idx, "cantidad", e.target.value)} />
                   </div>
-
-                  {/* Metros — solo si es medible */}
                   {esMedible && (
                     <div style={{ flex: 1 }}>
                       <input className="form-input" type="number" min="1"
@@ -383,12 +572,9 @@ export default function CtrlInventario() {
                         placeholder="Metros"
                         value={item.metros}
                         onChange={e => updateItem(idx, "metros", e.target.value)}
-                        style={{ borderColor: "var(--info)" }}
-                        title={`Máx: ${productoInfo?.metros_disponibles ?? "?"}m disponibles`}
-                      />
+                        style={{ borderColor: "var(--info)" }} />
                     </div>
                   )}
-
                   <button className="btn btn-danger-outline btn-sm btn-icon"
                     onClick={() => removeItem(idx)} type="button">
                     <Icon d={IC.trash} size={13} />
@@ -396,18 +582,6 @@ export default function CtrlInventario() {
                 </div>
               );
             })}
-
-            {/* Leyenda metros */}
-            {salida.items.some(i => {
-              const p = stock.find(s => String(s.producto_id) === String(i.producto_id));
-              return !!p?.es_medible;
-            }) && (
-              <div style={{ fontSize: 12, color: "var(--info)", marginTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
-                <Icon d={IC.ruler} size={12} color="var(--info)" />
-                Los campos azules indican metros a descontar del rollo.
-              </div>
-            )}
-
             <button className="btn btn-outline btn-sm" style={{ marginTop: 8 }}
               onClick={agregarItem} type="button">
               <Icon d={IC.plus} size={14} />
@@ -419,8 +593,57 @@ export default function CtrlInventario() {
             <label className="form-label">Comentario <span>(opcional)</span></label>
             <textarea className="form-input" placeholder="Dirección, detalle del trabajo..."
               value={salida.comentario}
-              onChange={e => setSalida(prev => ({ ...prev, comentario: e.target.value }))}
-            />
+              onChange={e => setSalida(prev => ({ ...prev, comentario: e.target.value }))} />
+          </div>
+        </Modal>
+      )}
+
+      {/* Modal crear / editar activo */}
+      {(activoModal === "crear" || activoModal === "editar") && (
+        <Modal
+          title={activoModal === "crear" ? "Nuevo Activo" : `Editar — ${activoSelected?.nombre}`}
+          onClose={() => setActivoModal(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setActivoModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleGuardarActivo} disabled={saving}>
+                {saving ? "Guardando..." : activoModal === "crear" ? "Agregar activo" : "Guardar cambios"}
+              </button>
+            </>
+          }
+        >
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Nombre del activo</label>
+              <input className="form-input" placeholder="Ej: Laptop HP ProBook" {...activoField("nombre")} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">N° de serie</label>
+              <input className="form-input" placeholder="Ej: SN-2024-001" {...activoField("nro_serie")} />
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Descripción</label>
+            <input className="form-input" placeholder="Ej: Core i5, 8GB RAM" {...activoField("descripcion")} />
+          </div>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Estado</label>
+              <select className="form-input" {...activoField("estado")}>
+                <option value="operativo">Operativo</option>
+                <option value="dañado">Dañado</option>
+                <option value="en_reparacion">En reparación</option>
+                <option value="de_baja">De baja</option>
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Área</label>
+              <select className="form-input" {...activoField("area")}
+                disabled={activoModal === "editar"}>
+                <option value="NOC">NOC</option>
+                <option value="ADMINISTRACION">Administración</option>
+              </select>
+            </div>
           </div>
         </Modal>
       )}

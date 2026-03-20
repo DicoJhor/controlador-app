@@ -474,14 +474,17 @@ export default function AdminInventario() {
     setModal("editar");
   };
   const openEliminar = (p) => { setSelected(p); setModal("eliminar"); };
-  const openEntrada  = () => {
+  const openEntrada = () => {
     setEntradaForm({
-      guia: "", sede_id: vistaMode === "sede" ? sedeVista : "2",
-      comentario: "", fecha: new Date().toISOString().split("T")[0], productos: []
-    });
-    setEntradaSearch("");
-    setModal("entrada");
-  };
+      guia: "",
+      sede_id: isSuperadmin && vistaMode === "sede" ? sedeVista : "2", // ← solo superadmin en vista sede elige otra
+      comentario: "",
+      fecha: new Date().toISOString().split("T")[0],
+      productos: []
+  });
+  setEntradaSearch("");
+  setModal("entrada");
+};
   const openEnvio = () => {
     setEnvioForm(emptyEnvio);
     setEnvioSearch("");
@@ -1108,13 +1111,16 @@ export default function AdminInventario() {
             </div>
           </div>
           <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Sede destino</label>
-              <select className="form-input" value={entradaForm.sede_id}
-                onChange={e => setEntradaForm(prev => ({ ...prev, sede_id: e.target.value }))}>
-                {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-              </select>
-            </div>
+            {isSuperadmin && (
+              <div className="form-group">
+                <label className="form-label">Sede destino</label>
+                <select className="form-input" value={entradaForm.sede_id}
+                  onChange={e => setEntradaForm(prev => ({ ...prev, sede_id: e.target.value }))}>
+                  <option value="2">COVICORTI - CENTRAL</option>
+                  {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+                </select>
+              </div>
+            )}
             <div className="form-group">
               <label className="form-label">Comentario</label>
               <input className="form-input" placeholder="Opcional..."

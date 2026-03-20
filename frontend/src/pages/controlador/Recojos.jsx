@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import Modal from "../../components/ui/Modal";
 import recojosService from "../../services/recojosService";
+import activacionesService from "../../services/activacionesService";
+import tecnicoService from "../../services/tecnicoService";
 import stockService from "../../services/stockService";
 import api from "../../services/api";
 
 const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
-
 const TIPOS_EQUIPO = ["ONU", "Triplexor", "Roseta", "Patchcord", "Otro"];
 
 function formatFecha(fecha) {
@@ -29,56 +30,95 @@ const IC = {
   search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
   check:  "M20 6L9 17l-5-5",
   image:  "M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2z M8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z M21 15l-5-5L5 19",
+  wifi:   "M5 12.55a11 11 0 0114.08 0 M1.42 9a16 16 0 0121.16 0 M8.53 16.11a6 6 0 016.95 0 M12 20h.01",
+  wrench: "M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z",
+  box:    "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z",
 };
 
-const emptyForm = { tecnico_id: "", cliente: "", direccion: "", serie: "", tipo_equipo: "" };
+function MaterialesBadge({ materiales }) {
+  if (!materiales || materiales.length === 0)
+    return <span className="text-muted text-sm">—</span>;
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+      {materiales.map((m, i) => (
+        <span key={i} style={{
+          background: "#F1F5F9", color: "#475569",
+          fontSize: 11, fontWeight: 600,
+          padding: "2px 8px", borderRadius: 20,
+          border: "1px solid #E2E8F0",
+          whiteSpace: "nowrap",
+        }}>
+          {m.nombre}: {m.cantidad} {m.unidad ?? ""}
+        </span>
+      ))}
+    </div>
+  );
+}
 
-// Equipos que no requieren serie
+const emptyRecojoForm = { tecnico_id: "", cliente: "", direccion: "", serie: "", tipo_equipo: "" };
 const SIN_SERIE = ["Roseta", "Patchcord", "Triplexor"];
 
 export default function CtrlRecojos() {
-  const [ordenes,  setOrdenes]  = useState([]);
-  const [tecnicos, setTecnicos] = useState([]);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState(null);
-  const [modal,    setModal]    = useState(false);
-  const [search,   setSearch]   = useState("");
-  const [form,     setForm]     = useState(emptyForm);
-  const [saving,   setSaving]   = useState(false);
+  const [tecnicos,      setTecnicos]      = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [error,         setError]         = useState(null);
+
+  // Recojos
+  const [recojos,      setRecojos]      = useState([]);
+  const [searchRecojo, setSearchRecojo] = useState("");
+  const [recojoModal,  setRecojoModal]  = useState(false);
+  const [recojoForm,   setRecojoForm]   = useState(emptyRecojoForm);
+  const [saving,       setSaving]       = useState(false);
+
+  // Activaciones
+  const [activaciones,   setActivaciones]   = useState([]);
+  const [searchActiv,    setSearchActiv]     = useState("");
+  const [filterTecActiv, setFilterTecActiv]  = useState("todos");
+
+  // Averías
+  const [averias,       setAverias]       = useState([]);
+  const [searchAveria,  setSearchAveria]  = useState("");
+  const [filterTecAv,   setFilterTecAv]   = useState("todos");
 
   useEffect(() => {
-    Promise.all([recojosService.getAll(), stockService.getStats()])
-      .then(([dataOrdenes, dataStats]) => {
-        setOrdenes(dataOrdenes);
-        setTecnicos(dataStats.misTecnicos);
-        setLoading(false);
-      })
-      .catch(() => { setError("No se pudieron cargar los recojos"); setLoading(false); });
+    Promise.all([
+      recojosService.getAll(),
+      activacionesService.getAll(),
+      tecnicoService.getAverias(),
+      stockService.getStats(),
+    ]).then(([dataRecojos, dataActivaciones, dataAverias, dataStats]) => {
+      setRecojos(dataRecojos);
+      setActivaciones(dataActivaciones);
+      setAverias(dataAverias);
+      setTecnicos(dataStats.misTecnicos);
+      setLoading(false);
+    }).catch(() => { setError("No se pudieron cargar los datos"); setLoading(false); });
   }, []);
 
-  const filtered = ordenes.filter(o =>
-    (o.cliente ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (o.serie ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (o.tecnico ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (o.tipo_equipo ?? "").toLowerCase().includes(search.toLowerCase())
+  // ── Recojos ────────────────────────────────────────────
+  const filteredRecojos = recojos.filter(o =>
+    (o.cliente ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
+    (o.serie ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
+    (o.tecnico ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
+    (o.tipo_equipo ?? "").toLowerCase().includes(searchRecojo.toLowerCase())
   );
 
-  const requiereSerie = form.tipo_equipo && !SIN_SERIE.includes(form.tipo_equipo);
+  const requiereSerie = recojoForm.tipo_equipo && !SIN_SERIE.includes(recojoForm.tipo_equipo);
 
-  const handleCrear = async () => {
+  const handleCrearRecojo = async () => {
     setSaving(true);
     try {
       const nueva = await recojosService.create({
-        tecnico_id:  Number(form.tecnico_id),
-        cliente:     form.cliente || null,
-        direccion:   form.direccion || null,
-        serie:       requiereSerie ? form.serie : null,
-        tipo_equipo: form.tipo_equipo,
+        tecnico_id:  Number(recojoForm.tecnico_id),
+        cliente:     recojoForm.cliente || null,
+        direccion:   recojoForm.direccion || null,
+        serie:       requiereSerie ? recojoForm.serie : null,
+        tipo_equipo: recojoForm.tipo_equipo,
       });
-      const tecnico = tecnicos.find(t => t.id === Number(form.tecnico_id));
-      setOrdenes(prev => [{ ...nueva, tecnico: tecnico?.nombre ?? "—" }, ...prev]);
-      setModal(false);
-      setForm(emptyForm);
+      const tecnico = tecnicos.find(t => t.id === Number(recojoForm.tecnico_id));
+      setRecojos(prev => [{ ...nueva, tecnico: tecnico?.nombre ?? "—" }, ...prev]);
+      setRecojoModal(false);
+      setRecojoForm(emptyRecojoForm);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -89,110 +129,265 @@ export default function CtrlRecojos() {
   const handleMarcarRecogido = async (id) => {
     try {
       await api.patchForm(`/recojos/${id}`, new FormData());
-      setOrdenes(prev => prev.map(o => o.id === id ? { ...o, estado: "recogido" } : o));
+      setRecojos(prev => prev.map(o => o.id === id ? { ...o, estado: "recogido" } : o));
     } catch (err) {
       alert(err.message);
     }
   };
 
-  const field = (key) => ({
-    value: form[key],
-    onChange: e => setForm(prev => ({ ...prev, [key]: e.target.value }))
+  const recojoField = (key) => ({
+    value: recojoForm[key],
+    onChange: e => setRecojoForm(prev => ({ ...prev, [key]: e.target.value }))
   });
 
-  const formValido = form.tecnico_id && form.tipo_equipo &&
-    (!requiereSerie || form.serie.trim() !== "");
+  const recojoFormValido = recojoForm.tecnico_id && recojoForm.tipo_equipo &&
+    (!requiereSerie || recojoForm.serie.trim() !== "");
 
-  if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando recojos...</div>;
+  // ── Activaciones ───────────────────────────────────────
+  const filteredActivaciones = activaciones.filter(a => {
+    const matchSearch  = (a.cliente ?? "").toLowerCase().includes(searchActiv.toLowerCase()) ||
+                         (a.tecnico ?? "").toLowerCase().includes(searchActiv.toLowerCase()) ||
+                         (a.direccion ?? "").toLowerCase().includes(searchActiv.toLowerCase());
+    const matchTecnico = filterTecActiv === "todos" || String(a.tecnico_id) === filterTecActiv;
+    return matchSearch && matchTecnico;
+  });
+
+  // ── Averías ────────────────────────────────────────────
+  const filteredAverias = averias.filter(a => {
+    const matchSearch  = (a.tecnico ?? "").toLowerCase().includes(searchAveria.toLowerCase()) ||
+                         (a.comentario ?? "").toLowerCase().includes(searchAveria.toLowerCase());
+    const matchTecnico = filterTecAv === "todos" || String(a.tecnico_id) === filterTecAv;
+    return matchSearch && matchTecnico;
+  });
+
+  if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando datos...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
   return (
-    <div>
-      <div className="toolbar">
-        <div className="search-box">
-          <Icon d={IC.search} size={16} color="var(--text-muted)" />
-          <input
-            placeholder="Buscar por cliente, serie, equipo o técnico..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
-        <button className="btn btn-primary" onClick={() => setModal(true)}>
-          <Icon d={IC.plus} size={15} />
-          Nueva orden
-        </button>
-      </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 32 }}>
 
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Técnico</th>
-                <th>Cliente</th>
-                <th>Dirección</th>
-                <th>Equipo</th>
-                <th>Serie</th>
-                <th>Fecha</th>
-                <th>Estado</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
+      {/* ── SECCIÓN RECOJOS ── */}
+      <div>
+        <div style={styles.sectionHeader}>
+          <div>
+            <div style={styles.sectionTitle}>
+              <Icon d={IC.box} size={18} color="var(--primary)" />
+              Recojos de equipos
+            </div>
+            <div style={styles.sectionSubtitle}>Órdenes de recojo asignadas a técnicos</div>
+          </div>
+          <button className="btn btn-primary" onClick={() => setRecojoModal(true)}>
+            <Icon d={IC.plus} size={15} />
+            Nueva orden
+          </button>
+        </div>
+
+        <div className="toolbar" style={{ marginBottom: 12 }}>
+          <div className="search-box">
+            <Icon d={IC.search} size={16} color="var(--text-muted)" />
+            <input placeholder="Buscar por cliente, serie, equipo o técnico..."
+              value={searchRecojo} onChange={e => setSearchRecojo(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
-                    Sin órdenes de recojo
-                  </td>
+                  <th>Técnico</th><th>Cliente</th><th>Dirección</th>
+                  <th>Equipo</th><th>Serie</th><th>Fecha</th><th>Estado</th><th></th>
                 </tr>
-              ) : filtered.map(o => (
-                <tr key={o.id}>
-                  <td className="fw-600">{o.tecnico}</td>
-                  <td>{o.cliente ?? "—"}</td>
-                  <td className="text-sm">{o.direccion ?? "—"}</td>
-                  <td>
-                    <span className="badge badge-blue">{o.tipo_equipo ?? "—"}</span>
-                  </td>
-                  <td><span className="mono">{o.serie ?? "—"}</span></td>
-                  <td className="text-sm text-muted">{formatFecha(o.created_at)}</td>
-                  <td>
-                    <span className={`badge badge-${o.estado === "pendiente" ? "warning" : "active"}`}>
-                      {o.estado === "pendiente" ? "Pendiente" : "Recogido"}
-                    </span>
-                  </td>
-                  <td>
-                    {o.estado === "pendiente" ? (
-                      <button className="btn btn-outline btn-sm" onClick={() => handleMarcarRecogido(o.id)}>
-                        <Icon d={IC.check} size={13} />
-                        Marcar recogido
-                      </button>
-                    ) : (
-                      o.foto
-                        ? <a href={`${BASE_URL}/uploads/${o.foto}`} target="_blank" rel="noreferrer"
-                            className="btn btn-outline btn-sm">
-                            <Icon d={IC.image} size={13} />
-                            Ver foto
-                          </a>
-                        : null
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {filteredRecojos.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                      Sin órdenes de recojo
+                    </td>
+                  </tr>
+                ) : filteredRecojos.map(o => (
+                  <tr key={o.id}>
+                    <td className="fw-600">{o.tecnico}</td>
+                    <td>{o.cliente ?? "—"}</td>
+                    <td className="text-sm">{o.direccion ?? "—"}</td>
+                    <td><span className="badge badge-blue">{o.tipo_equipo ?? "—"}</span></td>
+                    <td><span className="mono">{o.serie ?? "—"}</span></td>
+                    <td className="text-sm text-muted">{formatFecha(o.created_at)}</td>
+                    <td>
+                      <span className={`badge badge-${o.estado === "pendiente" ? "warning" : "active"}`}>
+                        {o.estado === "pendiente" ? "Pendiente" : "Recogido"}
+                      </span>
+                    </td>
+                    <td>
+                      {o.estado === "pendiente" ? (
+                        <button className="btn btn-outline btn-sm" onClick={() => handleMarcarRecogido(o.id)}>
+                          <Icon d={IC.check} size={13} />
+                          Marcar recogido
+                        </button>
+                      ) : o.foto ? (
+                        <a href={`${BASE_URL}/uploads/${o.foto}`} target="_blank" rel="noreferrer"
+                          className="btn btn-outline btn-sm">
+                          <Icon d={IC.image} size={13} />
+                          Ver foto
+                        </a>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
-      {modal && (
-        <Modal
-          title="Nueva orden de recojo"
-          onClose={() => setModal(false)}
+      {/* ── SECCIÓN ACTIVACIONES ── */}
+      <div>
+        <div style={styles.sectionHeader}>
+          <div>
+            <div style={styles.sectionTitle}>
+              <Icon d={IC.wifi} size={18} color="#16a34a" />
+              Activaciones
+            </div>
+            <div style={styles.sectionSubtitle}>Registros de activaciones subidos por técnicos</div>
+          </div>
+        </div>
+
+        <div className="toolbar" style={{ marginBottom: 12 }}>
+          <div className="search-box">
+            <Icon d={IC.search} size={16} color="var(--text-muted)" />
+            <input placeholder="Buscar por cliente, dirección o técnico..."
+              value={searchActiv} onChange={e => setSearchActiv(e.target.value)} />
+          </div>
+          <select className="filter-select" value={filterTecActiv} onChange={e => setFilterTecActiv(e.target.value)}>
+            <option value="todos">Todos los técnicos</option>
+            {tecnicos.map(t => <option key={t.id} value={String(t.id)}>{t.nombre}</option>)}
+          </select>
+        </div>
+
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Técnico</th><th>Cliente</th><th>Dirección</th>
+                  <th>Materiales</th><th>Comentario</th><th>Fecha</th><th>Fotos</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredActivaciones.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                      Sin activaciones registradas
+                    </td>
+                  </tr>
+                ) : filteredActivaciones.map(a => (
+                  <tr key={a.id}>
+                    <td className="fw-600">{a.tecnico}</td>
+                    <td>{a.cliente ?? "—"}</td>
+                    <td className="text-sm">{a.direccion ?? "—"}</td>
+                    <td><MaterialesBadge materiales={a.materiales} /></td>
+                    <td className="text-sm text-muted" style={{ maxWidth: 180 }}>{a.comentario ?? "—"}</td>
+                    <td className="text-sm text-muted">{formatFecha(a.fecha)}</td>
+                    <td>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {a.foto_antes && (
+                          <a href={`${BASE_URL}/uploads/${a.foto_antes}`} target="_blank" rel="noreferrer"
+                            className="btn btn-outline btn-sm" style={{ fontSize: 11 }}>
+                            <Icon d={IC.image} size={12} />
+                            Antes
+                          </a>
+                        )}
+                        {a.foto_despues && (
+                          <a href={`${BASE_URL}/uploads/${a.foto_despues}`} target="_blank" rel="noreferrer"
+                            className="btn btn-outline btn-sm" style={{ fontSize: 11 }}>
+                            <Icon d={IC.image} size={12} />
+                            Después
+                          </a>
+                        )}
+                        {!a.foto_antes && !a.foto_despues && (
+                          <span className="text-muted text-sm">Sin fotos</span>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* ── SECCIÓN AVERÍAS ── */}
+      <div>
+        <div style={styles.sectionHeader}>
+          <div>
+            <div style={styles.sectionTitle}>
+              <Icon d={IC.wrench} size={18} color="#DC2626" />
+              Averías
+            </div>
+            <div style={styles.sectionSubtitle}>Materiales usados en reparaciones por técnicos</div>
+          </div>
+        </div>
+
+        <div className="toolbar" style={{ marginBottom: 12 }}>
+          <div className="search-box">
+            <Icon d={IC.search} size={16} color="var(--text-muted)" />
+            <input placeholder="Buscar por técnico o comentario..."
+              value={searchAveria} onChange={e => setSearchAveria(e.target.value)} />
+          </div>
+          <select className="filter-select" value={filterTecAv} onChange={e => setFilterTecAv(e.target.value)}>
+            <option value="todos">Todos los técnicos</option>
+            {tecnicos.map(t => <option key={t.id} value={String(t.id)}>{t.nombre}</option>)}
+          </select>
+        </div>
+
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Técnico</th><th>Materiales usados</th>
+                  <th>Comentario</th><th>Fecha</th><th>Foto</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredAverias.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                      Sin averías registradas
+                    </td>
+                  </tr>
+                ) : filteredAverias.map(a => (
+                  <tr key={a.id}>
+                    <td className="fw-600">{a.tecnico}</td>
+                    <td><MaterialesBadge materiales={a.materiales} /></td>
+                    <td className="text-sm text-muted" style={{ maxWidth: 180 }}>{a.comentario ?? "—"}</td>
+                    <td className="text-sm text-muted">{formatFecha(a.fecha)}</td>
+                    <td>
+                      {a.foto ? (
+                        <a href={`${BASE_URL}/uploads/${a.foto}`} target="_blank" rel="noreferrer"
+                          className="btn btn-outline btn-sm">
+                          <Icon d={IC.image} size={13} />
+                          Ver foto
+                        </a>
+                      ) : <span className="text-muted text-sm">—</span>}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* Modal nueva orden de recojo */}
+      {recojoModal && (
+        <Modal title="Nueva orden de recojo" onClose={() => setRecojoModal(false)}
           footer={
             <>
-              <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>
-                Cancelar
-              </button>
-              <button className="btn btn-primary" onClick={handleCrear} disabled={saving || !formValido}>
+              <button className="btn btn-outline" onClick={() => setRecojoModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleCrearRecojo} disabled={saving || !recojoFormValido}>
                 {saving ? "Creando..." : "Crear orden"}
               </button>
             </>
@@ -200,38 +395,46 @@ export default function CtrlRecojos() {
         >
           <div className="form-group">
             <label className="form-label">Técnico *</label>
-            <select className="form-input" {...field("tecnico_id")}>
+            <select className="form-input" {...recojoField("tecnico_id")}>
               <option value="">Seleccionar técnico</option>
               {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
             </select>
           </div>
-
           <div className="form-group">
             <label className="form-label">Tipo de equipo *</label>
-            <select className="form-input" {...field("tipo_equipo")}>
+            <select className="form-input" {...recojoField("tipo_equipo")}>
               <option value="">Seleccionar equipo...</option>
               {TIPOS_EQUIPO.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
-
           {requiereSerie && (
             <div className="form-group">
               <label className="form-label">Número de serie *</label>
-              <input className="form-input" placeholder="Ej: ONU-88721" {...field("serie")} />
+              <input className="form-input" placeholder="Ej: ONU-88721" {...recojoField("serie")} />
             </div>
           )}
-
           <div className="form-group">
             <label className="form-label">Cliente</label>
-            <input className="form-input" placeholder="Nombre del cliente" {...field("cliente")} />
+            <input className="form-input" placeholder="Nombre del cliente" {...recojoField("cliente")} />
           </div>
-
           <div className="form-group">
             <label className="form-label">Dirección</label>
-            <input className="form-input" placeholder="Dirección del recojo" {...field("direccion")} />
+            <input className="form-input" placeholder="Dirección del recojo" {...recojoField("direccion")} />
           </div>
         </Modal>
       )}
     </div>
   );
 }
+
+const styles = {
+  sectionHeader: {
+    display: "flex", alignItems: "center",
+    justifyContent: "space-between", marginBottom: 16,
+  },
+  sectionTitle: {
+    display: "flex", alignItems: "center", gap: 8,
+    fontSize: 16, fontWeight: 700, color: "var(--text)", marginBottom: 4,
+  },
+  sectionSubtitle: { fontSize: 13, color: "var(--text-muted)" },
+};
