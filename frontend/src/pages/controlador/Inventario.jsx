@@ -57,7 +57,8 @@ const emptyVarianteInline = {
 };
 
 // ── Estado inicial entrada y salida ───────────────────────────────────────────
-const emptyEntrada = { producto_id: "", cantidad: "", motivo: "", comentario: "" };
+const emptyEntrada = { motivo: "", comentario: "", items: [] };
+const emptyEntradaItem = {producto_id: "", nombre: "", codigo: "", cantidad: "", es_medible: false, metros_por_unidad: null };
 const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
 const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
 const emptyActivoForm = { nombre: "", descripcion: "", nro_serie: "", estado: "operativo", area: "NOC" };
@@ -122,6 +123,8 @@ export default function CtrlInventario() {
   const [search,   setSearch]   = useState("");
   const [modal,    setModal]    = useState(false);
   const [entrada,  setEntrada]  = useState(emptyEntrada);
+  const [entradaSearch,  setEntradaSearch]  = useState("");
+  const [entradaFiltros, setEntradaFiltros] = useState([]);
   const [salida,   setSalida]   = useState(emptySalida);
   const [saving,   setSaving]   = useState(false);
   const [success,  setSuccess]  = useState(null);
@@ -315,16 +318,20 @@ export default function CtrlInventario() {
   const handleEntrada = async () => {
     setSaving(true);
     try {
-      await stockService.registrarEntrada({
-        producto_id: Number(entrada.producto_id),
-        cantidad:    Number(entrada.cantidad),
-        motivo:      entrada.motivo,
-        comentario:  entrada.comentario || null,
-      });
+      for (const item of entrada.items) {
+        await stockService.registrarEntrada({
+          producto_id: Number(item.producto_id),
+          cantidad:    Number(item.cantidad),
+          motivo:      entrada.motivo,
+          comentario:  entrada.comentario || null,
+        });
+      }
       const data = await stockService.getStock();
       setStock(data);
       setModal(false);
       setEntrada(emptyEntrada);
+      setEntradaSearch("");
+      setEntradaFiltros([]);
       setSuccess("entrada");
       setTimeout(() => setSuccess(null), 3500);
     } catch (err) {
@@ -449,6 +456,8 @@ export default function CtrlInventario() {
             </div>
             <button className="btn btn-outline" onClick={async () => {
               setEntrada(emptyEntrada);
+              setEntradaSearch("");
+              setEntradaFiltros([]);
               const data = await productosService.getAll();
               setProductosGlobales(data);
               setModal ("entrada");
@@ -802,56 +811,171 @@ export default function CtrlInventario() {
       )}
 
       {/* Modal entrada */}
-      {modal === "entrada" && (
-        <Modal title="Registrar Entrada" onClose={() => setModal(false)}
+      {modal === "entrada" && (() => {
+        const yaAgregados = entrada.items.map(i => i.producto_id);
+        const filtrados   = productosGlobales.filter(p =>
+          (p.nombre.toLowerCase().includes(entradaSearch.toLowerCase()) ||
+          (p.codigo ?? "").toLowerCase().includes(entradaSearch.toLowerCase())) &&
+          !yaAgregados.includes(p.id)
+        );
+        const entradaValida = entrada.motivo && entrada.items.length > 0 &&
+          entrada.items.every(i => Number(i.cantidad) > 0);
+
+        const agregarProductoEntrada = (p) => {
+          setEntrada(prev => ({
+            ...prev,
+            items: [...prev.items, {
+              producto_id:      p.id,
+              nombre:           p.nombre,
+              codigo:           p.codigo,
+              cantidad:         "",
+              es_medible:       !!p.es_medible,
+              metros_por_unidad: p.metros_por_unidad,
+            }]
+          }));
+          setEntradaSearch("");
+        };
+
+        const quitarItemEntrada = (producto_id) =>
+          setEntrada(prev => ({ ...prev, items: prev.items.filter(i => i.producto_id !== producto_id) }));
+
+        const updateCantidadEntrada = (producto_id, value) =>
+          setEntrada(prev => ({
+            ...prev,
+          items: prev.items.map(i => i.producto_id === producto_id ? { ...i, cantidad: value } : i)
+        }));
+
+      return (
+        <Modal title="Registrar Entrada de Stock" onClose={() => setModal(false)}
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
-              <button className="btn btn-success" onClick={handleEntrada}
-                disabled={saving || !entrada.producto_id || !entrada.cantidad || !entrada.motivo}>
+              <button className="btn btn-success" onClick={handleEntrada} disabled={saving || !entradaValida}>
                 <Icon d={IC.check} size={15} />
-                {saving ? "Registrando..." : "Confirmar entrada"}
+                {saving ? "Registrando..." : `Confirmar (${entrada.items.length} producto${entrada.items.length !== 1 ? "s" : ""})`}
               </button>
             </>
           }
         >
-          <div className="form-group">
-            <label className="form-label">Ítem</label>
-            <select className="form-input" {...fieldE("producto_id")}>
-              <option value="">Seleccionar ítem...</option>
-              {productosGlobales.map(p => {
-                const enSede = stock.find(s => s.producto_id === p.id);
-                return(
-                  <option key={p.id} value={p.id}>
-                    {p.codigo ?`[${p.codigo}] ` : ""}{p.nombre}
-                    {" — en tu sede: "}{enSede ? enSede.cantidad : 0}
-                    {p.es_medible && enSede ? ` (${enSede.metros_disponibles ?? 0}m)` : ""}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
+          {/* Motivo y comentario */}
           <div className="form-row">
             <div className="form-group">
-              <label className="form-label">Cantidad (rollos/unidades)</label>
-              <input className="form-input" type="number" min="1" placeholder="0" {...fieldE("cantidad")} />
-            </div>
-            <div className="form-group">
-              <label className="form-label">Motivo</label>
-              <select className="form-input" {...fieldE("motivo")}>
+              <label className="form-label">Motivo *</label>
+              <select className="form-input" value={entrada.motivo}
+                onChange={e => setEntrada(prev => ({ ...prev, motivo: e.target.value }))}>
                 <option value="">Seleccionar...</option>
                 <option value={MOTIVOS_ENTRADA.COMPRA}>Compra</option>
                 <option value={MOTIVOS_ENTRADA.REPOSICION}>Reposición</option>
                 <option value={MOTIVOS_ENTRADA.TRANSFERENCIA}>Transferencia</option>
               </select>
             </div>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Comentario <span>(opcional)</span></label>
-            <textarea className="form-input" placeholder="Notas adicionales..." {...fieldE("comentario")} />
-          </div>
+            <div className="form-group">
+              <label className="form-label">Comentario <span>(opcional)</span></label>
+              <input className="form-input" placeholder="Notas adicionales..."
+                value={entrada.comentario}
+                onChange={e => setEntrada(prev => ({ ...prev, comentario: e.target.value }))} />
+              </div>
+            </div>
+
+            {/* Buscador */}
+            <div className="form-group">
+              <label className="form-label">Buscar producto</label>
+              <div className="search-box">
+                <Icon d={IC.search} size={16} color="var(--text-muted)" />
+                <input
+                  placeholder="Nombre o código..."
+                  value={entradaSearch}
+                  onChange={e => setEntradaSearch(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              {/* Resultados del buscador */}
+              {entradaSearch.length > 0 && (
+                <div style={{
+                  border: "1px solid var(--border)", borderRadius: 8,
+                  marginTop: 4, maxHeight: 200, overflowY: "auto",
+                  background: "white", boxShadow: "0 4px 12px rgba(0,0,0,.08)"
+                }}>
+                  {filtrados.length === 0 ? (
+                    <div style={{ padding: "12px 14px", color: "var(--text-muted)", fontSize: 13 }}>
+                      Sin resultados
+                    </div>
+                  ) : filtrados.map(p => {
+                    const enSede = stock.find(s => s.producto_id === p.id);
+                    return (
+                      <div key={p.id}
+                        onClick={() => agregarProductoEntrada(p)}
+                        style={{
+                          padding: "9px 14px", cursor: "pointer", fontSize: 13,
+                          borderBottom: "1px solid var(--border)",
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                          transition: "background .1s",
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "white"}
+                      >
+                        <div>
+                          <span style={{ fontWeight: 600 }}>{p.nombre}</span>
+                          {p.codigo && <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>{p.codigo}</span>}
+                          {p.categoria && <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>· {p.categoria}</span>}
+                        </div>
+                        <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", marginLeft: 12 }}>
+                          En sede: <strong>{enSede ? enSede.cantidad : 0}</strong>
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Lista de productos agregados */}
+            {entrada.items.length > 0 && (
+              <div className="form-group">
+              <label className="form-label">Productos a ingresar ({entrada.items.length})</label>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {entrada.items.map(item => (
+                  <div key={item.producto_id} style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    padding: "8px 10px", borderRadius: 8,
+                    background: "var(--hover)", border: "1px solid var(--border)"
+                  }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>{item.nombre}</div>
+                      {item.codigo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>{item.codigo}</div>}
+                    </div>
+                    <input
+                      className="form-input"
+                      type="number" min="1"
+                      placeholder="Cantidad"
+                      value={item.cantidad}
+                      onChange={e => updateCantidadEntrada(item.producto_id, e.target.value)}
+                      style={{ width: 100, textAlign: "center" }}
+                    />
+                    {item.es_medible && item.cantidad && (
+                      <span style={{ fontSize: 12, color: "var(--info)", whiteSpace: "nowrap" }}>
+                        = {(Number(item.cantidad) * (item.metros_por_unidad ?? 0)).toLocaleString()}m
+                      </span>
+                    )}
+                    <button className="btn btn-danger-outline btn-sm btn-icon"
+                      onClick={() => quitarItemEntrada(item.producto_id)} type="button">
+                      <Icon d={IC.remove} size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {entrada.items.length === 0 && (
+            <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13, fontStyle: "italic" }}>
+              Buscá y seleccioná los productos que querés ingresar.
+            </div>
+          )}
         </Modal>
-      )}
+      );
+    })()}
 
       {/* Modal salida múltiple */}
       {modal === "salida" && (
