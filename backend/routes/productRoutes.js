@@ -22,7 +22,7 @@ const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
 
 // ── Productos ──────────────────────────────────────────
-router.get("/",               verificarToken, verificarRol("admin", "superadmin"), obtenerProductos)
+router.get("/",               verificarToken, verificarRol("admin", "superadmin", "controlador"), obtenerProductos)
 router.get("/stock-sede/:id", verificarToken, verificarRol("admin", "superadmin"), obtenerStockPorSede)
 router.post("/",              verificarToken, verificarRol("admin", "superadmin"), crearProducto)
 router.post("/entrada",       verificarToken, verificarRol("admin", "superadmin"), entradaStockAdmin)
