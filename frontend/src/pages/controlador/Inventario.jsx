@@ -134,6 +134,7 @@ export default function CtrlInventario() {
 
   // ── Activos ────────────────────────────────────────────
   const [activos,        setActivos]        = useState([]);
+  const [productosGlobales, setProductosGlobales] = useState([]);
   const [loadingActivos, setLoadingActivos] = useState(false);
   const [areaActiva,     setAreaActiva]     = useState("NOC");
   const [activoModal,    setActivoModal]    = useState(false);
@@ -446,7 +447,12 @@ export default function CtrlInventario() {
               <Icon d={IC.search} size={16} color="var(--text-muted)" />
               <input placeholder="Buscar ítem..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            <button className="btn btn-outline" onClick={() => { setEntrada(emptyEntrada); setModal("entrada"); }}>
+            <button className="btn btn-outline" onClick={async () => {
+              setEntrada(emptyEntrada);
+              const data = await productosService.getAll();
+              setProductosGlobales(data);
+              setModal ("entrada");
+            }}>
               <Icon d={IC.entry} size={15} />
               Registrar entrada
             </button>
@@ -813,12 +819,16 @@ export default function CtrlInventario() {
             <label className="form-label">Ítem</label>
             <select className="form-input" {...fieldE("producto_id")}>
               <option value="">Seleccionar ítem...</option>
-              {stock.map(i => (
-                <option key={i.producto_id} value={i.producto_id}>
-                  {i.producto} — stock actual: {i.cantidad}
-                  {i.es_medible ? ` (${i.metros_disponibles ?? 0}m disponibles)` : ""}
-                </option>
-              ))}
+              {productosGlobales.map(p => {
+                const enSede = stock.find(s => s.producto_id === p.id);
+                return(
+                  <option key={p.id} value={p.id}>
+                    {p.codigo ?`[${p.codigo}] ` : ""}{p.nombre}
+                    {" — en tu sede: "}{enSede ? enSede.cantidad : 0}
+                    {p.es_medible && enSede ? ` (${enSede.metros_disponibles ?? 0}m)` : ""}
+                  </option>
+                );
+              })}
             </select>
           </div>
           <div className="form-row">
