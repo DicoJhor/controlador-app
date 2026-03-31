@@ -51,6 +51,11 @@ const emptyVarianteForm = {
   stock_total: "", stock_minimo: "", codigo: ""
 };
 
+// Variante nueva en el formulario de creación de producto
+const emptyVarianteInline = {
+  talla: "S", genero: "masculino", stock_total: "", stock_minimo: "", codigo: ""
+};
+
 function StockBar({ stock, minimo }) {
   if (!minimo) return <span className="mono">{formatNumber(stock)}</span>;
   const max   = minimo * 3;
@@ -131,6 +136,11 @@ export default function AdminInventario() {
   const [varianteSelected,  setVarianteSelected]  = useState(null);
   const [varianteForm,      setVarianteForm]      = useState(emptyVarianteForm);
   const [varianteProductoId, setVarianteProductoId] = useState(null);
+
+  // Variantes inline en el modal de crear producto
+  const [variantesInline,    setVariantesInline]    = useState([]);
+  const [varianteInlineForm, setVarianteInlineForm] = useState(emptyVarianteInline);
+  const [varianteInlineError, setVarianteInlineError] = useState("");
 
   useEffect(() => {
     Promise.all([
@@ -281,6 +291,36 @@ export default function AdminInventario() {
   const varianteField = (key) => ({
     value: varianteForm[key],
     onChange: (e) => setVarianteForm(prev => ({ ...prev, [key]: e.target.value })),
+  });
+
+  // ── Variantes inline helpers ───────────────────────────
+  const agregarVarianteInline = () => {
+    setVarianteInlineError("");
+    const { talla, genero, stock_total, stock_minimo, codigo } = varianteInlineForm;
+    const duplicada = variantesInline.find(
+      v => v.talla === talla && v.genero === genero
+    );
+    if (duplicada) {
+      setVarianteInlineError(`Ya agregaste ${genero} — ${talla}.`);
+      return;
+    }
+    setVariantesInline(prev => [...prev, {
+      talla,
+      genero,
+      stock_total:  Number(stock_total) || 0,
+      stock_minimo: Number(stock_minimo) || 0,
+      codigo:       codigo || null,
+      _key: Date.now(),
+    }]);
+    setVarianteInlineForm(emptyVarianteInline);
+  };
+
+  const quitarVarianteInline = (key) =>
+    setVariantesInline(prev => prev.filter(v => v._key !== key));
+
+  const inlineField = (key) => ({
+    value: varianteInlineForm[key],
+    onChange: (e) => setVarianteInlineForm(prev => ({ ...prev, [key]: e.target.value })),
   });
 
   // ── Envío helpers ──────────────────────────────────────
@@ -439,6 +479,7 @@ export default function AdminInventario() {
         productos:   productosPayload,
       });
 
+      // ✅ FIX 1: Actualizar stock_total de productos en el estado local
       setProductos(prev => prev.map(p => {
         const item = envioForm.productos.find(e => e.producto_id === p.id);
         if (!item) return p;
@@ -448,6 +489,25 @@ export default function AdminInventario() {
         }
         return { ...p, stock_total: p.stock_total - item.cantidad };
       }));
+
+      // ✅ FIX 2: Limpiar caché de variantes de los productos enviados
+      // Esto fuerza una recarga fresca desde el servidor la próxima vez
+      // que el usuario expanda las variantes, evitando mostrar datos desactualizados
+      const idsConVariantes = envioForm.productos
+        .filter(p => p.tiene_variantes)
+        .map(p => p.producto_id);
+
+      if (idsConVariantes.length > 0) {
+        setVariantesMap(prev => {
+          const updated = { ...prev };
+          idsConVariantes.forEach(id => delete updated[id]);
+          return updated;
+        });
+        // Si alguno de los productos enviados estaba expandido, cerrarlo
+        if (idsConVariantes.includes(expandedProduct)) {
+          setExpandedProduct(null);
+        }
+      }
 
       setEnvioForm(emptyEnvio);
       setModal(false);
@@ -459,7 +519,14 @@ export default function AdminInventario() {
   };
 
   // ── CRUD helpers ───────────────────────────────────────
-  const openCrear  = () => { setForm(emptyForm); setSelected(null); setModal("crear"); };
+  const openCrear  = () => {
+    setForm(emptyForm);
+    setSelected(null);
+    setVariantesInline([]);
+    setVarianteInlineForm(emptyVarianteInline);
+    setVarianteInlineError("");
+    setModal("crear");
+  };
   const openEditar = (p) => {
     setForm({
       codigo: p.codigo ?? "", nombre: p.nombre, descripcion: p.descripcion ?? "",
@@ -477,14 +544,14 @@ export default function AdminInventario() {
   const openEntrada = () => {
     setEntradaForm({
       guia: "",
-      sede_id: isSuperadmin && vistaMode === "sede" ? sedeVista : "2", // ← solo superadmin en vista sede elige otra
+      sede_id: isSuperadmin && vistaMode === "sede" ? sedeVista : "2",
       comentario: "",
       fecha: new Date().toISOString().split("T")[0],
       productos: []
-  });
-  setEntradaSearch("");
-  setModal("entrada");
-};
+    });
+    setEntradaSearch("");
+    setModal("entrada");
+  };
   const openEnvio = () => {
     setEnvioForm(emptyEnvio);
     setEnvioSearch("");
@@ -560,17 +627,36 @@ export default function AdminInventario() {
 
       if (modal === "crear") {
         const nuevo = await productosService.create(payload);
-        setProductos(prev => [...prev, nuevo]);
-        setModal(false);
-        if (form.tiene_variantes) {
+
+        // Si tiene variantes, crearlas todas de una
+        if (form.tiene_variantes && variantesInline.length > 0) {
+          const creadas = [];
+          for (const v of variantesInline) {
+            const nueva = await productosService.crearVariante(nuevo.id, {
+              talla:        v.talla,
+              genero:       v.genero,
+              stock_total:  v.stock_total,
+              stock_minimo: v.stock_minimo,
+              codigo:       v.codigo,
+            });
+            creadas.push(nueva);
+          }
+          setVariantesMap(prev => ({ ...prev, [nuevo.id]: creadas }));
+          setExpandedProduct(nuevo.id);
+        } else if (form.tiene_variantes) {
           setVariantesMap(prev => ({ ...prev, [nuevo.id]: [] }));
           setExpandedProduct(nuevo.id);
-          setTimeout(() => {
-            document.getElementById(`producto-row-${nuevo.id}`)?.scrollIntoView({
-              behavior: "smooth", block: "center"
-            });
-          }, 150);
         }
+
+        setProductos(prev => [...prev, { ...nuevo, stock_total: Number(payload.stock_total) || 0 }]);
+        setModal(false);
+
+        setTimeout(() => {
+          document.getElementById(`producto-row-${nuevo.id}`)?.scrollIntoView({
+            behavior: "smooth", block: "center"
+          });
+        }, 150);
+
       } else {
         await productosService.update(selected.id, { ...payload, estado: selected.estado });
         setProductos(prev => prev.map(p => p.id === selected.id ? { ...p, ...payload } : p));
@@ -969,7 +1055,6 @@ export default function AdminInventario() {
             <input className="form-input" placeholder="Opcional..." {...envioField("comentario")} />
           </div>
 
-          {/* Buscador */}
           <div className="form-group" style={{ position: "relative" }}>
             <label className="form-label">Agregar productos *</label>
             <div className="search-box">
@@ -1000,7 +1085,6 @@ export default function AdminInventario() {
             )}
           </div>
 
-          {/* Lista de productos seleccionados */}
           {envioForm.productos.length > 0 && (
             <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
               {envioForm.productos.map(p => (
@@ -1008,7 +1092,6 @@ export default function AdminInventario() {
                   background: "var(--hover)", borderRadius: 8,
                   border: "1px solid var(--border)", overflow: "hidden"
                 }}>
-                  {/* Cabecera */}
                   <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px" }}>
                     <div style={{ flex: 1, fontSize: 13 }}>
                       <span className="fw-600">{p.codigo}</span> — {p.nombre}
@@ -1034,7 +1117,6 @@ export default function AdminInventario() {
                     </button>
                   </div>
 
-                  {/* Selector de variantes */}
                   {p.tiene_variantes && (
                     <div style={{ borderTop: "1px solid var(--border)", padding: "8px 10px", background: "white" }}>
                       <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -1182,7 +1264,7 @@ export default function AdminInventario() {
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleGuardar} disabled={saving}>
+              <button className="btn btn-primary" onClick={handleGuardar} disabled={saving || !form.nombre}>
                 {saving ? "Guardando..." : modal === "crear" ? "Crear producto" : "Guardar cambios"}
               </button>
             </>
@@ -1248,22 +1330,124 @@ export default function AdminInventario() {
               </div>
             </div>
           )}
+
+          {/* ── Sección variantes ── */}
           <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
               <input type="checkbox" checked={!!form.tiene_variantes}
-                onChange={e => setForm(prev => ({
-                  ...prev,
-                  tiene_variantes: e.target.checked,
-                  es_medible: false,
-                  stock_total: "",
-                  stock_minimo: "",
-                }))} />
+                onChange={e => {
+                  setForm(prev => ({
+                    ...prev,
+                    tiene_variantes: e.target.checked,
+                    es_medible: false,
+                    stock_total: "",
+                    stock_minimo: "",
+                  }));
+                  if (!e.target.checked) {
+                    setVariantesInline([]);
+                    setVarianteInlineError("");
+                  }
+                }} />
               Este producto tiene variantes (talla / género)
             </label>
-            {form.tiene_variantes && (
+
+            {form.tiene_variantes && modal === "crear" && (
+              <div style={{ marginTop: 12 }}>
+
+                {/* Formulario para agregar variante */}
+                <div style={{
+                  background: "var(--hover)", borderRadius: 8,
+                  border: "1px solid var(--border)", padding: "12px 14px", marginBottom: 10
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Nueva variante
+                  </div>
+                  <div className="form-row" style={{ marginBottom: 8 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Género</label>
+                      <select className="form-input" {...inlineField("genero")}>
+                        {GENEROS.map(g => <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Talla</label>
+                      <select className="form-input" {...inlineField("talla")}>
+                        {TALLAS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-row" style={{ marginBottom: 8 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Stock inicial</label>
+                      <input className="form-input" type="number" min="0" placeholder="0" {...inlineField("stock_total")} />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Stock mínimo</label>
+                      <input className="form-input" type="number" min="0" placeholder="0" {...inlineField("stock_minimo")} />
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 10 }}>
+                    <label className="form-label">Código de variante</label>
+                    <input className="form-input" placeholder="Ej: PLO-M-S" {...inlineField("codigo")} />
+                  </div>
+                  {varianteInlineError && (
+                    <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 8 }}>
+                      {varianteInlineError}
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={agregarVarianteInline}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <Icon d={IC.plus} size={13} />
+                    Agregar variante
+                  </button>
+                </div>
+
+                {/* Lista de variantes agregadas */}
+                {variantesInline.length > 0 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
+                      Variantes a crear ({variantesInline.length})
+                    </div>
+                    {variantesInline.map(v => (
+                      <div key={v._key} style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "7px 10px", borderRadius: 7,
+                        background: "white", border: "1px solid var(--border)"
+                      }}>
+                        <VarianteBadge talla={v.talla} genero={v.genero} />
+                        {v.codigo && <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{v.codigo}</span>}
+                        <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: "auto" }}>
+                          Stock: <strong>{v.stock_total}</strong>
+                          {v.stock_minimo > 0 && ` / Mín: ${v.stock_minimo}`}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-danger-outline btn-sm btn-icon"
+                          onClick={() => quitarVarianteInline(v._key)}
+                        >
+                          <Icon d={IC.remove} size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {variantesInline.length === 0 && (
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
+                    Todavía no agregaste variantes. Podés hacerlo ahora o después desde la tabla.
+                  </div>
+                )}
+              </div>
+            )}
+
+            {form.tiene_variantes && modal === "editar" && (
               <div style={{ marginTop: 10, padding: "10px 14px", background: "var(--hover)", borderRadius: 8, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8 }}>
                 <Icon d={IC.tag} size={13} color="var(--text-muted)" />
-                Al guardar, se abrirá el panel de variantes automáticamente.
+                Para editar variantes, usá el panel de variantes en la tabla.
               </div>
             )}
           </div>

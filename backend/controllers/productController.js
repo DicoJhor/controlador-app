@@ -16,38 +16,63 @@ exports.obtenerProductos = async (req, res) => {
 }
 
 // CREAR PRODUCTO
+// Acepta sede_id opcional en el body. Si no viene, usa sede central (2).
 exports.crearProducto = async (req, res) => {
+  const conn = await db.getConnection()
   try {
+    await conn.beginTransaction()
+
     const {
       codigo, nombre, descripcion, categoria, unidad,
       stock_total, stock_minimo,
-      es_medible, metros_por_unidad
+      es_medible, metros_por_unidad,
+      sede_id,          // ← nuevo: sede que crea el producto
     } = req.body
 
     if (!nombre) return res.status(400).json({ message: "El nombre es obligatorio" })
 
-    const esMedible      = es_medible ? 1 : 0
-    const metrosPorUnidad = esMedible ? (Number(metros_por_unidad) || null) : null
+    const SEDE_CENTRAL      = 2
+    const sedeOrigen        = Number(sede_id) || SEDE_CENTRAL
+    const esMedible         = es_medible ? 1 : 0
+    const metrosPorUnidad   = esMedible ? (Number(metros_por_unidad) || null) : null
+    const stockInicial      = Number(stock_total) || 0
     const metrosDisponibles = esMedible && metrosPorUnidad
-      ? (Number(stock_total) || 0) * metrosPorUnidad
+      ? stockInicial * metrosPorUnidad
       : null
 
-    const [result] = await db.query(
+    const [result] = await conn.query(
       `INSERT INTO productos
          (codigo, nombre, descripcion, categoria, unidad, stock_total, stock_minimo, estado,
           es_medible, metros_por_unidad, metros_disponibles)
        VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
       [
         codigo || null, nombre, descripcion || null, categoria || null,
-        unidad || null, stock_total || 0, stock_minimo || 0,
+        unidad || null, stockInicial, stock_minimo || 0,
         esMedible, metrosPorUnidad, metrosDisponibles
       ]
     )
 
+    // Registrar stock inicial en la sede que crea el producto
+    await conn.query(
+      `INSERT INTO stock_sede (sede_id, producto_id, cantidad) VALUES (?, ?, ?)`,
+      [sedeOrigen, result.insertId, stockInicial]
+    )
+
+    // Si la sede creadora NO es la central, crear también registro en central con 0
+    // para que el producto sea visible en el catálogo global del admin
+    if (sedeOrigen !== SEDE_CENTRAL) {
+      await conn.query(
+        `INSERT INTO stock_sede (sede_id, producto_id, cantidad) VALUES (?, ?, 0)`,
+        [SEDE_CENTRAL, result.insertId]
+      )
+    }
+
+    await conn.commit()
+
     res.status(201).json({
       id: result.insertId, codigo, nombre, descripcion,
       categoria, unidad,
-      stock_total: stock_total || 0,
+      stock_total: stockInicial,
       stock_minimo: stock_minimo || 0,
       estado: 1,
       es_medible: esMedible,
@@ -55,12 +80,17 @@ exports.crearProducto = async (req, res) => {
       metros_disponibles: metrosDisponibles
     })
   } catch (err) {
+    await conn.rollback()
     console.error("❌ Error crearProducto:", err.message)
     res.status(500).json({ message: "Error al crear producto", error: err.message })
+  } finally {
+    conn.release()
   }
 }
 
 // ACTUALIZAR PRODUCTO
+// Solo actualiza datos globales (nombre, código, categoría, etc.)
+// El stock NO se toca desde aquí — es independiente por sede
 exports.actualizarProducto = async (req, res) => {
   try {
     const { id } = req.params
@@ -117,20 +147,17 @@ exports.entradaStockAdmin = async (req, res) => {
       if (!item.producto_id || !item.cantidad || item.cantidad <= 0)
         return res.status(400).json({ message: "Producto o cantidad inválidos" })
 
-      // Registrar en entradas_stock con guía
       await conn.query(
         `INSERT INTO entradas_stock (producto_id, cantidad, fecha, registrado_por, guia, sede_id, comentario)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [item.producto_id, item.cantidad, fechaEntrada, usuario_id, guia, sedeDestino, comentario || null]
       )
 
-      // Sumar al stock global
       await conn.query(
         "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
         [item.cantidad, item.producto_id]
       )
 
-      // Upsert stock_sede
       const [[existing]] = await conn.query(
         "SELECT id FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
         [sedeDestino, item.producto_id]
@@ -147,7 +174,6 @@ exports.entradaStockAdmin = async (req, res) => {
         )
       }
 
-      // Si es medible, sumar metros
       const [[prod]] = await conn.query(
         "SELECT es_medible, metros_por_unidad FROM productos WHERE id = ?",
         [item.producto_id]
@@ -162,7 +188,6 @@ exports.entradaStockAdmin = async (req, res) => {
 
     await conn.commit()
 
-    // Devolver productos actualizados
     const ids = productos.map(p => p.producto_id)
     const [updated] = await conn.query(
       `SELECT id, codigo, nombre, stock_total, es_medible, metros_disponibles, metros_por_unidad

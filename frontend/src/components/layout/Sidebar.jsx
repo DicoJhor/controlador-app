@@ -25,7 +25,6 @@ const IC = {
 };
 
 const navConfig = {
-  // Superadmin — mismas rutas que admin pero sin eliminar
   [ROLES.SUPERADMIN]: [
     {
       section: "General",
@@ -38,8 +37,9 @@ const navConfig = {
     {
       section: "Operaciones",
       items: [
-        { to: "/admin/inventario", label: "Inventario", icon: IC.inventory },
-        { to: "/admin/auditoria",  label: "Auditoría",  icon: IC.audit     },
+        { to: "/admin/inventario",   label: "Inventario",   icon: IC.inventory },
+        { to: "/admin/auditoria",    label: "Auditoría",    icon: IC.audit     },
+        { to: "/admin/operaciones",  label: "Operaciones",  icon: IC.package   },
       ],
     },
   ],
@@ -56,8 +56,9 @@ const navConfig = {
     {
       section: "Operaciones",
       items: [
-        { to: "/admin/inventario", label: "Inventario", icon: IC.inventory },
-        { to: "/admin/auditoria",  label: "Auditoría",  icon: IC.audit     },
+        { to: "/admin/inventario",   label: "Inventario",   icon: IC.inventory },
+        { to: "/admin/auditoria",    label: "Auditoría",    icon: IC.audit     },
+        { to: "/admin/operaciones",  label: "Operaciones",  icon: IC.package   },
       ],
     },
   ],
@@ -66,16 +67,16 @@ const navConfig = {
     {
       section: "Mi Sede",
       items: [
-        { to: "/controlador/dashboard", label: "Dashboard",    icon: IC.dashboard },
-        { to: "/controlador/tecnicos",  label: "Mis Técnicos", icon: IC.users     },
-        { to: "/controlador/recojos",   label: "Recojos",      icon: IC.package   },
+        { to: "/controlador/dashboard",   label: "Dashboard",    icon: IC.dashboard },
+        { to: "/controlador/tecnicos",    label: "Mis Técnicos", icon: IC.users     },
+        { to: "/controlador/recojos",     label: "Operaciones",  icon: IC.package   },
       ],
     },
     {
       section: "Inventario",
       items: [
-        { to: "/controlador/inventario", label: "Inventario", icon: IC.inventory },
-        { to: "/controlador/auditoria",  label: "Auditoría",  icon: IC.audit     },
+        { to: "/controlador/inventario",  label: "Inventario",   icon: IC.inventory },
+        { to: "/controlador/auditoria",   label: "Auditoría",    icon: IC.audit     },
       ],
     },
   ],
@@ -84,10 +85,10 @@ const navConfig = {
     {
       section: "Mi Trabajo",
       items: [
-        { to: "/tecnico/dashboard",        label: "Mi Inventario",   icon: IC.package  },
-        { to: "/tecnico/registrar-salida", label: "Registrar Salida", icon: IC.exit    },
-        { to: "/tecnico/recojos",          label: "Recojos",          icon: IC.package },
-        { to: "/tecnico/historial",        label: "Mi Historial",     icon: IC.activity},
+        { to: "/tecnico/dashboard",        label: "Mi Inventario",    icon: IC.package  },
+        { to: "/tecnico/registrar-salida", label: "Registrar Salida", icon: IC.exit     },
+        { to: "/tecnico/recojos",          label: "Recojos",          icon: IC.package  },
+        { to: "/tecnico/historial",        label: "Mi Historial",     icon: IC.activity },
       ],
     },
   ],

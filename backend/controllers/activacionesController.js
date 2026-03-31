@@ -131,3 +131,34 @@ exports.create = async (req, res) => {
     conn.release()
   }
 }
+exports.getAllAdmin = async (req, res) => {
+  try {
+    const { sede_id } = req.query
+    const [rows] = await db.query(`
+      SELECT a.id, a.cliente, a.direccion, a.comentario,
+             a.foto_antes, a.foto_despues, a.estado, a.fecha,
+             u.nombre as tecnico, u.id as tecnico_id,
+             s.nombre as sede_nombre
+      FROM activaciones a
+      JOIN usuarios u ON u.id = a.tecnico_id
+      JOIN sedes s ON s.id = u.sede_id
+      ${sede_id && sede_id !== "todas" ? "WHERE u.sede_id = ?" : ""}
+      ORDER BY a.fecha DESC
+    `, sede_id && sede_id !== "todas" ? [sede_id] : [])
+
+    for (const a of rows) {
+      const [mats] = await db.query(`
+        SELECT p.nombre, p.unidad, am.cantidad
+        FROM activacion_materiales am
+        JOIN productos p ON p.id = am.producto_id
+        WHERE am.activacion_id = ?
+      `, [a.id])
+      a.materiales = mats
+    }
+
+    res.json(rows)
+  } catch (err) {
+    console.error("❌ Error getAllAdmin activaciones:", err.message)
+    res.status(500).json({ message: "Error al obtener activaciones", error: err.message })
+  }
+}

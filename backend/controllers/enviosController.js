@@ -7,8 +7,9 @@ exports.crearEnvio = async (req, res) => {
     await conn.beginTransaction()
 
     const { guia, comentario, fecha_envio, productos } = req.body
-    const sede_id    = Number(req.body.sede_id)
-    const usuario_id = req.user.id
+    const sede_id      = Number(req.body.sede_id)
+    const usuario_id   = req.user.id
+    const sede_origen_id = req.user.sede_id || 2
 
     if (!sede_id)     return res.status(400).json({ message: "La sede es obligatoria" })
     if (!guia)        return res.status(400).json({ message: "La guía es obligatoria" })
@@ -16,33 +17,36 @@ exports.crearEnvio = async (req, res) => {
     if (!productos || productos.length === 0)
       return res.status(400).json({ message: "Debe seleccionar al menos un producto" })
 
-    // Verificar stock suficiente — diferencia entre producto normal y variante
+    // Verificar stock suficiente por sede origen
     for (const item of productos) {
       if (item.variante_id) {
-        // Verificar stock de la variante
-        const [[variante]] = await conn.query(
-          "SELECT stock_total, talla, genero FROM producto_variantes WHERE id = ?",
-          [item.variante_id]
+        const [[varianteSede]] = await conn.query(
+          `SELECT ssv.cantidad, pv.talla, pv.genero
+           FROM stock_sede_variante ssv
+           JOIN producto_variantes pv ON pv.id = ssv.variante_id
+           WHERE ssv.sede_id = ? AND ssv.variante_id = ?`,
+          [sede_origen_id, item.variante_id]
         )
-        if (!variante)
-          return res.status(404).json({ message: `Variante no encontrada (id: ${item.variante_id})` })
-        if (variante.stock_total < item.cantidad)
-          return res.status(400).json({ message: `Stock insuficiente para variante ${variante.genero} - ${variante.talla}. Disponible: ${variante.stock_total}` })
+        if (!varianteSede)
+          return res.status(404).json({ message: `Variante no encontrada en tu sede (id: ${item.variante_id})` })
+        if (varianteSede.cantidad < item.cantidad)
+          return res.status(400).json({ message: `Stock insuficiente para variante ${varianteSede.genero} - ${varianteSede.talla}. Disponible en sede: ${varianteSede.cantidad}` })
       } else {
-        // Verificar stock del producto normal
-        const [[prod]] = await conn.query(
-          "SELECT stock_total, nombre FROM productos WHERE id = ?",
-          [item.producto_id]
+        const [[stockSede]] = await conn.query(
+          `SELECT ss.cantidad, p.nombre
+           FROM stock_sede ss
+           JOIN productos p ON p.id = ss.producto_id
+           WHERE ss.sede_id = ? AND ss.producto_id = ?`,
+          [sede_origen_id, item.producto_id]
         )
-        if (!prod)
-          return res.status(404).json({ message: `Producto no encontrado (id: ${item.producto_id})` })
-        if (prod.stock_total < item.cantidad)
-          return res.status(400).json({ message: `Stock insuficiente para "${prod.nombre}". Disponible: ${prod.stock_total}` })
+        if (!stockSede)
+          return res.status(404).json({ message: `Producto no encontrado en tu sede (id: ${item.producto_id})` })
+        if (stockSede.cantidad < item.cantidad)
+          return res.status(400).json({ message: `Stock insuficiente para "${stockSede.nombre}". Disponible en sede: ${stockSede.cantidad}` })
       }
     }
 
     // Crear envío
-    const sede_origen_id = req.user.sede_id || 2
     const [result] = await conn.query(
       `INSERT INTO envios (sede_id, sede_origen_id, usuario_id, guia, comentario, fecha_envio)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -76,39 +80,28 @@ exports.crearEnvio = async (req, res) => {
           [item.cantidad, sede_origen_id, item.producto_id]
         )
 
-        // Agregar a stock_sede_variante destino (upsert)
-        const [[existingVar]] = await conn.query(
-          "SELECT id FROM stock_sede_variante WHERE sede_id = ? AND variante_id = ?",
-          [sede_id, item.variante_id]
+        // Descontar de stock_sede_variante origen
+        await conn.query(
+          "UPDATE stock_sede_variante SET cantidad = cantidad - ? WHERE sede_id = ? AND variante_id = ?",
+          [item.cantidad, sede_origen_id, item.variante_id]
         )
-        if (existingVar) {
-          await conn.query(
-            "UPDATE stock_sede_variante SET cantidad = cantidad + ? WHERE sede_id = ? AND variante_id = ?",
-            [item.cantidad, sede_id, item.variante_id]
-          )
-        } else {
-          await conn.query(
-            "INSERT INTO stock_sede_variante (sede_id, variante_id, cantidad) VALUES (?, ?, ?)",
-            [sede_id, item.variante_id, item.cantidad]
-          )
-        }
 
-        // Agregar a stock_sede destino (upsert)
-        const [[existingSede]] = await conn.query(
-          "SELECT id FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
-          [sede_id, item.producto_id]
+        // ✅ FIX: Upsert atómico con ON DUPLICATE KEY UPDATE
+        // Evita duplicados por race condition entre SELECT + INSERT separados
+        await conn.query(
+          `INSERT INTO stock_sede_variante (sede_id, variante_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sede_id, item.variante_id, item.cantidad]
         )
-        if (existingSede) {
-          await conn.query(
-            "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
-            [item.cantidad, sede_id, item.producto_id]
-          )
-        } else {
-          await conn.query(
-            "INSERT INTO stock_sede (sede_id, producto_id, cantidad) VALUES (?, ?, ?)",
-            [sede_id, item.producto_id, item.cantidad]
-          )
-        }
+
+        // ✅ FIX: Upsert atómico para stock_sede destino
+        await conn.query(
+          `INSERT INTO stock_sede (sede_id, producto_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sede_id, item.producto_id, item.cantidad]
+        )
 
       } else {
         // ── Envío de producto normal ───────────────────
@@ -129,22 +122,13 @@ exports.crearEnvio = async (req, res) => {
           [item.cantidad, sede_origen_id, item.producto_id]
         )
 
-        // Agregar a stock_sede destino (upsert)
-        const [[existing]] = await conn.query(
-          "SELECT id FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
-          [sede_id, item.producto_id]
+        // ✅ FIX: Upsert atómico para stock_sede destino
+        await conn.query(
+          `INSERT INTO stock_sede (sede_id, producto_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sede_id, item.producto_id, item.cantidad]
         )
-        if (existing) {
-          await conn.query(
-            "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
-            [item.cantidad, sede_id, item.producto_id]
-          )
-        } else {
-          await conn.query(
-            "INSERT INTO stock_sede (sede_id, producto_id, cantidad) VALUES (?, ?, ?)",
-            [sede_id, item.producto_id, item.cantidad]
-          )
-        }
       }
     }
 

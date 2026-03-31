@@ -180,3 +180,33 @@ exports.getAverias = async (req, res) => {
     res.status(500).json({ message: "Error al obtener averías", error: err.message })
   }
 }
+exports.getAveriasAdmin = async (req, res) => {
+  try {
+    const { sede_id } = req.query
+    const [rows] = await db.query(`
+      SELECT av.id, av.fecha, av.comentario, av.foto,
+             u.nombre as tecnico, u.id as tecnico_id,
+             s.nombre as sede_nombre
+      FROM averias av
+      JOIN usuarios u ON u.id = av.tecnico_id
+      JOIN sedes s ON s.id = u.sede_id
+      ${sede_id && sede_id !== "todas" ? "WHERE u.sede_id = ?" : ""}
+      ORDER BY av.fecha DESC
+    `, sede_id && sede_id !== "todas" ? [sede_id] : [])
+
+    for (const av of rows) {
+      const [mats] = await db.query(`
+        SELECT p.nombre, p.unidad, am.cantidad
+        FROM averia_materiales am
+        JOIN productos p ON p.id = am.producto_id
+        WHERE am.averia_id = ?
+      `, [av.id])
+      av.materiales = mats
+    }
+
+    res.json(rows)
+  } catch (err) {
+    console.error("❌ Error getAveriasAdmin:", err.message)
+    res.status(500).json({ message: "Error al obtener averías", error: err.message })
+  }
+}

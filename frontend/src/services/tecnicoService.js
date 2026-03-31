@@ -10,6 +10,7 @@ const tecnicoService = {
   getMisActivaciones:      () => api.get("/tecnico/activaciones"),
   confirmarRecojo:         (id, formData) => api.patchForm(`/tecnico/recojos/${id}`, formData),
   getAverias:              () => api.get("/tecnico/averias"),
+  getAveriasAdmin: (sede_id) => api.get(`/tecnico/averias/admin?sede_id=${sede_id}`),
 }
 
 export default tecnicoService

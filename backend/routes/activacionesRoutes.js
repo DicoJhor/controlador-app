@@ -1,9 +1,9 @@
 const express    = require("express")
 const router     = express.Router()
-const { getAll, getMias, create } = require("../controllers/activacionesController")
 const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
 const upload         = require("../middleware/uploadMiddleware")
+const { getAll, getMias, create, getAllAdmin } = require("../controllers/activacionesController")
 
 // Controlador ve todas las de su sede
 router.get("/",      verificarToken, verificarRol("controlador", "admin", "superadmin"), getAll)
@@ -19,5 +19,7 @@ router.post("/",     verificarToken, verificarRol("tecnico"),
   ]),
   create
 )
+router.get("/admin", verificarToken, verificarRol("admin", "superadmin"), getAllAdmin)
+
 
 module.exports = router

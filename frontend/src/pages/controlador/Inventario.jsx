@@ -1,10 +1,11 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import Modal from "../../components/ui/Modal";
 import { Badge } from "../../components/ui/Badge";
 import { formatNumber } from "../../utils/formatters";
 import { MOTIVOS_ENTRADA, MOTIVOS_SALIDA } from "../../utils/constants";
 import stockService from "../../services/stockService";
 import activosService from "../../services/activosService";
+import productosService from "../../services/productosService";
 import { useAuth } from "../../hooks/useAuth";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
@@ -24,10 +25,12 @@ const IC = {
   check:   "M20 6L9 17l-5-5",
   plus:    "M12 5v14 M5 12h14",
   trash:   "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
-  ruler:   "M2 12h20 M12 2v20",
   edit:    "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
   box:     "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z",
   package: "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z M3.27 6.96L12 12.01l8.73-5.05 M12 22.08V12",
+  remove:  "M18 6L6 18 M6 6l12 12",
+  tag:     "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z M7 7h.01",
+  chevron: "M6 9l6 6 6-6",
 };
 
 const ESTADO_CONFIG = {
@@ -37,11 +40,29 @@ const ESTADO_CONFIG = {
   de_baja:       { label: "De baja",       color: "#6b7280", bg: "#f3f4f6" },
 };
 
-const emptyEntrada   = { producto_id: "", cantidad: "", motivo: "", comentario: "" };
-const emptySalida    = { tecnico_id: "", motivo: "", comentario: "", items: [] };
-const emptyItem      = { producto_id: "", cantidad: "", metros: "" };
+// ── Constantes del formulario de producto ─────────────────────────────────────
+const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros", "ropa"];
+const TALLAS     = ["XS", "S", "M", "L", "XL", "XXL"];
+const GENEROS    = ["masculino", "femenino", "unisex"];
+
+const emptyProductoForm = {
+  codigo: "", nombre: "", descripcion: "", categoria: "",
+  unidad: "", stock_total: "", stock_minimo: "",
+  es_medible: false, metros_por_unidad: "",
+  tiene_variantes: false,
+};
+
+const emptyVarianteInline = {
+  talla: "S", genero: "masculino", stock_total: "", stock_minimo: "", codigo: ""
+};
+
+// ── Estado inicial entrada y salida ───────────────────────────────────────────
+const emptyEntrada = { producto_id: "", cantidad: "", motivo: "", comentario: "" };
+const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
+const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
 const emptyActivoForm = { nombre: "", descripcion: "", nro_serie: "", estado: "operativo", area: "NOC" };
 
+// ── Componentes auxiliares ────────────────────────────────────────────────────
 function StockBar({ stock, minimo }) {
   if (!minimo) return <span className="mono">{formatNumber(stock)}</span>;
   const max   = minimo * 3;
@@ -59,14 +80,41 @@ function StockBar({ stock, minimo }) {
   );
 }
 
+function VarianteBadge({ talla, genero }) {
+  const generoLabel = { masculino: "M", femenino: "F", unisex: "U" };
+  return (
+    <div style={{ display: "flex", gap: 4 }}>
+      {genero && (
+        <span style={{
+          background: genero === "masculino" ? "#EFF6FF" : genero === "femenino" ? "#FDF2F8" : "#F0FDF4",
+          color: genero === "masculino" ? "#1D4ED8" : genero === "femenino" ? "#9D174D" : "#166534",
+          fontSize: 11, fontWeight: 700, padding: "1px 6px", borderRadius: 6,
+        }}>
+          {generoLabel[genero] ?? genero}
+        </span>
+      )}
+      {talla && (
+        <span style={{
+          background: "#F8FAFC", color: "#475569",
+          fontSize: 11, fontWeight: 700, padding: "1px 6px",
+          borderRadius: 6, border: "1px solid #E2E8F0",
+        }}>
+          {talla}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 export default function CtrlInventario() {
   const { user } = useAuth();
   const sedeId = user?.sede_id;
 
-  // ── Tab activo ─────────────────────────────────────────────
-  const [tab, setTab] = useState("stock"); // "stock" | "activos"
+  // ── Tabs ───────────────────────────────────────────────
+  const [tab, setTab] = useState("stock");
 
-  // ── Stock ──────────────────────────────────────────────────
+  // ── Stock ──────────────────────────────────────────────
   const [stock,    setStock]    = useState([]);
   const [tecnicos, setTecnicos] = useState([]);
   const [loading,  setLoading]  = useState(true);
@@ -78,13 +126,19 @@ export default function CtrlInventario() {
   const [saving,   setSaving]   = useState(false);
   const [success,  setSuccess]  = useState(null);
 
-  // ── Activos ────────────────────────────────────────────────
-  const [activos,       setActivos]       = useState([]);
+  // ── Crear producto ─────────────────────────────────────
+  const [productoForm,        setProductoForm]        = useState(emptyProductoForm);
+  const [variantesInline,     setVariantesInline]     = useState([]);
+  const [varianteInlineForm,  setVarianteInlineForm]  = useState(emptyVarianteInline);
+  const [varianteInlineError, setVarianteInlineError] = useState("");
+
+  // ── Activos ────────────────────────────────────────────
+  const [activos,        setActivos]        = useState([]);
   const [loadingActivos, setLoadingActivos] = useState(false);
-  const [areaActiva,    setAreaActiva]    = useState("NOC");
-  const [activoModal,   setActivoModal]   = useState(false);
+  const [areaActiva,     setAreaActiva]     = useState("NOC");
+  const [activoModal,    setActivoModal]    = useState(false);
   const [activoSelected, setActivoSelected] = useState(null);
-  const [activoForm,    setActivoForm]    = useState(emptyActivoForm);
+  const [activoForm,     setActivoForm]     = useState(emptyActivoForm);
 
   useEffect(() => { cargarDatos(); }, []);
 
@@ -97,7 +151,6 @@ export default function CtrlInventario() {
       })
       .catch(() => { setError("No se pudo cargar el inventario"); setLoading(false); });
 
-  // Cargar activos al cambiar a tab activos
   useEffect(() => {
     if (tab === "activos" && activos.length === 0 && sedeId) {
       setLoadingActivos(true);
@@ -108,16 +161,14 @@ export default function CtrlInventario() {
     }
   }, [tab, sedeId]);
 
-  const filtered = stock.filter(i =>
+  const filtered         = stock.filter(i =>
     i.producto.toLowerCase().includes(search.toLowerCase()) ||
     (i.codigo ?? "").toLowerCase().includes(search.toLowerCase())
   );
-
   const activosFiltrados = activos.filter(a => a.area === areaActiva);
+  const lowCount         = stock.filter(i => i.stock_minimo > 0 && i.cantidad <= i.stock_minimo).length;
 
-  const lowCount = stock.filter(i => i.stock_minimo > 0 && i.cantidad <= i.stock_minimo).length;
-
-  // ── Activos CRUD ───────────────────────────────────────────
+  // ── Activos CRUD ───────────────────────────────────────
   const openCrearActivo = () => {
     setActivoForm({ ...emptyActivoForm, area: areaActiva });
     setActivoSelected(null);
@@ -169,11 +220,97 @@ export default function CtrlInventario() {
   };
 
   const activoField = (key) => ({
-    value: activoForm[key],
+    value:    activoForm[key],
     onChange: (e) => setActivoForm(prev => ({ ...prev, [key]: e.target.value })),
   });
 
-  // ── Entrada ────────────────────────────────────────────────
+  // ── Crear producto helpers ─────────────────────────────
+  const openCrearProducto = () => {
+    setProductoForm(emptyProductoForm);
+    setVariantesInline([]);
+    setVarianteInlineForm(emptyVarianteInline);
+    setVarianteInlineError("");
+    setModal("crearProducto");
+  };
+
+  const productoField = (key) => ({
+    value:    productoForm[key],
+    onChange: (e) => setProductoForm(prev => ({ ...prev, [key]: e.target.value })),
+  });
+
+  const inlineField = (key) => ({
+    value:    varianteInlineForm[key],
+    onChange: (e) => setVarianteInlineForm(prev => ({ ...prev, [key]: e.target.value })),
+  });
+
+  const agregarVarianteInline = () => {
+    setVarianteInlineError("");
+    const { talla, genero, stock_total, stock_minimo, codigo } = varianteInlineForm;
+    const duplicada = variantesInline.find(v => v.talla === talla && v.genero === genero);
+    if (duplicada) {
+      setVarianteInlineError(`Ya agregaste ${genero} — ${talla}.`);
+      return;
+    }
+    setVariantesInline(prev => [...prev, {
+      talla, genero,
+      stock_total:  Number(stock_total) || 0,
+      stock_minimo: Number(stock_minimo) || 0,
+      codigo:       codigo || null,
+      _key: Date.now(),
+    }]);
+    setVarianteInlineForm(emptyVarianteInline);
+  };
+
+  const quitarVarianteInline = (key) =>
+    setVariantesInline(prev => prev.filter(v => v._key !== key));
+
+  const handleCrearProducto = async () => {
+    setSaving(true);
+    try {
+      const payload = {
+        codigo:            productoForm.codigo || null,
+        nombre:            productoForm.nombre,
+        descripcion:       productoForm.descripcion || null,
+        categoria:         productoForm.categoria || null,
+        unidad:            productoForm.unidad || null,
+        stock_total:       Number(productoForm.stock_total) || 0,
+        stock_minimo:      Number(productoForm.stock_minimo) || 0,
+        es_medible:        productoForm.es_medible ? 1 : 0,
+        metros_por_unidad: productoForm.es_medible ? (Number(productoForm.metros_por_unidad) || null) : null,
+        tiene_variantes:   productoForm.tiene_variantes ? 1 : 0,
+        sede_id:           sedeId,   // ← le dice al backend en qué sede registrar el stock inicial
+      };
+
+      const nuevo = await productosService.create(payload);
+
+      // Si tiene variantes, crearlas todas
+      if (productoForm.tiene_variantes && variantesInline.length > 0) {
+        for (const v of variantesInline) {
+          await productosService.crearVariante(nuevo.id, {
+            talla:        v.talla,
+            genero:       v.genero,
+            stock_total:  v.stock_total,
+            stock_minimo: v.stock_minimo,
+            codigo:       v.codigo,
+          });
+        }
+      }
+
+      // Refrescar el stock de esta sede para mostrar el nuevo producto
+      const dataStock = await stockService.getStock();
+      setStock(dataStock);
+
+      setModal(false);
+      setSuccess("producto");
+      setTimeout(() => setSuccess(null), 3500);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // ── Entrada ────────────────────────────────────────────
   const handleEntrada = async () => {
     setSaving(true);
     try {
@@ -196,7 +333,7 @@ export default function CtrlInventario() {
     }
   };
 
-  // ── Salida múltiple ────────────────────────────────────────
+  // ── Salida múltiple ────────────────────────────────────
   const agregarItem = () =>
     setSalida(prev => ({ ...prev, items: [...prev.items, { ...emptyItem }] }));
 
@@ -244,22 +381,32 @@ export default function CtrlInventario() {
     }
   };
 
-  const fieldE = (key) => ({
-    value: entrada[key],
-    onChange: (e) => setEntrada(prev => ({ ...prev, [key]: e.target.value }))
-  });
-
+  const fieldE               = (key) => ({ value: entrada[key], onChange: (e) => setEntrada(prev => ({ ...prev, [key]: e.target.value })) });
   const productosYaAgregados = salida.items.map(i => String(i.producto_id));
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
+  // ─────────────────────────────────────────────────────────────────────────
   return (
     <div>
-      {success && (
-        <div className={`alert ${success === "entrada" ? "alert-success" : "alert-info"}`}>
-          <Icon d={IC.check} size={15} color={success === "entrada" ? "var(--success)" : "var(--info)"} />
-          {success === "entrada" ? "Entrada registrada correctamente." : "Salida registrada correctamente."}
+      {/* Alertas de éxito */}
+      {success === "entrada" && (
+        <div className="alert alert-success">
+          <Icon d={IC.check} size={15} color="var(--success)" />
+          Entrada registrada correctamente.
+        </div>
+      )}
+      {success === "salida" && (
+        <div className="alert alert-info">
+          <Icon d={IC.check} size={15} color="var(--info)" />
+          Salida registrada correctamente.
+        </div>
+      )}
+      {success === "producto" && (
+        <div className="alert alert-success">
+          <Icon d={IC.check} size={15} color="var(--success)" />
+          Producto creado y agregado al inventario de tu sede.
         </div>
       )}
 
@@ -302,6 +449,10 @@ export default function CtrlInventario() {
             <button className="btn btn-outline" onClick={() => { setEntrada(emptyEntrada); setModal("entrada"); }}>
               <Icon d={IC.entry} size={15} />
               Registrar entrada
+            </button>
+            <button className="btn btn-outline" onClick={openCrearProducto}>
+              <Icon d={IC.plus} size={15} />
+              Nuevo producto
             </button>
             <button className="btn btn-primary" onClick={() => { setSalida(emptySalida); setModal("salida"); }}>
               <Icon d={IC.exit} size={15} />
@@ -370,7 +521,6 @@ export default function CtrlInventario() {
       {/* ── Vista Activos ── */}
       {tab === "activos" && (
         <>
-          {/* Sub-tabs NOC / ADMINISTRACIÓN */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, marginBottom: 16 }}>
             {["NOC", "ADMINISTRACION"].map(area => (
               <button key={area} onClick={() => setAreaActiva(area)}
@@ -410,11 +560,7 @@ export default function CtrlInventario() {
                 <table>
                   <thead>
                     <tr>
-                      <th>Nombre</th>
-                      <th>Descripción</th>
-                      <th>N° Serie</th>
-                      <th>Estado</th>
-                      <th>Acciones</th>
+                      <th>Nombre</th><th>Descripción</th><th>N° Serie</th><th>Estado</th><th>Acciones</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -449,6 +595,204 @@ export default function CtrlInventario() {
             )}
           </div>
         </>
+      )}
+
+      {/* ════════════════════════════════════════════════════════
+          Modal: Nuevo Producto
+      ════════════════════════════════════════════════════════ */}
+      {modal === "crearProducto" && (
+        <Modal
+          title="Nuevo Producto"
+          onClose={() => setModal(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleCrearProducto}
+                disabled={saving || !productoForm.nombre}>
+                {saving ? "Creando..." : "Crear producto"}
+              </button>
+            </>
+          }
+        >
+          {/* Código y Categoría */}
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Código</label>
+              <input className="form-input" placeholder="Ej: CBL-UTP-001" {...productoField("codigo")} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Categoría</label>
+              <select className="form-input" {...productoField("categoria")}>
+                <option value="">Seleccionar...</option>
+                {CATEGORIAS.map(c => (
+                  <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Nombre */}
+          <div className="form-group">
+            <label className="form-label">Nombre del producto *</label>
+            <input className="form-input" placeholder="Ej: Cable UTP Cat6" {...productoField("nombre")} />
+          </div>
+
+          {/* Descripción */}
+          <div className="form-group">
+            <label className="form-label">Descripción</label>
+            <input className="form-input" placeholder="Descripción opcional" {...productoField("descripcion")} />
+          </div>
+
+          {/* Unidad y stock mínimo */}
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Unidad</label>
+              <input className="form-input" placeholder="metros, unidad, caja..." {...productoField("unidad")} />
+            </div>
+            {!productoForm.tiene_variantes && (
+              <div className="form-group">
+                <label className="form-label">Stock mínimo</label>
+                <input className="form-input" type="number" min="0" placeholder="0" {...productoField("stock_minimo")} />
+              </div>
+            )}
+          </div>
+
+          {/* Stock inicial — solo si no tiene variantes */}
+          {!productoForm.tiene_variantes && (
+            <div className="form-group">
+              <label className="form-label">Stock inicial en tu sede</label>
+              <input className="form-input" type="number" min="0" placeholder="0" {...productoField("stock_total")} />
+            </div>
+          )}
+
+          {/* ¿Es medible? */}
+          {!productoForm.tiene_variantes && (
+            <div className="form-group" style={{ marginTop: 8 }}>
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+                <input type="checkbox" checked={!!productoForm.es_medible}
+                  onChange={e => setProductoForm(prev => ({
+                    ...prev,
+                    es_medible: e.target.checked,
+                    metros_por_unidad: "",
+                  }))} />
+                Este producto se mide en metros (cable, fibra, rollo…)
+              </label>
+            </div>
+          )}
+
+          {productoForm.es_medible && !productoForm.tiene_variantes && (
+            <div className="form-group">
+              <label className="form-label">Metros por unidad/rollo</label>
+              <input className="form-input" type="number" min="1" placeholder="Ej: 1000" {...productoField("metros_por_unidad")} />
+            </div>
+          )}
+
+          {/* ── Sección variantes ── */}
+          <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
+              <input type="checkbox" checked={!!productoForm.tiene_variantes}
+                onChange={e => {
+                  setProductoForm(prev => ({
+                    ...prev,
+                    tiene_variantes: e.target.checked,
+                    es_medible: false,
+                    stock_total: "",
+                    stock_minimo: "",
+                  }));
+                  if (!e.target.checked) {
+                    setVariantesInline([]);
+                    setVarianteInlineError("");
+                  }
+                }} />
+              Este producto tiene variantes (talla / género)
+            </label>
+
+            {productoForm.tiene_variantes && (
+              <div style={{ marginTop: 12 }}>
+
+                {/* Formulario de variante nueva */}
+                <div style={{
+                  background: "var(--hover)", borderRadius: 8,
+                  border: "1px solid var(--border)", padding: "12px 14px", marginBottom: 10
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Nueva variante
+                  </div>
+                  <div className="form-row" style={{ marginBottom: 8 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Género</label>
+                      <select className="form-input" {...inlineField("genero")}>
+                        {GENEROS.map(g => <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>)}
+                      </select>
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Talla</label>
+                      <select className="form-input" {...inlineField("talla")}>
+                        {TALLAS.map(t => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="form-row" style={{ marginBottom: 8 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Stock inicial</label>
+                      <input className="form-input" type="number" min="0" placeholder="0" {...inlineField("stock_total")} />
+                    </div>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">Stock mínimo</label>
+                      <input className="form-input" type="number" min="0" placeholder="0" {...inlineField("stock_minimo")} />
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 10 }}>
+                    <label className="form-label">Código de variante</label>
+                    <input className="form-input" placeholder="Ej: PLO-M-S" {...inlineField("codigo")} />
+                  </div>
+                  {varianteInlineError && (
+                    <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 8 }}>
+                      {varianteInlineError}
+                    </div>
+                  )}
+                  <button type="button" className="btn btn-outline btn-sm"
+                    onClick={agregarVarianteInline}
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <Icon d={IC.plus} size={13} />
+                    Agregar variante
+                  </button>
+                </div>
+
+                {/* Lista variantes acumuladas */}
+                {variantesInline.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
+                      Variantes a crear ({variantesInline.length})
+                    </div>
+                    {variantesInline.map(v => (
+                      <div key={v._key} style={{
+                        display: "flex", alignItems: "center", gap: 10,
+                        padding: "7px 10px", borderRadius: 7,
+                        background: "white", border: "1px solid var(--border)"
+                      }}>
+                        <VarianteBadge talla={v.talla} genero={v.genero} />
+                        {v.codigo && <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{v.codigo}</span>}
+                        <span style={{ fontSize: 12, color: "var(--text-muted)", marginLeft: "auto" }}>
+                          Stock: <strong>{v.stock_total}</strong>
+                          {v.stock_minimo > 0 && ` / Mín: ${v.stock_minimo}`}
+                        </span>
+                        <button type="button" className="btn btn-danger-outline btn-sm btn-icon"
+                          onClick={() => quitarVarianteInline(v._key)}>
+                          <Icon d={IC.remove} size={12} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
+                    Todavía no agregaste variantes. Podés hacerlo ahora o después.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
       )}
 
       {/* Modal entrada */}
@@ -542,7 +886,7 @@ export default function CtrlInventario() {
             )}
             {salida.items.map((item, idx) => {
               const productoInfo = stock.find(s => String(s.producto_id) === String(item.producto_id));
-              const esMedible = !!productoInfo?.es_medible;
+              const esMedible    = !!productoInfo?.es_medible;
               return (
                 <div key={idx} style={styles.itemRow}>
                   <div style={{ flex: 2 }}>

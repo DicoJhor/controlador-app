@@ -2,7 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { useAuth } from "../hooks/useAuth";
 import { ROLES } from "../utils/constants";
 import ProtectedRoute from "./ProtectedRoute";
-
+import AdminOperaciones from "../pages/admin/Operaciones";
 // Páginas públicas
 import Login from "../pages/Login";
 import NoAutorizado from "../pages/NoAutorizado";
@@ -63,6 +63,7 @@ export default function AppRouter() {
           <Route element={<MainLayout />}>
             <Route path="/admin/dashboard"  element={<AdminDashboard />} />
             <Route path="/admin/sedes"      element={<AdminSedes />} />
+            <Route path="/admin/operaciones" element={<AdminOperaciones />} />
             <Route path="/admin/usuarios"   element={<AdminUsuarios />} />
             <Route path="/admin/inventario" element={<AdminInventario />} />
             <Route path="/admin/auditoria"  element={<AdminAuditoria />} />

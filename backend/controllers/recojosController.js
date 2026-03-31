@@ -99,3 +99,23 @@ exports.confirmarTecnico = async (req, res) => {
     res.status(500).json({ message: "Error al confirmar recojo", error: err.message })
   }
 }
+exports.getAllAdmin = async (req, res) => {
+  try {
+    const { sede_id } = req.query
+    const [rows] = await db.query(`
+      SELECT r.id, r.cliente, r.direccion, r.serie, r.tipo_equipo,
+             r.estado, r.comentario, r.foto, r.created_at,
+             u.nombre as tecnico, u.id as tecnico_id,
+             s.nombre as sede_nombre
+      FROM recojos r
+      JOIN usuarios u ON r.tecnico_id = u.id
+      JOIN sedes s ON s.id = u.sede_id
+      ${sede_id && sede_id !== "todas" ? "WHERE u.sede_id = ?" : ""}
+      ORDER BY r.created_at DESC
+    `, sede_id && sede_id !== "todas" ? [sede_id] : [])
+    res.json(rows)
+  } catch (err) {
+    console.error("❌ Error getAllAdmin recojos:", err.message)
+    res.status(500).json({ message: "Error al obtener recojos", error: err.message })
+  }
+}

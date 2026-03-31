@@ -3,7 +3,7 @@ const router  = express.Router()
 const {
   getMiInventario, getMiHistorial,
   registrarSalida, registrarSalidaMultiple,
-  getAverias,
+  getAverias, getAveriasAdmin
 } = require("../controllers/tecnicoController")
 const {
   getMisRecojos, confirmarTecnico
@@ -28,5 +28,6 @@ router.post("/activaciones",    verificarToken, verificarRol("tecnico"),
     { name: "foto_despues", maxCount: 1 },
   ]), create)
 router.get("/averias",          verificarToken, verificarRol("controlador", "admin", "superadmin"), getAverias)
+router.get("/averias/admin",    verificarToken, verificarRol("admin", "superadmin"), getAveriasAdmin)
 
 module.exports = router
