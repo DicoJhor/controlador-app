@@ -20,9 +20,9 @@ const soloSuperadmin = (req, res, next) => {
   next()
 }
 
-router.get("/",       verificarToken, verificarRol("admin", "superadmin"), getAll)
-router.post("/",      verificarToken, verificarRol("admin", "superadmin"), validarRolCreacion, create)
-router.put("/:id",    verificarToken, verificarRol("admin", "superadmin"), update)
+router.get("/",       verificarToken, verificarRol("admin", "superadmin", "controlador"), getAll)
+router.post("/",      verificarToken, verificarRol("admin", "superadmin", "controlador"), validarRolCreacion, create)
+router.put("/:id",    verificarToken, verificarRol("admin", "superadmin", "controlador"), update)
 router.delete("/:id", verificarToken, verificarRol("admin", "superadmin"), soloSuperadmin, remove)
 
 module.exports = router

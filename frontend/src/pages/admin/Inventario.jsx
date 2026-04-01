@@ -112,8 +112,10 @@ export default function AdminInventario() {
   const [selected,      setSelected]      = useState(null);
   const [form,          setForm]          = useState(emptyForm);
   const [saving,        setSaving]        = useState(false);
+  const [tab, setTab] = useState("central");
 
   const [vistaMode,   setVistaMode]   = useState("central");
+  const [catalogoGlobal, setCatalogoGlobal] = useState([]);
   const [sedeVista,   setSedeVista]   = useState("");
   const [stockSede,   setStockSede]   = useState([]);
   const [loadingSede, setLoadingSede] = useState(false);
@@ -146,9 +148,11 @@ export default function AdminInventario() {
     Promise.all([
       productosService.getStockBySede(2),
       sedesService.getAll(),
-    ]).then(([prods, sds]) => {
+      productosService.getAll(),
+    ]).then(([prods, sds, catalogo]) => {
       setProductos(prods);
       setSedes(sds.filter(s => s.id !== 2));
+      setCatalogoGlobal(catalogo);
       setLoading(false);
     }).catch(() => {
       setError("No se pudieron cargar los datos");
@@ -605,7 +609,7 @@ export default function AdminInventario() {
       p.producto_id === producto_id ? { ...p, cantidad: Number(valor) } : p
     )}));
 
-  const prodEntradaFiltrados = productos.filter(p =>
+  const prodEntradaFiltrados = catalogoGlobal.filter(p =>
     p.nombre.toLowerCase().includes(entradaSearch.toLowerCase()) ||
     (p.codigo ?? "").toLowerCase().includes(entradaSearch.toLowerCase())
   );
@@ -649,6 +653,7 @@ export default function AdminInventario() {
         }
 
         setProductos(prev => [...prev, { ...nuevo, stock_total: Number(payload.stock_total) || 0 }]);
+        setCatalogoGlobal(prev => [...prev, { ...nuevo }]);
         setModal(false);
 
         setTimeout(() => {
@@ -694,6 +699,27 @@ export default function AdminInventario() {
 
   return (
     <div>
+      {/* ── Tabs principales ── */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 20, background: "var(--hover)", borderRadius: 10, padding: 4, width: "fit-content" }}>
+        {[
+          { key: "central",  label: "Stock Central"  },
+          { key: "catalogo", label: "Catálogo Global" },
+        ].map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)}
+            style={{
+              padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer",
+              fontSize: 13, fontWeight: 500, transition: "all .15s",
+              background: tab === t.key ? "white" : "transparent",
+              color: tab === t.key ? "var(--text)" : "var(--text-muted)",
+              boxShadow: tab === t.key ? "0 1px 3px rgba(0,0,0,.1)" : "none",
+            }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "central" && (
+      <>
       {lowStockCount > 0 && vistaMode === "central" && (
         <div className="alert alert-danger">
           <Icon d={IC.alert} size={15} color="var(--danger)" />
@@ -1013,6 +1039,13 @@ export default function AdminInventario() {
               </table>
             </div>
           )}
+        </div>
+      )}
+      </>
+    )}
+    {tab === "catalogo" && (
+        <div style={{ padding: 32, color: "var(--text-muted)" }}>
+          Catálogo global — próximamente
         </div>
       )}
 
