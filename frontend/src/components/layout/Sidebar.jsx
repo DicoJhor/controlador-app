@@ -38,6 +38,7 @@ const navConfig = {
       section: "Operaciones",
       items: [
         { to: "/admin/inventario",   label: "Inventario",   icon: IC.inventory },
+        { to: "/admin/catalogo",     label: "Catálogo",      icon: IC.package  },
         { to: "/admin/auditoria",    label: "Auditoría",    icon: IC.audit     },
         { to: "/admin/operaciones",  label: "Operaciones",  icon: IC.package   },
       ],

@@ -5,7 +5,7 @@ exports.obtenerProductos = async (req, res) => {
   try {
     const [rows] = await db.query(
       `SELECT id, codigo, nombre, descripcion, categoria, unidad, stock_total, stock_minimo, estado,
-              es_medible, metros_por_unidad, metros_disponibles
+              es_medible, metros_por_unidad, metros_disponibles, tiene_variantes
        FROM productos`
     )
     res.json(rows)

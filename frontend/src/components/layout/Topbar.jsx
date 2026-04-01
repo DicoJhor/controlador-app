@@ -20,6 +20,7 @@ const pageTitles = {
   "/admin/sedes":      "Gestión de Sedes",
   "/admin/usuarios":   "Gestión de Usuarios",
   "/admin/inventario": "Gestión de Inventario",
+  "/admin/catalogo":   "Catálogo Global",
   "/admin/auditoria":  "Auditoría Global",
   "/controlador/dashboard":  "Dashboard",
   "/controlador/tecnicos":   "Gestión de Técnicos",

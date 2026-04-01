@@ -16,6 +16,7 @@ import AdminSedes        from "../pages/admin/Sedes";
 import AdminUsuarios     from "../pages/admin/Usuarios";
 import AdminInventario   from "../pages/admin/Inventario";
 import AdminAuditoria    from "../pages/admin/Auditoria";
+import AdminCatalogo     from "../pages/admin/Catalogo";
 
 // Controlador
 import CtrlDashboard   from "../pages/controlador/Dashboard";
@@ -66,6 +67,7 @@ export default function AppRouter() {
             <Route path="/admin/operaciones" element={<AdminOperaciones />} />
             <Route path="/admin/usuarios"   element={<AdminUsuarios />} />
             <Route path="/admin/inventario" element={<AdminInventario />} />
+            <Route path="/admin/catalogo"   element={<AdminCatalogo />} />
             <Route path="/admin/auditoria"  element={<AdminAuditoria />} />
           </Route>
         </Route>
