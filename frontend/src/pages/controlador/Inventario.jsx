@@ -511,7 +511,9 @@ export default function CtrlInventario() {
                           {item.es_medible && item.metros_disponibles !== null ? (
                             <div>
                               <span className="mono fw-600" style={{ color: "var(--info)" }}>
-                                {formatNumber(item.metros_disponibles)}m
+                                {formatNumber(
+                                  item.metros_disponibles ?? item.cantidad * (item.metros_por_unidad ?? 0)
+                                  )}m
                               </span>
                               <div className="text-sm text-muted">{item.metros_por_unidad}m/rollo</div>
                             </div>
@@ -1031,7 +1033,9 @@ export default function CtrlInventario() {
                         <option key={s.producto_id} value={s.producto_id}
                           disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}>
                           {s.producto} — disp: {s.cantidad}
-                          {s.es_medible ? ` (${s.metros_disponibles ?? 0}m)` : ""}
+                          {s.es_medible 
+                            ? ` (${(s.metros_disponibles ?? s.cantidad * (s.metros_por_unidad ?? 0))}m)` 
+                            : ""}
                         </option>
                       ))}
                     </select>
