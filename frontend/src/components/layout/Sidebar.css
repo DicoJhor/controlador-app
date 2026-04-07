@@ -1,0 +1,31 @@
+/* ── Sidebar.css ────────────────────────────────────────────── */
+/* Importa este archivo en Sidebar.jsx:  import "./Sidebar.css"  */
+
+/* ── Desktop (>768px): sidebar siempre visible, fijo ────────── */
+.sidebar {
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Móvil (≤768px): sidebar como drawer deslizable ─────────── */
+@media (max-width: 768px) {
+  .sidebar {
+    /* Oculto fuera de pantalla por defecto */
+    transform: translateX(-100%);
+    /* Ancho completo en pantallas muy pequeñas, fijo en medianas */
+    width: min(280px, 85vw) !important;
+    /* Sombra al deslizarse */
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.4);
+  }
+
+  /* Cuando está abierto */
+  .sidebar--open {
+    transform: translateX(0);
+  }
+
+  /* Mostrar botón de cerrar X en móvil */
+  .sidebar-close-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+}

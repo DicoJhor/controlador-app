@@ -1,36 +1,28 @@
+import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
 import Topbar from "./Topbar";
+import "./MainLayout.css";
 
 export default function MainLayout() {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
   return (
-    <div style={styles.app}>
-      <Sidebar />
-      <div style={styles.main}>
-        <Topbar />
-        <main style={styles.content}>
+    <div className="ml-app">
+      {/* Overlay oscuro — solo visible en móvil cuando sidebar está abierto */}
+      <div
+        className={`ml-overlay ${sidebarOpen ? "ml-overlay--active" : ""}`}
+        onClick={() => setSidebarOpen(false)}
+      />
+
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+
+      <div className="ml-main">
+        <Topbar onMenuClick={() => setSidebarOpen(true)} />
+        <main className="ml-content">
           <Outlet />
         </main>
       </div>
     </div>
   );
 }
-
-const styles = {
-  app: {
-    display: "flex",
-    minHeight: "100vh",
-  },
-  main: {
-    marginLeft: "var(--sidebar-w)",
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    minHeight: "100vh",
-    minWidth: 0,
-  },
-  content: {
-    flex: 1,
-    padding: 28,
-  },
-};

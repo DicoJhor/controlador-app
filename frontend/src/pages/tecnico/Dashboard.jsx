@@ -11,7 +11,7 @@ function StockRow({ item }) {
       <td><span className="mono">{item.codigo ?? "—"}</span></td>
       <td>
         <div className="fw-600">{item.nombre}</div>
-        <div className="text-sm text-muted">{item.unidad}</div>
+        <div className="text-sm text-muted">{item.es_medible ? "metros" : item.unidad}</div>
       </td>
       <td className="mono">{formatNumber(item.asignado)}</td>
       <td className="mono" style={{ color: "var(--warning)", fontWeight: 600 }}>{formatNumber(item.usado)}</td>

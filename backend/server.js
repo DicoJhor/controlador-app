@@ -22,11 +22,20 @@ const app = express()
 // ── Middlewares ─────────────────────────────────────────
 
 // CORS configurado para frontend (Vite)
-app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || "http://localhost:5173",
+// CORS configurado para frontend (Vite)
+const allowedOrigins = [
+  ...(process.env.FRONTEND_URL?.split(',').map(o => o.trim()) || []),
   "http://localhost:5173"
-  ],
+]
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true)
+    } else {
+      callback(new Error('No permitido por CORS'))
+    }
+  },
   credentials: true
 }))
 

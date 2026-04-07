@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { ROLES } from "../../utils/constants";
 import logo from "../../assets/logo_enet.png";
+import "./Sidebar.css";
 
 function Icon({ d, size = 17 }) {
   return (
@@ -22,6 +23,7 @@ const IC = {
   activity:  "M22 12h-4l-3 9L9 3l-3 9H2",
   package:   "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z M3.27 6.96L12 12.01l8.73-5.05 M12 22.08V12",
   logout:    "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4 M16 17l5-5-5-5 M21 12H9",
+  close:     "M18 6L6 18 M6 6l12 12",
 };
 
 const navConfig = {
@@ -96,13 +98,18 @@ const navConfig = {
 };
 
 const roleInfo = {
-  [ROLES.SUPERADMIN]:  { label: "Super Admin", color: "#DC2626", bg: "#FEF2F2" },
+  [ROLES.SUPERADMIN]:  { label: "Super Admin",   color: "#DC2626", bg: "#FEF2F2" },
   [ROLES.ADMIN]:       { label: "Admin General", color: "#7C3AED", bg: "#F5F3FF" },
   [ROLES.CONTROLADOR]: { label: "Controlador",   color: "#0891B2", bg: "#ECFEFF" },
   [ROLES.TECNICO]:     { label: "Técnico",        color: "#059669", bg: "#ECFDF5" },
 };
 
-export default function Sidebar() {
+/**
+ * Props:
+ *  - isOpen  {boolean}  — si está abierto en móvil
+ *  - onClose {function} — cierra el drawer en móvil
+ */
+export default function Sidebar({ isOpen, onClose }) {
   const { user, role, logout } = useAuth();
   const navigate = useNavigate();
 
@@ -114,15 +121,30 @@ export default function Sidebar() {
     navigate("/login", { replace: true });
   };
 
+  // Al hacer clic en un link en móvil, cierra el sidebar
+  const handleNavClick = () => {
+    if (onClose) onClose();
+  };
+
   return (
-    <aside style={styles.sidebar}>
-      {/* Logo */}
+    <aside className={`sidebar ${isOpen ? "sidebar--open" : ""}`} style={styles.sidebar}>
+
+      {/* Header: logo + botón cerrar en móvil */}
       <div style={styles.header}>
         <img src={logo} alt="Enet Fiber Perú" style={styles.logoImg} />
-        <div>
+        <div style={{ flex: 1 }}>
           <div style={styles.brandName}>Enet Fiber Perú</div>
           <div style={styles.brandSub}>Sistema de Inventario</div>
         </div>
+        {/* Botón X solo visible en móvil */}
+        <button
+          className="sidebar-close-btn"
+          style={styles.closeBtn}
+          onClick={onClose}
+          title="Cerrar menú"
+        >
+          <Icon d={IC.close} size={18} />
+        </button>
       </div>
 
       {/* Usuario */}
@@ -144,6 +166,7 @@ export default function Sidebar() {
               <NavLink
                 key={item.to}
                 to={item.to}
+                onClick={handleNavClick}
                 style={({ isActive }) => ({
                   ...styles.navItem,
                   ...(isActive ? styles.navItemActive : {}),
@@ -178,6 +201,7 @@ const styles = {
     position: "fixed",
     top: 0, left: 0, bottom: 0,
     zIndex: 100,
+    // La transición la maneja el CSS
   },
   header: {
     padding: "20px 18px",
@@ -186,9 +210,19 @@ const styles = {
     alignItems: "center",
     gap: 10,
   },
-  logoImg:   { width: 80, height: 80, objectFit: "contain" },
-  brandName: { fontSize: 15, fontWeight: 700 },
-  brandSub:  { fontSize: 11, color: "rgba(255,255,255,.4)", textTransform: "uppercase", letterSpacing: ".5px" },
+  logoImg:   { width: 48, height: 48, objectFit: "contain", flexShrink: 0 },
+  brandName: { fontSize: 14, fontWeight: 700 },
+  brandSub:  { fontSize: 10, color: "rgba(255,255,255,.4)", textTransform: "uppercase", letterSpacing: ".5px" },
+  closeBtn: {
+    background: "none",
+    border: "none",
+    color: "rgba(255,255,255,.5)",
+    cursor: "pointer",
+    padding: 6,
+    borderRadius: 6,
+    display: "none", // Se muestra con CSS en móvil
+    flexShrink: 0,
+  },
   userSection: { padding: "14px 18px", borderBottom: "1px solid rgba(255,255,255,.08)" },
   roleBadge: {
     display: "inline-flex", alignItems: "center",

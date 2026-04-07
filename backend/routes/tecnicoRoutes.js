@@ -16,17 +16,23 @@ const upload         = require("../middleware/uploadMiddleware")
 router.get("/inventario",       verificarToken, verificarRol("tecnico"), getMiInventario)
 router.get("/historial",        verificarToken, verificarRol("tecnico"), getMiHistorial)
 router.post("/salida",          verificarToken, verificarRol("tecnico"), registrarSalida)
+
+// Avería: hasta 5 fotos bajo campo "fotos"
 router.post("/salida-multiple", verificarToken, verificarRol("tecnico"),
-  upload.single("foto"), registrarSalidaMultiple)
+  upload.array("fotos", 5), registrarSalidaMultiple)
+
 router.get("/recojos",          verificarToken, verificarRol("tecnico"), getMisRecojos)
+
+// Confirmar recojo: hasta 5 fotos
 router.patch("/recojos/:id",    verificarToken, verificarRol("tecnico"),
-  upload.single("foto"), confirmarTecnico)
+  upload.array("fotos", 5), confirmarTecnico)
+
 router.get("/activaciones",     verificarToken, verificarRol("tecnico"), getMias)
+
+// Activación: hasta 5 fotos
 router.post("/activaciones",    verificarToken, verificarRol("tecnico"),
-  upload.fields([
-    { name: "foto_antes",   maxCount: 1 },
-    { name: "foto_despues", maxCount: 1 },
-  ]), create)
+  upload.array("fotos", 5), create)
+
 router.get("/averias",          verificarToken, verificarRol("controlador", "admin", "superadmin"), getAverias)
 router.get("/averias/admin",    verificarToken, verificarRol("admin", "superadmin"), getAveriasAdmin)
 
