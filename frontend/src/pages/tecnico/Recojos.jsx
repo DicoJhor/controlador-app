@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import Modal from "../../components/ui/Modal";
 import tecnicoService from "../../services/tecnicoService";
 
-const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
-
+const BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:4000/api").replace("/api", "");
 function formatFecha(fecha) {
   if (!fecha) return "—";
   const d = new Date(fecha);
