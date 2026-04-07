@@ -17,7 +17,7 @@ const storage = multer.diskStorage({
     else if (req.baseUrl.includes("tecnico"))         tipo = "averias"
 
     const cliente = sanitize(req.body.cliente)
-    const carpeta = path.join("uploads", tipo, cliente)
+    const carpeta = path.join(__dirname, "..", "uploads", tipo, cliente)
     fs.mkdirSync(carpeta, { recursive: true })
     cb(null, carpeta)
   },

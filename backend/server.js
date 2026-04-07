@@ -17,6 +17,8 @@ const enviosRoutes = require("./routes/enviosRoutes")
 const activosRouter = require("./routes/activosRoutes")
 const activacionesRouter = require("./routes/activacionesRoutes")
 
+const path = require('path')
+
 const app = express()
 
 // ── Middlewares ─────────────────────────────────────────
@@ -43,7 +45,7 @@ app.use(cors({
 app.use(express.json())
 
 // ── Rutas API ─────────────────────────────────────────
-app.use("/uploads", express.static("uploads"))
+app.use("/uploads", express.static(path.join(__dirname, 'uploads')))
 app.use("/api/auth", authRoutes)
 app.use("/api/productos", productRoutes)
 app.use("/api/stock", stockRoutes)
