@@ -16,6 +16,7 @@ const tecnicoRoutes = require("./routes/tecnicoRoutes")
 const enviosRoutes = require("./routes/enviosRoutes")
 const activosRouter = require("./routes/activosRoutes")
 const activacionesRouter = require("./routes/activacionesRoutes")
+const onuRoutes   = require("./routes/onuRoutes")
 
 const path = require('path')
 
@@ -58,6 +59,7 @@ app.use("/api/tecnico", tecnicoRoutes)
 app.use("/api/envios", enviosRoutes)
 app.use("/api/activos", activosRouter)
 app.use("/api/activaciones", activacionesRouter)
+app.use("/api/onus",  onuRoutes)
 
 
 

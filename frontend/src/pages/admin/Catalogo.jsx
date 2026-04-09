@@ -25,15 +25,19 @@ const IC = {
   ruler:   "M2 12h20 M12 2v20",
 };
 
-const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros", "ropa", "infraestructura"];
+const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros", "ropa", "rollo", "onu", "infraestructura"];
 const TALLAS     = ["XS", "S", "M", "L", "XL", "XXL"];
 const GENEROS    = ["masculino", "femenino", "unisex"];
 
 const emptyForm = {
   codigo: "", nombre: "", descripcion: "", categoria: "",
-  unidad: "", es_medible: false, metros_por_unidad: "",
-  tiene_variantes: false,
+  unidad: "", metros_por_unidad: "",
 };
+
+// Helpers para saber el comportamiento según categoría
+const esRopa   = (cat) => cat === "ropa";
+const esRollo  = (cat) => cat === "rollo";
+const esOnu    = (cat) => cat === "onu";
 
 const emptyVarianteForm = {
   talla: "S", genero: "masculino", codigo: "",
@@ -254,14 +258,12 @@ export default function AdminCatalogo() {
 
   const openEditar = (p) => {
     setForm({
-      codigo:           p.codigo ?? "",
-      nombre:           p.nombre,
-      descripcion:      p.descripcion ?? "",
-      categoria:        p.categoria ?? "",
-      unidad:           p.unidad ?? "",
-      es_medible:       !!p.es_medible,
+      codigo:            p.codigo ?? "",
+      nombre:            p.nombre,
+      descripcion:       p.descripcion ?? "",
+      categoria:         p.categoria ?? "",
+      unidad:            p.unidad ?? "",
       metros_por_unidad: p.metros_por_unidad ?? "",
-      tiene_variantes:  !!p.tiene_variantes,
     });
     setSelected(p);
     setModal("editar");
@@ -278,10 +280,9 @@ export default function AdminCatalogo() {
         descripcion:       form.descripcion || null,
         categoria:         form.categoria || null,
         unidad:            form.unidad || null,
-        es_medible:        form.es_medible ? 1 : 0,
-        metros_por_unidad: form.es_medible ? (Number(form.metros_por_unidad) || null) : null,
-        tiene_variantes:   form.tiene_variantes ? 1 : 0,
-        // stock siempre 0 desde catálogo — cada sede maneja el suyo
+        es_medible:        esRollo(form.categoria) ? 1 : 0,
+        metros_por_unidad: esRollo(form.categoria) ? (Number(form.metros_por_unidad) || null) : null,
+        tiene_variantes:   esRopa(form.categoria) ? 1 : 0,
         stock_total:       0,
         stock_minimo:      0,
         metros_disponibles: 0,
@@ -291,7 +292,7 @@ export default function AdminCatalogo() {
       if (modal === "crear") {
         const nuevo = await productosService.create(payload);
 
-        if (form.tiene_variantes && variantesInline.length > 0) {
+        if (esRopa(form.categoria) && variantesInline.length > 0) {
           const creadas = [];
           for (const v of variantesInline) {
             const nueva = await productosService.crearVariante(nuevo.id, {
@@ -305,7 +306,7 @@ export default function AdminCatalogo() {
           }
           setVariantesMap(prev => ({ ...prev, [nuevo.id]: creadas }));
           setExpandedProduct(nuevo.id);
-        } else if (form.tiene_variantes) {
+        } else if (esRopa(form.categoria)) {
           setVariantesMap(prev => ({ ...prev, [nuevo.id]: [] }));
           setExpandedProduct(nuevo.id);
         }
@@ -404,15 +405,14 @@ export default function AdminCatalogo() {
                 <th>Nombre</th>
                 <th>Categoría</th>
                 <th>Unidad</th>
-                <th>Medible</th>
-                <th>Variantes</th>
+                <th>Detalles</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                  <td colSpan={6} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
                     Sin productos en el catálogo
                   </td>
                 </tr>
@@ -435,19 +435,12 @@ export default function AdminCatalogo() {
                       </td>
                       <td className="text-sm">{p.unidad ?? "—"}</td>
                       <td>
-                        {p.es_medible ? (
-                          <div>
-                            <Badge variant="active">Sí</Badge>
-                            <div className="text-sm text-muted" style={{ marginTop: 2 }}>
-                              {p.metros_por_unidad}m/rollo
-                            </div>
-                          </div>
-                        ) : (
-                          <span className="text-muted">No</span>
+                        {esRollo(p.categoria) && p.metros_por_unidad && (
+                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                            {p.metros_por_unidad}m/rollo
+                          </span>
                         )}
-                      </td>
-                      <td>
-                        {p.tiene_variantes ? (
+                        {esRopa(p.categoria) && p.tiene_variantes ? (
                           <button className="btn btn-outline btn-sm"
                             onClick={() => toggleVariantes(p.id)}
                             style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -457,13 +450,15 @@ export default function AdminCatalogo() {
                               : "Ver variantes"}
                             <span style={{
                               display: "inline-block", transition: "transform .2s",
-                              transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)"
+                              transform: expandedProduct === p.id ? "rotate(180deg)" : "rotate(0deg)"
                             }}>
                               <Icon d={IC.chevron} size={12} />
                             </span>
                           </button>
+                        ) : esOnu(p.categoria) ? (
+                          <Badge variant="blue">ONU</Badge>
                         ) : (
-                          <span className="text-muted">—</span>
+                          !esRollo(p.categoria) && <span className="text-muted">—</span>
                         )}
                       </td>
                       <td>
@@ -483,7 +478,7 @@ export default function AdminCatalogo() {
                     {/* Panel variantes expandido */}
                     {isExpanded && (
                       <tr>
-                        <td colSpan={7} style={{ padding: 0, background: "#F8FAFC" }}>
+                        <td colSpan={6} style={{ padding: 0, background: "#F8FAFC" }}>
                           <div style={{ padding: "12px 20px 16px", borderTop: "1px solid var(--border)" }}>
                             {loadingVariantes[p.id] ? (
                               <div style={{ color: "var(--text-muted)", fontSize: 13 }}>Cargando variantes...</div>
@@ -591,22 +586,8 @@ export default function AdminCatalogo() {
             <input className="form-input" placeholder="rollo, unidad, caja, par..." {...field("unidad")} />
           </div>
 
-          {/* ¿Es medible? */}
-          {!form.tiene_variantes && (
-            <div className="form-group" style={{ marginTop: 8 }}>
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
-                <input type="checkbox" checked={!!form.es_medible}
-                  onChange={e => setForm(prev => ({
-                    ...prev,
-                    es_medible: e.target.checked,
-                    metros_por_unidad: "",
-                  }))} />
-                Este producto se mide en metros (cable, fibra, rollo…)
-              </label>
-            </div>
-          )}
-
-          {form.es_medible && !form.tiene_variantes && (
+          {/* Metros por unidad — solo si categoría es rollo */}
+          {esRollo(form.categoria) && (
             <div className="form-group">
               <label className="form-label">Metros por unidad / rollo</label>
               <input className="form-input" type="number" min="1"
@@ -614,101 +595,101 @@ export default function AdminCatalogo() {
             </div>
           )}
 
-          {/* ── Variantes ── */}
-          <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 14 }}>
-              <input type="checkbox" checked={!!form.tiene_variantes}
-                onChange={e => {
-                  setForm(prev => ({
-                    ...prev,
-                    tiene_variantes: e.target.checked,
-                    es_medible: false,
-                    metros_por_unidad: "",
-                  }));
-                  if (!e.target.checked) {
-                    setVariantesInline([]);
-                    setVarianteInlineError("");
-                  }
-                }} />
-              Este producto tiene variantes (talla / género)
-            </label>
+          {/* Info ONU */}
+          {esOnu(form.categoria) && (
+            <div style={{
+              background: "var(--hover)", borderRadius: 8,
+              border: "1px solid var(--border)", padding: "10px 14px",
+              fontSize: 13, color: "var(--text-muted)", marginTop: 8
+            }}>
+              Los códigos PON-SN se registran en cada sede al momento de ingresar unidades al inventario.
+            </div>
+          )}
 
-            {form.tiene_variantes && modal === "crear" && (
-              <div style={{ marginTop: 12 }}>
-                <div style={{
-                  background: "var(--hover)", borderRadius: 8,
-                  border: "1px solid var(--border)", padding: "12px 14px", marginBottom: 10
-                }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    Nueva variante
-                  </div>
-                  <div className="form-row" style={{ marginBottom: 8 }}>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Género</label>
-                      <select className="form-input" {...inlineField("genero")}>
-                        {GENEROS.map(g => <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>)}
-                      </select>
+          {/* Variantes — solo si categoría es ropa */}
+          {esRopa(form.categoria) && (
+            <div style={{ borderTop: "1px solid var(--border)", marginTop: 16, paddingTop: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>
+                Variantes de talla / género
+              </div>
+
+              {modal === "crear" && (
+                <div style={{ marginTop: 4 }}>
+                  <div style={{
+                    background: "var(--hover)", borderRadius: 8,
+                    border: "1px solid var(--border)", padding: "12px 14px", marginBottom: 10
+                  }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      Nueva variante
                     </div>
-                    <div className="form-group" style={{ marginBottom: 0 }}>
-                      <label className="form-label">Talla</label>
-                      <select className="form-input" {...inlineField("talla")}>
-                        {TALLAS.map(t => <option key={t} value={t}>{t}</option>)}
-                      </select>
+                    <div className="form-row" style={{ marginBottom: 8 }}>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Género</label>
+                        <select className="form-input" {...inlineField("genero")}>
+                          {GENEROS.map(g => <option key={g} value={g}>{g.charAt(0).toUpperCase() + g.slice(1)}</option>)}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Talla</label>
+                        <select className="form-input" {...inlineField("talla")}>
+                          {TALLAS.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
                     </div>
+                    <div className="form-group" style={{ marginBottom: 10 }}>
+                      <label className="form-label">Código de variante</label>
+                      <input className="form-input" placeholder="Ej: PLO-M-S" {...inlineField("codigo")} />
+                    </div>
+                    {varianteInlineError && (
+                      <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 8 }}>
+                        {varianteInlineError}
+                      </div>
+                    )}
+                    <button type="button" className="btn btn-outline btn-sm"
+                      onClick={agregarVarianteInline}
+                      style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <Icon d={IC.plus} size={13} />
+                      Agregar variante
+                    </button>
                   </div>
-                  <div className="form-group" style={{ marginBottom: 10 }}>
-                    <label className="form-label">Código de variante</label>
-                    <input className="form-input" placeholder="Ej: PLO-M-S" {...inlineField("codigo")} />
-                  </div>
-                  {varianteInlineError && (
-                    <div style={{ color: "var(--danger)", fontSize: 12, marginBottom: 8 }}>
-                      {varianteInlineError}
+
+                  {variantesInline.length > 0 ? (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
+                        Variantes a crear ({variantesInline.length})
+                      </div>
+                      {variantesInline.map(v => (
+                        <div key={v._key} style={{
+                          display: "flex", alignItems: "center", gap: 10,
+                          padding: "7px 10px", borderRadius: 7,
+                          background: "white", border: "1px solid var(--border)"
+                        }}>
+                          <VarianteBadge talla={v.talla} genero={v.genero} />
+                          {v.codigo && <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{v.codigo}</span>}
+                          <button type="button" className="btn btn-danger-outline btn-sm btn-icon"
+                            style={{ marginLeft: "auto" }}
+                            onClick={() => quitarVarianteInline(v._key)}>
+                            <Icon d={IC.remove} size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
+                      Podés agregar variantes ahora o después desde la tabla.
                     </div>
                   )}
-                  <button type="button" className="btn btn-outline btn-sm"
-                    onClick={agregarVarianteInline}
-                    style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <Icon d={IC.plus} size={13} />
-                    Agregar variante
-                  </button>
                 </div>
+              )}
 
-                {variantesInline.length > 0 ? (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 2 }}>
-                      Variantes a crear ({variantesInline.length})
-                    </div>
-                    {variantesInline.map(v => (
-                      <div key={v._key} style={{
-                        display: "flex", alignItems: "center", gap: 10,
-                        padding: "7px 10px", borderRadius: 7,
-                        background: "white", border: "1px solid var(--border)"
-                      }}>
-                        <VarianteBadge talla={v.talla} genero={v.genero} />
-                        {v.codigo && <span className="mono" style={{ fontSize: 12, color: "var(--text-muted)" }}>{v.codigo}</span>}
-                        <button type="button" className="btn btn-danger-outline btn-sm btn-icon"
-                          style={{ marginLeft: "auto" }}
-                          onClick={() => quitarVarianteInline(v._key)}>
-                          <Icon d={IC.remove} size={12} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div style={{ fontSize: 13, color: "var(--text-muted)", fontStyle: "italic" }}>
-                    Todavía no agregaste variantes. Podés hacerlo ahora o después desde la tabla.
-                  </div>
-                )}
-              </div>
-            )}
-
-            {form.tiene_variantes && modal === "editar" && (
-              <div style={{ marginTop: 10, padding: "10px 14px", background: "var(--hover)", borderRadius: 8, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8 }}>
-                <Icon d={IC.tag} size={13} color="var(--text-muted)" />
-                Para editar variantes expandí el producto en la tabla.
-              </div>
-            )}
-          </div>
+              {modal === "editar" && (
+                <div style={{ padding: "10px 14px", background: "var(--hover)", borderRadius: 8, fontSize: 13, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <Icon d={IC.tag} size={13} color="var(--text-muted)" />
+                  Para editar variantes expandí el producto en la tabla.
+                </div>
+              )}
+            </div>
+          )}
         </Modal>
       )}
 

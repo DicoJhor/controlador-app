@@ -8,6 +8,7 @@ import api from "../../services/api";
 
 const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
 const TIPOS_EQUIPO = ["ONU", "Triplexor", "Roseta", "Patchcord", "Otro"];
+const SIN_SERIE = ["Roseta", "Patchcord", "Triplexor"];
 
 function formatFecha(fecha) {
   if (!fecha) return "—";
@@ -33,6 +34,7 @@ const IC = {
   wifi:   "M5 12.55a11 11 0 0114.08 0 M1.42 9a16 16 0 0121.16 0 M8.53 16.11a6 6 0 016.95 0 M12 20h.01",
   wrench: "M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z",
   box:    "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z",
+  x:      "M18 6L6 18 M6 6l12 12",
 };
 
 function MaterialesBadge({ materiales }) {
@@ -55,8 +57,11 @@ function MaterialesBadge({ materiales }) {
   );
 }
 
-const emptyRecojoForm = { tecnico_id: "", cliente: "", direccion: "", serie: "", tipo_equipo: "" };
-const SIN_SERIE = ["Roseta", "Patchcord", "Triplexor"];
+// Estado inicial de selección de equipos: cada tipo tiene checked + serie/codigo_pon
+const emptyEquiposCheck = () => TIPOS_EQUIPO.reduce((acc, t) => ({
+  ...acc,
+  [t]: { checked: false, serie: "", codigo_pon: "" }
+}), {});
 
 export default function CtrlRecojos() {
   const [tecnicos,      setTecnicos]      = useState([]);
@@ -67,7 +72,9 @@ export default function CtrlRecojos() {
   const [recojos,      setRecojos]      = useState([]);
   const [searchRecojo, setSearchRecojo] = useState("");
   const [recojoModal,  setRecojoModal]  = useState(false);
-  const [recojoForm,   setRecojoForm]   = useState(emptyRecojoForm);
+  const [recojoForm,   setRecojoForm]   = useState({ tecnico_id: "", cliente: "", direccion: "" });
+  const [equiposCheck, setEquiposCheck] = useState(emptyEquiposCheck());
+  const [equiposDrop,  setEquiposDrop]  = useState(false);
   const [saving,       setSaving]       = useState(false);
 
   // Activaciones
@@ -103,22 +110,35 @@ export default function CtrlRecojos() {
     (o.tipo_equipo ?? "").toLowerCase().includes(searchRecojo.toLowerCase())
   );
 
-  const requiereSerie = recojoForm.tipo_equipo && !SIN_SERIE.includes(recojoForm.tipo_equipo);
+  const equiposSeleccionados = TIPOS_EQUIPO.filter(t => equiposCheck[t].checked);
+  const equiposValidos = equiposSeleccionados.length > 0;
+  const recojoFormValido = recojoForm.tecnico_id && equiposValidos;
 
   const handleCrearRecojo = async () => {
     setSaving(true);
     try {
       const nueva = await recojosService.create({
-        tecnico_id:  Number(recojoForm.tecnico_id),
-        cliente:     recojoForm.cliente || null,
-        direccion:   recojoForm.direccion || null,
-        serie:       requiereSerie ? recojoForm.serie : null,
-        tipo_equipo: recojoForm.tipo_equipo,
+        tecnico_id: Number(recojoForm.tecnico_id),
+        cliente:    recojoForm.cliente || null,
+        direccion:  recojoForm.direccion || null,
+        equipos:    equiposSeleccionados.map(t => ({
+          tipo_equipo: t,
+          serie:       null,
+          codigo_pon:  t === "ONU" ? equiposCheck[t].codigo_pon || null : null,
+        })),
       });
       const tecnico = tecnicos.find(t => t.id === Number(recojoForm.tecnico_id));
-      setRecojos(prev => [{ ...nueva, tecnico: tecnico?.nombre ?? "—" }, ...prev]);
+      const nuevasFilas = nueva.equipos.map(eq => ({
+        ...eq, id: eq.id, grupo_orden: nueva.grupo_orden,
+        tecnico: tecnico?.nombre ?? "—",
+        cliente: recojoForm.cliente, direccion: recojoForm.direccion,
+        estado: "pendiente", created_at: new Date().toISOString(),
+      }));
+      setRecojos(prev => [...nuevasFilas, ...prev]);
       setRecojoModal(false);
-      setRecojoForm(emptyRecojoForm);
+      setRecojoForm({ tecnico_id: "", cliente: "", direccion: "" });
+      setEquiposCheck(emptyEquiposCheck());
+      setEquiposDrop(false);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -134,14 +154,6 @@ export default function CtrlRecojos() {
       alert(err.message);
     }
   };
-
-  const recojoField = (key) => ({
-    value: recojoForm[key],
-    onChange: e => setRecojoForm(prev => ({ ...prev, [key]: e.target.value }))
-  });
-
-  const recojoFormValido = recojoForm.tecnico_id && recojoForm.tipo_equipo &&
-    (!requiereSerie || recojoForm.serie.trim() !== "");
 
   // ── Activaciones ───────────────────────────────────────
   const filteredActivaciones = activaciones.filter(a => {
@@ -381,9 +393,10 @@ export default function CtrlRecojos() {
         </div>
       </div>
 
-      {/* Modal nueva orden de recojo */}
+      {/* ── Modal nueva orden de recojo ── */}
       {recojoModal && (
-        <Modal title="Nueva orden de recojo" onClose={() => setRecojoModal(false)}
+        <Modal title="Nueva orden de recojo"
+          onClose={() => { setRecojoModal(false); setEquiposCheck(emptyEquiposCheck()); setEquiposDrop(false); }}
           footer={
             <>
               <button className="btn btn-outline" onClick={() => setRecojoModal(false)} disabled={saving}>Cancelar</button>
@@ -395,32 +408,86 @@ export default function CtrlRecojos() {
         >
           <div className="form-group">
             <label className="form-label">Técnico *</label>
-            <select className="form-input" {...recojoField("tecnico_id")}>
+            <select className="form-input" value={recojoForm.tecnico_id}
+              onChange={e => setRecojoForm(p => ({ ...p, tecnico_id: e.target.value }))}>
               <option value="">Seleccionar técnico</option>
               {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
             </select>
           </div>
           <div className="form-group">
-            <label className="form-label">Tipo de equipo *</label>
-            <select className="form-input" {...recojoField("tipo_equipo")}>
-              <option value="">Seleccionar equipo...</option>
-              {TIPOS_EQUIPO.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
-          </div>
-          {requiereSerie && (
-            <div className="form-group">
-              <label className="form-label">Número de serie *</label>
-              <input className="form-input" placeholder="Ej: ONU-88721" {...recojoField("serie")} />
-            </div>
-          )}
-          <div className="form-group">
             <label className="form-label">Cliente</label>
-            <input className="form-input" placeholder="Nombre del cliente" {...recojoField("cliente")} />
+            <input className="form-input" placeholder="Nombre del cliente"
+              value={recojoForm.cliente} onChange={e => setRecojoForm(p => ({ ...p, cliente: e.target.value }))} />
           </div>
           <div className="form-group">
             <label className="form-label">Dirección</label>
-            <input className="form-input" placeholder="Dirección del recojo" {...recojoField("direccion")} />
+            <input className="form-input" placeholder="Dirección del recojo"
+              value={recojoForm.direccion} onChange={e => setRecojoForm(p => ({ ...p, direccion: e.target.value }))} />
           </div>
+
+          {/* Equipos — dropdown con checkboxes */}
+          <div className="form-group" style={{ position: "relative" }}>
+            <label className="form-label">Equipos a recoger *</label>
+
+            {/* Trigger del dropdown */}
+            <button type="button" className="form-input"
+              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", textAlign: "left", background: "var(--input-bg, #fff)" }}
+              onClick={() => setEquiposDrop(p => !p)}>
+              <span style={{ color: equiposSeleccionados.length ? "var(--text)" : "var(--text-muted)", fontSize: 14 }}>
+                {equiposSeleccionados.length
+                  ? equiposSeleccionados.join(", ")
+                  : "Seleccionar equipos..."}
+              </span>
+              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
+                style={{ transform: equiposDrop ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+
+            {/* Panel desplegable */}
+            {equiposDrop && (
+              <div style={{
+                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+                background: "var(--card-bg, #fff)", border: "1px solid var(--border)",
+                borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", padding: 4, marginTop: 2,
+              }}>
+                {TIPOS_EQUIPO.map(tipo => (
+                  <label key={tipo} style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 12px", borderRadius: 6, cursor: "pointer",
+                    transition: "background 0.1s",
+                  }}
+                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+                  >
+                    <input type="checkbox" checked={equiposCheck[tipo].checked}
+                      onChange={e => setEquiposCheck(p => ({
+                        ...p,
+                        [tipo]: { ...p[tipo], checked: e.target.checked, serie: "", codigo_pon: "" }
+                      }))}
+                      style={{ width: 15, height: 15, accentColor: "var(--primary)", cursor: "pointer" }} />
+                    <span style={{ fontSize: 14, fontWeight: 500 }}>{tipo}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Campos extra para ONU si está seleccionada */}
+          {equiposCheck["ONU"]?.checked && (
+            <div style={{ background: "var(--hover)", borderRadius: 8, padding: 12, marginTop: -8, marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", marginBottom: 8 }}>ONU</div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label" style={{ fontSize: 11 }}>
+                  Código PON-SN{" "}
+                  <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span>
+                </label>
+                <input className="form-input" placeholder="Ej: ZTEGC1234567"
+                  value={equiposCheck["ONU"].codigo_pon}
+                  onChange={e => setEquiposCheck(p => ({ ...p, ONU: { ...p.ONU, codigo_pon: e.target.value } }))} />
+              </div>
+            </div>
+          )}
         </Modal>
       )}
     </div>

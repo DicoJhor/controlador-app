@@ -42,6 +42,8 @@ exports.getMiInventario = async (req, res) => {
         p.nombre,
         p.unidad,
         p.es_medible,
+        p.categoria,
+        p.metros_por_unidad,
         a.cantidad AS asignado_unidades,
         CASE
           WHEN p.es_medible = 1 AND p.metros_por_unidad IS NOT NULL
@@ -59,12 +61,12 @@ exports.getMiInventario = async (req, res) => {
 
     const inventario = rows.map(r => ({
       ...r,
-      asignado:   parseFloat(r.asignado),
+      asignado:          parseFloat(r.asignado),
       asignado_unidades: parseFloat(r.asignado_unidades),
-      metros_por_unidad: r.metros_por_unidad ? parseFloat(r.metros_por_unidad) : null,   
-      usado:      parseFloat(r.usado),
-      disponible: parseFloat(r.asignado) - parseFloat(r.usado),
-      es_medible: Boolean(r.es_medible),
+      metros_por_unidad: r.metros_por_unidad ? parseFloat(r.metros_por_unidad) : null,
+      usado:             parseFloat(r.usado),
+      disponible:        parseFloat(r.asignado) - parseFloat(r.usado),
+      es_medible:        Boolean(r.es_medible),
     }))
 
     res.json(inventario)
@@ -145,24 +147,45 @@ exports.registrarSalidaMultiple = async (req, res) => {
   try {
     await conn.beginTransaction()
 
-    const tecnico_id  = req.user.id
-    const { comentario, nro_orden } = req.body
+    const tecnico_id = req.user.id
+    const { comentario, nro_orden, cliente, direccion, onu_id } = req.body
+
     const itemsParsed = typeof req.body.items === "string"
       ? JSON.parse(req.body.items)
       : (req.body.items || [])
 
-    if (!itemsParsed || itemsParsed.length === 0)
+    const onuIdsParsed = typeof req.body.onu_ids === "string"
+      ? JSON.parse(req.body.onu_ids)
+      : (req.body.onu_ids || [])
+
+    const onuId = onu_id ? Number(onu_id)
+      : (onuIdsParsed.length > 0 ? Number(onuIdsParsed[0]) : null)
+
+    if (!itemsParsed.length && !onuId)
       return res.status(400).json({ message: "Agregá al menos un material" })
 
-    // Verificar stock para cada ítem
+    // ── Validar ONU si viene ───────────────────────────────────────────────
+    if (onuId) {
+      const [[onu]] = await conn.query(
+        `SELECT id FROM onus
+         WHERE id = ? AND tecnico_id = ? AND averia_id IS NULL AND activacion_id IS NULL`,
+        [onuId, tecnico_id]
+      )
+      if (!onu) {
+        await conn.rollback()
+        return res.status(400).json({ message: "La ONU seleccionada no está disponible" })
+      }
+    }
+
+    // ── Verificar stock para cada ítem normal ──────────────────────────────
     for (const item of itemsParsed) {
       const [[asignacion]] = await conn.query(
-          `SELECT a.cantidad, p.es_medible, p.metros_por_unidad
-          FROM asignaciones_tecnicos a
-          JOIN productos p ON p.id = a.producto_id
-          WHERE a.tecnico_id = ? AND a.producto_id = ?`,
-          [tecnico_id, item.producto_id]
-        )
+        `SELECT a.cantidad, p.es_medible, p.metros_por_unidad
+         FROM asignaciones_tecnicos a
+         JOIN productos p ON p.id = a.producto_id
+         WHERE a.tecnico_id = ? AND a.producto_id = ?`,
+        [tecnico_id, item.producto_id]
+      )
       if (!asignacion) {
         await conn.rollback()
         return res.status(400).json({ message: `No tenés el ítem ID ${item.producto_id} asignado` })
@@ -186,28 +209,78 @@ exports.registrarSalidaMultiple = async (req, res) => {
       }
     }
 
-    // Generar código AV-2026-00001
+    // ── Generar código AV-2026-00001 ───────────────────────────────────────
     const codigo = await generarCodigo(conn, "AV", "averias")
 
-    // Crear avería
+    // ── Crear avería (con cliente, direccion y onu_id si vienen) ──────────
     const [result] = await conn.query(
-      "INSERT INTO averias (codigo, tecnico_id, comentario, nro_orden, fecha) VALUES (?, ?, ?, ?, NOW())",
-      [codigo, tecnico_id, comentario || null, nro_orden || null]
+      `INSERT INTO averias
+         (codigo, tecnico_id, comentario, nro_orden, cliente, direccion, onu_id, fecha)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [codigo, tecnico_id, comentario || null, nro_orden || null,
+       cliente || null, direccion || null, onuId]
     )
     const averia_id = result.insertId
 
-    // Guardar hasta 5 fotos
+    // ── Guardar hasta 5 fotos ──────────────────────────────────────────────
     await guardarFotos(conn, "averia", averia_id, req.files || [])
 
-    // Registrar materiales y consumo
+    // ── Registrar materiales normales y consumo ────────────────────────────
     for (const item of itemsParsed) {
       await conn.query(
         "INSERT INTO averia_materiales (averia_id, producto_id, cantidad) VALUES (?, ?, ?)",
         [averia_id, item.producto_id, item.cantidad]
       )
       await conn.query(
-        "INSERT INTO consumo_tecnico (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha) VALUES (?, ?, ?, 'averia', ?, NOW())",
+        `INSERT INTO consumo_tecnico
+           (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+         VALUES (?, ?, ?, 'averia', ?, NOW())`,
         [tecnico_id, item.producto_id, item.cantidad, comentario || null]
+      )
+    }
+
+    // ── Vincular ONU a la avería y al cliente ──────────────────────────────
+    if (onuId) {
+      await conn.query(
+        `UPDATE onus
+         SET averia_id = ?, cliente = ?, tecnico_id = NULL
+         WHERE id = ?`,
+        [averia_id, cliente || null, onuId]
+      )
+
+      // Descontar del inventario del técnico
+      const [[onuProducto]] = await conn.query(
+        "SELECT producto_id FROM onus WHERE id = ?",
+        [onuId]
+      )
+      if (onuProducto) {
+        await conn.query(
+          `UPDATE asignaciones_tecnicos
+           SET cantidad = cantidad - 1
+           WHERE tecnico_id = ? AND producto_id = ?`,
+          [tecnico_id, onuProducto.producto_id]
+        )
+        await conn.query(
+          `INSERT INTO consumo_tecnico
+             (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+           VALUES (?, ?, 1, 'averia', ?, NOW())`,
+          [tecnico_id, onuProducto.producto_id, `Avería ${codigo} — ${cliente || "—"}`]
+        )
+      }
+    }
+
+    // ── Registrar ONU recogida del cliente → equipos reciclados ──────────
+    const onuRecogidaProductoId = req.body.onu_recogida_producto_id
+      ? Number(req.body.onu_recogida_producto_id) : null
+    const onuRecogidaCodigoPon  = req.body.onu_recogida_codigo_pon || null
+
+    if (onuRecogidaProductoId && onuRecogidaCodigoPon) {
+      const sede_id = req.user.sede_id
+      await conn.query(
+        `INSERT INTO onus_recicladas
+           (recojo_id, tipo_equipo, onu_id, codigo_pon, producto_id, sede_id, estado)
+         VALUES (NULL, 'ONU', NULL, ?, ?, ?, 'revision')`,
+        [onuRecogidaCodigoPon, onuRecogidaProductoId, sede_id]
       )
     }
 
@@ -230,6 +303,7 @@ exports.getAverias = async (req, res) => {
     const [rows] = await db.query(`
       SELECT
         av.id, av.codigo, av.nro_orden, av.fecha, av.comentario,
+        av.cliente, av.direccion,
         u.nombre AS tecnico, u.id AS tecnico_id
       FROM averias av
       JOIN usuarios u ON u.id = av.tecnico_id
@@ -263,6 +337,7 @@ exports.getAveriasAdmin = async (req, res) => {
 
     const [rows] = await db.query(`
       SELECT av.id, av.codigo, av.nro_orden, av.fecha, av.comentario,
+             av.cliente, av.direccion,
              u.nombre AS tecnico, u.id AS tecnico_id,
              s.nombre AS sede_nombre
       FROM averias av
@@ -287,5 +362,16 @@ exports.getAveriasAdmin = async (req, res) => {
   } catch (err) {
     console.error("❌ getAveriasAdmin:", err.message)
     res.status(500).json({ message: "Error al obtener averías", error: err.message })
+  }
+}
+
+exports.getCatalogoOnus = async (req, res) => {
+  try {
+    const [rows] = await db.query(
+      "SELECT id, nombre FROM productos WHERE categoria = 'onu' AND estado = 1 ORDER BY nombre ASC"
+    )
+    res.json(rows)
+  } catch (err) {
+    res.status(500).json({ message: "Error al obtener catálogo ONUs", error: err.message })
   }
 }

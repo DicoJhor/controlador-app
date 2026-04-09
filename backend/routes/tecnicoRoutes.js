@@ -3,7 +3,7 @@ const router  = express.Router()
 const {
   getMiInventario, getMiHistorial,
   registrarSalida, registrarSalidaMultiple,
-  getAverias, getAveriasAdmin
+  getAverias, getAveriasAdmin, getCatalogoOnus
 } = require("../controllers/tecnicoController")
 const {
   getMisRecojos, confirmarTecnico
@@ -15,21 +15,17 @@ const upload         = require("../middleware/uploadMiddleware")
 
 router.get("/inventario",       verificarToken, verificarRol("tecnico"), getMiInventario)
 router.get("/historial",        verificarToken, verificarRol("tecnico"), getMiHistorial)
+router.get("/catalogo-onus",    verificarToken, verificarRol("tecnico"), getCatalogoOnus)
 router.post("/salida",          verificarToken, verificarRol("tecnico"), registrarSalida)
 
-// Avería: hasta 5 fotos bajo campo "fotos"
 router.post("/salida-multiple", verificarToken, verificarRol("tecnico"),
   upload.array("fotos", 5), registrarSalidaMultiple)
 
 router.get("/recojos",          verificarToken, verificarRol("tecnico"), getMisRecojos)
-
-// Confirmar recojo: hasta 5 fotos
 router.patch("/recojos/:id",    verificarToken, verificarRol("tecnico"),
   upload.array("fotos", 5), confirmarTecnico)
 
 router.get("/activaciones",     verificarToken, verificarRol("tecnico"), getMias)
-
-// Activación: hasta 5 fotos
 router.post("/activaciones",    verificarToken, verificarRol("tecnico"),
   upload.array("fotos", 5), create)
 

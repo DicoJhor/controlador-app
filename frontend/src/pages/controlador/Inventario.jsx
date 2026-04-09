@@ -6,6 +6,7 @@ import { MOTIVOS_ENTRADA, MOTIVOS_SALIDA } from "../../utils/constants";
 import stockService from "../../services/stockService";
 import activosService from "../../services/activosService";
 import productosService from "../../services/productosService";
+import onuService from "../../services/onuService";
 import { useAuth } from "../../hooks/useAuth";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
@@ -58,7 +59,13 @@ const emptyVarianteInline = {
 
 // ── Estado inicial entrada y salida ───────────────────────────────────────────
 const emptyEntrada = { motivo: "", comentario: "", items: [] };
-const emptyEntradaItem = {producto_id: "", nombre: "", codigo: "", cantidad: "", es_medible: false, metros_por_unidad: null };
+const emptyEntradaItem = {
+  producto_id: "", nombre: "", codigo: "", cantidad: "",
+  es_medible: false, metros_por_unidad: null,
+  es_onu: false,          // ← nuevo
+  codigos_pon: [],        // ← nuevo: array de strings, uno por ONU
+  mostrar_ponsn: false,   // ← nuevo: toggle del sub-panel
+};
 const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
 const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
 const emptyActivoForm = { nombre: "", descripcion: "", nro_serie: "", estado: "operativo", area: "NOC" };
@@ -126,8 +133,18 @@ export default function CtrlInventario() {
   const [entradaSearch,  setEntradaSearch]  = useState("");
   const [entradaFiltros, setEntradaFiltros] = useState([]);
   const [salida,   setSalida]   = useState(emptySalida);
+  const [onusDisponibles, setOnusDisponibles] = useState({}); // { producto_id: [{ id, codigo_pon }] }
+  const [onusSeleccionadas, setOnusSeleccionadas] = useState({}); // { producto_id: [onu_id, ...] }
   const [saving,   setSaving]   = useState(false);
   const [success,  setSuccess]  = useState(null);
+
+  const [onuModal,      setOnuModal]      = useState(false)
+  const [onuModalItem,  setOnuModalItem]  = useState(null)
+  const [onusLista,     setOnusLista]     = useState([])
+  const [onuEditando,   setOnuEditando]   = useState(null)
+  const [onuCodigo,     setOnuCodigo]     = useState("")
+  const [savingOnu,     setSavingOnu]     = useState(false)
+  const [loadingOnus,   setLoadingOnus]   = useState(false)
 
   // ── Crear producto ─────────────────────────────────────
   const [productoForm,        setProductoForm]        = useState(emptyProductoForm);
@@ -319,13 +336,28 @@ export default function CtrlInventario() {
     setSaving(true);
     try {
       for (const item of entrada.items) {
+        // Registrar entrada de stock normal
         await stockService.registrarEntrada({
           producto_id: Number(item.producto_id),
           cantidad:    Number(item.cantidad),
           motivo:      entrada.motivo,
           comentario:  entrada.comentario || null,
         });
+
+        // Si es ONU → crear registros en tabla onus
+        if (item.es_onu) {
+          const cantidad = Number(item.cantidad);
+          for (let i = 0; i < cantidad; i++) {
+            const cod = item.codigos_pon[i]?.trim() || null;
+            await onuService.crearOnu({
+              producto_id: Number(item.producto_id),
+              sede_id:     sedeId,
+              codigo_pon:  cod,   // null si lo dejaron vacío
+            });
+          }
+        }
       }
+
       const data = await stockService.getStock();
       setStock(data);
       setModal(false);
@@ -348,17 +380,37 @@ export default function CtrlInventario() {
   const removeItem = (idx) =>
     setSalida(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== idx) }));
 
-  const updateItem = (idx, key, value) =>
+  const updateItem = async (idx, key, value) => {
     setSalida(prev => ({
       ...prev,
       items: prev.items.map((item, i) => i === idx ? { ...item, [key]: value } : item)
     }));
 
+
+    // Si cambió el producto y es ONU → cargar ONUs disponibles
+    if (key === "producto_id" && value) {
+      const prod = stock.find(s => String(s.producto_id) === String(value));
+      if (prod?.categoria === "onu") {
+        try {
+          const data = await onuService.getDisponibles(value);
+          setOnusDisponibles(prev => ({ ...prev, [value]: data }));
+          setOnusSeleccionadas(prev => ({ ...prev, [value]: [] }));
+        } catch (e) {
+          console.error("Error cargando ONUs disponibles", e);
+        }
+      }
+    }
+  };
+
   const salidaValida = salida.tecnico_id && salida.motivo &&
     salida.items.length > 0 &&
     salida.items.every(i => {
-      if (!i.producto_id || !i.cantidad || Number(i.cantidad) <= 0) return false;
+      if (!i.producto_id) return false;
       const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+      if (prod?.categoria === "onu") {
+        return (onusSeleccionadas[i.producto_id] ?? []).length > 0;
+      }
+      if (!i.cantidad || Number(i.cantidad) <= 0) return false;
       if (prod?.es_medible && (!i.metros || Number(i.metros) <= 0)) return false;
       return true;
     });
@@ -366,16 +418,40 @@ export default function CtrlInventario() {
   const handleSalida = async () => {
     setSaving(true);
     try {
-      await stockService.registrarSalidaMultiple({
-        tecnico_id: Number(salida.tecnico_id),
-        motivo:     salida.motivo,
-        comentario: salida.comentario || null,
-        items:      salida.items.map(i => ({
-          producto_id: Number(i.producto_id),
-          cantidad:    Number(i.cantidad),
-          metros:      i.metros !== "" ? Number(i.metros) : undefined,
-        }))
+      // Separar items ONU de items normales
+      const itemsNormales = salida.items.filter(i => {
+        const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+        return prod?.categoria !== "onu";
       });
+      const itemsOnu = salida.items.filter(i => {
+        const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+        return prod?.categoria === "onu";
+      });
+
+      // Registrar items normales
+      if (itemsNormales.length > 0) {
+        await stockService.registrarSalidaMultiple({
+          tecnico_id: Number(salida.tecnico_id),
+          motivo:     salida.motivo,
+          comentario: salida.comentario || null,
+          items:      itemsNormales.map(i => ({
+            producto_id: Number(i.producto_id),
+            cantidad:    Number(i.cantidad),
+            metros:      i.metros !== "" ? Number(i.metros) : undefined,
+          }))
+        });
+      }
+
+      // Asignar ONUs específicas
+      for (const item of itemsOnu) {
+        const seleccionadas = onusSeleccionadas[item.producto_id] ?? [];
+        if (seleccionadas.length > 0) {
+          await onuService.asignarTecnico({
+            tecnico_id: Number(salida.tecnico_id),
+            onu_ids:    seleccionadas,
+          });
+        }
+      }
       const data = await stockService.getStock();
       setStock(data);
       setModal(false);
@@ -391,6 +467,40 @@ export default function CtrlInventario() {
 
   const fieldE               = (key) => ({ value: entrada[key], onChange: (e) => setEntrada(prev => ({ ...prev, [key]: e.target.value })) });
   const productosYaAgregados = salida.items.map(i => String(i.producto_id));
+
+  const openOnuModal = async (item) => {
+  setOnuModalItem(item)
+    setOnuModal(true)
+    setOnuEditando(null)
+    setOnuCodigo("")
+    setLoadingOnus(true)
+    try {
+      const data = await onuService.getBySedeProducto(sedeId, item.producto_id)
+      console.log("onus:", JSON.stringify(data))
+      setOnusLista(data)
+    } catch {
+      alert("No se pudieron cargar las ONUs")
+    } finally {
+      setLoadingOnus(false)
+    }
+  }
+
+  const handleGuardarCodigo = async () => {
+    if (!onuCodigo.trim()) return
+    setSavingOnu(true)
+    try {
+      await onuService.actualizarCodigo(onuEditando.id, onuCodigo.trim())
+      setOnusLista(prev => prev.map(o =>
+        o.id === onuEditando.id ? { ...o, codigo_pon: onuCodigo.trim() } : o
+      ))
+      setOnuEditando(null)
+      setOnuCodigo("")
+    } catch (err) {
+      alert(err.message)
+    } finally {
+      setSavingOnu(false)
+    }
+  }
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
@@ -521,9 +631,20 @@ export default function CtrlInventario() {
                         </td>
                         <td className="mono text-muted">{item.stock_minimo}</td>
                         <td>
-                          {low  ? <Badge variant="danger">⚠ Bajo stock</Badge>
-                                : warn ? <Badge variant="warning">Atención</Badge>
-                                : <Badge variant="active">OK</Badge>}
+                          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                            {low  ? <Badge variant="danger">⚠ Bajo stock</Badge>
+                                  : warn ? <Badge variant="warning">Atención</Badge>
+                                  : <Badge variant="active">OK</Badge>}
+                            {item.categoria === "onu" && (
+                              <button className="btn btn-outline btn-sm"
+                                onClick={() => openOnuModal(item)}
+                                style={{ fontSize: 11, padding: "2px 8px" }}>
+                                <Icon d={IC.tag} size={11} />
+                                ONUs
+                              </button>
+                            )}
+
+                          </div>
                         </td>
                       </tr>
                     );
@@ -827,157 +948,259 @@ export default function CtrlInventario() {
           setEntrada(prev => ({
             ...prev,
             items: [...prev.items, {
-              producto_id:      p.id,
-              nombre:           p.nombre,
-              codigo:           p.codigo,
-              cantidad:         "",
-              es_medible:       !!p.es_medible,
+              producto_id:       p.id,
+              nombre:            p.nombre,
+              codigo:            p.codigo,
+              cantidad:          "",
+              es_medible:        !!p.es_medible,
               metros_por_unidad: p.metros_por_unidad,
+              es_onu:            p.categoria === "onu",   // ← nuevo
+              codigos_pon:       [],                       // ← nuevo
+              mostrar_ponsn:     false,                    // ← nuevo
             }]
           }));
           setEntradaSearch("");
         };
-
         const quitarItemEntrada = (producto_id) =>
           setEntrada(prev => ({ ...prev, items: prev.items.filter(i => i.producto_id !== producto_id) }));
 
         const updateCantidadEntrada = (producto_id, value) =>
           setEntrada(prev => ({
             ...prev,
-          items: prev.items.map(i => i.producto_id === producto_id ? { ...i, cantidad: value } : i)
-        }));
+            items: prev.items.map(i => {
+              if (i.producto_id !== producto_id) return i;
+              // Si es ONU, ajusta el array codigos_pon al nuevo tamaño
+              if (i.es_onu) {
+                const n = Math.max(0, parseInt(value) || 0);
+                const actual = i.codigos_pon ?? [];
+                const nuevos = Array.from({ length: n }, (_, idx) => actual[idx] ?? "");
+                return { ...i, cantidad: value, codigos_pon: nuevos };
+              }
+              return { ...i, cantidad: value };
+            })
+          }));
+        const togglePonSn = (producto_id) =>
+          setEntrada(prev => ({
+            ...prev,
+            items: prev.items.map(i =>
+              i.producto_id === producto_id
+                ? { ...i, mostrar_ponsn: !i.mostrar_ponsn }
+                : i
+            )
+          }));
+        
+        const updateCodigoPon = (producto_id, idx, value) =>
+          setEntrada(prev => ({
+            ...prev,
+            items: prev.items.map(i => {
+              if (i.producto_id !== producto_id) return i;
+              const nuevos = [...i.codigos_pon];
+              nuevos[idx] = value;
+              return { ...i, codigos_pon: nuevos };
+            })
+          }));
 
-      return (
-        <Modal title="Registrar Entrada de Stock" onClose={() => setModal(false)}
-          footer={
-            <>
-              <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
-              <button className="btn btn-success" onClick={handleEntrada} disabled={saving || !entradaValida}>
-                <Icon d={IC.check} size={15} />
-                {saving ? "Registrando..." : `Confirmar (${entrada.items.length} producto${entrada.items.length !== 1 ? "s" : ""})`}
-              </button>
-            </>
-          }
-        >
-          {/* Motivo y comentario */}
-          <div className="form-row">
-            <div className="form-group">
-              <label className="form-label">Motivo *</label>
-              <select className="form-input" value={entrada.motivo}
-                onChange={e => setEntrada(prev => ({ ...prev, motivo: e.target.value }))}>
-                <option value="">Seleccionar...</option>
-                <option value={MOTIVOS_ENTRADA.COMPRA}>Compra</option>
-                <option value={MOTIVOS_ENTRADA.REPOSICION}>Reposición</option>
-                <option value={MOTIVOS_ENTRADA.TRANSFERENCIA}>Transferencia</option>
-              </select>
-            </div>
-            <div className="form-group">
-              <label className="form-label">Comentario <span>(opcional)</span></label>
-              <input className="form-input" placeholder="Notas adicionales..."
-                value={entrada.comentario}
-                onChange={e => setEntrada(prev => ({ ...prev, comentario: e.target.value }))} />
-              </div>
-            </div>
-
-            {/* Buscador */}
-            <div className="form-group">
-              <label className="form-label">Buscar producto</label>
-              <div className="search-box">
-                <Icon d={IC.search} size={16} color="var(--text-muted)" />
-                <input
-                  placeholder="Nombre o código..."
-                  value={entradaSearch}
-                  onChange={e => setEntradaSearch(e.target.value)}
-                  autoFocus
-                />
-              </div>
-
-              {/* Resultados del buscador */}
-              {entradaSearch.length > 0 && (
-                <div style={{
-                  border: "1px solid var(--border)", borderRadius: 8,
-                  marginTop: 4, maxHeight: 200, overflowY: "auto",
-                  background: "white", boxShadow: "0 4px 12px rgba(0,0,0,.08)"
-                }}>
-                  {filtrados.length === 0 ? (
-                    <div style={{ padding: "12px 14px", color: "var(--text-muted)", fontSize: 13 }}>
-                      Sin resultados
+              return (
+                <Modal title="Registrar Entrada de Stock" onClose={() => setModal(false)}
+                  footer={
+                    <>
+                      <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
+                      <button className="btn btn-success" onClick={handleEntrada} disabled={saving || !entradaValida}>
+                        <Icon d={IC.check} size={15} />
+                        {saving ? "Registrando..." : `Confirmar (${entrada.items.length} producto${entrada.items.length !== 1 ? "s" : ""})`}
+                      </button>
+                    </>
+                  }
+                >
+                  {/* Motivo y comentario */}
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label className="form-label">Motivo *</label>
+                      <select className="form-input" value={entrada.motivo}
+                        onChange={e => setEntrada(prev => ({ ...prev, motivo: e.target.value }))}>
+                        <option value="">Seleccionar...</option>
+                        <option value={MOTIVOS_ENTRADA.COMPRA}>Compra</option>
+                        <option value={MOTIVOS_ENTRADA.REPOSICION}>Reposición</option>
+                        <option value={MOTIVOS_ENTRADA.TRANSFERENCIA}>Transferencia</option>
+                      </select>
                     </div>
-                  ) : filtrados.map(p => {
-                    const enSede = stock.find(s => s.producto_id === p.id);
-                    return (
-                      <div key={p.id}
-                        onClick={() => agregarProductoEntrada(p)}
-                        style={{
-                          padding: "9px 14px", cursor: "pointer", fontSize: 13,
-                          borderBottom: "1px solid var(--border)",
-                          display: "flex", justifyContent: "space-between", alignItems: "center",
-                          transition: "background .1s",
-                        }}
-                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                        onMouseLeave={e => e.currentTarget.style.background = "white"}
-                      >
-                        <div>
-                          <span style={{ fontWeight: 600 }}>{p.nombre}</span>
-                          {p.codigo && <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>{p.codigo}</span>}
-                          {p.categoria && <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>· {p.categoria}</span>}
-                        </div>
-                        <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", marginLeft: 12 }}>
-                          En sede: <strong>{enSede ? enSede.cantidad : 0}</strong>
-                        </span>
+                    <div className="form-group">
+                      <label className="form-label">Comentario <span>(opcional)</span></label>
+                      <input className="form-input" placeholder="Notas adicionales..."
+                        value={entrada.comentario}
+                        onChange={e => setEntrada(prev => ({ ...prev, comentario: e.target.value }))} />
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Lista de productos agregados */}
-            {entrada.items.length > 0 && (
-              <div className="form-group">
-              <label className="form-label">Productos a ingresar ({entrada.items.length})</label>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {entrada.items.map(item => (
-                  <div key={item.producto_id} style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    padding: "8px 10px", borderRadius: 8,
-                    background: "var(--hover)", border: "1px solid var(--border)"
-                  }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 600, fontSize: 13 }}>{item.nombre}</div>
-                      {item.codigo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>{item.codigo}</div>}
                     </div>
-                    <input
-                      className="form-input"
-                      type="number" min="1"
-                      placeholder="Cantidad"
-                      value={item.cantidad}
-                      onChange={e => updateCantidadEntrada(item.producto_id, e.target.value)}
-                      style={{ width: 100, textAlign: "center" }}
-                    />
-                    {item.es_medible && item.cantidad && (
-                      <span style={{ fontSize: 12, color: "var(--info)", whiteSpace: "nowrap" }}>
-                        = {(Number(item.cantidad) * (item.metros_por_unidad ?? 0)).toLocaleString()}m
-                      </span>
-                    )}
-                    <button className="btn btn-danger-outline btn-sm btn-icon"
-                      onClick={() => quitarItemEntrada(item.producto_id)} type="button">
-                      <Icon d={IC.remove} size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {entrada.items.length === 0 && (
-            <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13, fontStyle: "italic" }}>
-              Buscá y seleccioná los productos que querés ingresar.
-            </div>
-          )}
-        </Modal>
-      );
-    })()}
+                    {/* Buscador */}
+                    <div className="form-group">
+                      <label className="form-label">Buscar producto</label>
+                      <div className="search-box">
+                        <Icon d={IC.search} size={16} color="var(--text-muted)" />
+                        <input
+                          placeholder="Nombre o código..."
+                          value={entradaSearch}
+                          onChange={e => setEntradaSearch(e.target.value)}
+                          autoFocus
+                        />
+                      </div>
+
+                      {/* Resultados del buscador */}
+                      {entradaSearch.length > 0 && (
+                        <div style={{
+                          border: "1px solid var(--border)", borderRadius: 8,
+                          marginTop: 4, maxHeight: 200, overflowY: "auto",
+                          background: "white", boxShadow: "0 4px 12px rgba(0,0,0,.08)"
+                        }}>
+                          {filtrados.length === 0 ? (
+                            <div style={{ padding: "12px 14px", color: "var(--text-muted)", fontSize: 13 }}>
+                              Sin resultados
+                            </div>
+                          ) : filtrados.map(p => {
+                            const enSede = stock.find(s => s.producto_id === p.id);
+                            return (
+                              <div key={p.id}
+                                onClick={() => agregarProductoEntrada(p)}
+                                style={{
+                                  padding: "9px 14px", cursor: "pointer", fontSize: 13,
+                                  borderBottom: "1px solid var(--border)",
+                                  display: "flex", justifyContent: "space-between", alignItems: "center",
+                                  transition: "background .1s",
+                                }}
+                                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                                onMouseLeave={e => e.currentTarget.style.background = "white"}
+                              >
+                                <div>
+                                  <span style={{ fontWeight: 600 }}>{p.nombre}</span>
+                                  {p.codigo && <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>{p.codigo}</span>}
+                                  {p.categoria && <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>· {p.categoria}</span>}
+                                </div>
+                                <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", marginLeft: 12 }}>
+                                  En sede: <strong>{enSede ? enSede.cantidad : 0}</strong>
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Lista de productos agregados */}
+                    {entrada.items.length > 0 && (
+                      <div className="form-group">
+                      <label className="form-label">Productos a ingresar ({entrada.items.length})</label>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {entrada.items.map(item => (
+                          <div key={item.producto_id} style={{
+                            borderRadius: 8, background: "var(--hover)",
+                            border: "1px solid var(--border)", overflow: "hidden",
+                            marginBottom: 2,
+                          }}>
+                            {/* Fila principal */}
+                            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 10px" }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ fontWeight: 600, fontSize: 13 }}>{item.nombre}</div>
+                                {item.codigo && (
+                                  <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                                    {item.codigo}
+                                  </div>
+                                )}
+                              </div>
+
+                              <input
+                                className="form-input"
+                                type="number" min="1"
+                                placeholder="Cantidad"
+                                value={item.cantidad}
+                                onChange={e => updateCantidadEntrada(item.producto_id, e.target.value)}
+                                style={{ width: 100, textAlign: "center" }}
+                              />
+
+                              {item.es_medible && item.cantidad && (
+                                <span style={{ fontSize: 12, color: "var(--info)", whiteSpace: "nowrap" }}>
+                                  = {(Number(item.cantidad) * (item.metros_por_unidad ?? 0)).toLocaleString()}m
+                                </span>
+                              )}
+
+                              {/* Botón PON-SN solo si es ONU y tiene cantidad */}
+                              {item.es_onu && Number(item.cantidad) > 0 && (
+                                <button
+                                  type="button"
+                                  className="btn btn-outline btn-sm"
+                                  onClick={() => togglePonSn(item.producto_id)}
+                                  style={{
+                                    fontSize: 11, padding: "3px 8px", whiteSpace: "nowrap",
+                                    borderColor: item.codigos_pon.filter(c => c.trim()).length > 0
+                                      ? "var(--success)" : "var(--border)",
+                                    color: item.codigos_pon.filter(c => c.trim()).length > 0
+                                      ? "var(--success)" : "var(--text-muted)",
+                                  }}
+                                >
+                                  PON-SN ({item.codigos_pon.filter(c => c.trim()).length}/{item.cantidad})
+                                </button>
+                              )}
+
+                              <button className="btn btn-danger-outline btn-sm btn-icon"
+                                onClick={() => quitarItemEntrada(item.producto_id)} type="button">
+                                <Icon d={IC.remove} size={12} />
+                              </button>
+                            </div>
+
+                            {/* Sub-panel PON-SN */}
+                            {item.es_onu && item.mostrar_ponsn && Number(item.cantidad) > 0 && (
+                              <div style={{
+                                borderTop: "1px solid var(--border)",
+                                padding: "10px 12px",
+                                background: "white",
+                              }}>
+                                <div style={{
+                                  fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
+                                  textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+                                }}>
+                                  Códigos PON-SN — opcional, podés completarlos después
+                                </div>
+                                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                  {item.codigos_pon.map((cod, idx) => (
+                                    <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                      <span style={{
+                                        fontSize: 11, color: "var(--text-muted)", width: 24,
+                                        textAlign: "right", flexShrink: 0,
+                                      }}>
+                                        #{idx + 1}
+                                      </span>
+                                      <input
+                                        className="form-input"
+                                        placeholder="Ej: ZTEG12345678  (opcional)"
+                                        value={cod}
+                                        onChange={e => updateCodigoPon(item.producto_id, idx, e.target.value)}
+                                        style={{
+                                          fontSize: 12, padding: "5px 10px",
+                                          fontFamily: "monospace",
+                                          borderColor: cod.trim() ? "var(--success)" : "var(--border)",
+                                        }}
+                                      />
+                                    </div>
+                                  ))}
+                                </div>
+                                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 8, fontStyle: "italic" }}>
+                                  Los campos vacíos quedarán como ONUs sin código registrado.
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {entrada.items.length === 0 && (
+                    <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13, fontStyle: "italic" }}>
+                      Buscá y seleccioná los productos que querés ingresar.
+                    </div>
+                  )}
+                </Modal>
+              );
+            })()}
 
       {/* Modal salida múltiple */}
       {modal === "salida" && (
@@ -1023,30 +1246,40 @@ export default function CtrlInventario() {
             {salida.items.map((item, idx) => {
               const productoInfo = stock.find(s => String(s.producto_id) === String(item.producto_id));
               const esMedible    = !!productoInfo?.es_medible;
+              const esOnu        = productoInfo?.categoria === "onu";
+              const disponibles  = onusDisponibles[item.producto_id] ?? [];
+              const seleccionadas = onusSeleccionadas[item.producto_id] ?? [];
+              
               return (
-                <div key={idx} style={styles.itemRow}>
-                  <div style={{ flex: 2 }}>
-                    <select className="form-input" value={item.producto_id}
-                      onChange={e => updateItem(idx, "producto_id", e.target.value)}>
-                      <option value="">Seleccionar ítem...</option>
-                      {stock.map(s => (
-                        <option key={s.producto_id} value={s.producto_id}
-                          disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}>
-                          {s.producto} — disp: {s.cantidad}
-                          {s.es_medible 
-                            ? ` (${(s.metros_disponibles ?? s.cantidad * (s.metros_por_unidad ?? 0))}m)` 
-                            : ""}
+                <div key={idx} style={{ marginBottom: 8}}>
+                  <div style={styles.itemRow}>
+                    <div style={{ flex: 2}}>
+                      <select className="form-input" value={item.producto_id}
+                        onChange={e => updateItem(idx, "producto_id", e.target.value)}>
+                        <option value="">Seleccionar ítem...</option>
+                        {stock.map(s => (
+                          <option key={s.producto_id} value={s.producto_id}
+                            disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}>
+                            {s.producto} — disp: {s.cantidad}
+                            {s.es_medible
+                              ? ` (${(s.metros_disponibles ?? s.cantidad * (s.metros_por_unidad ?? 0))}m)`
+                              : ""}
                         </option>
                       ))}
                     </select>
                   </div>
-                  <div style={{ flex: 1 }}>
-                    <input className="form-input" type="number" min="1"
-                      max={productoInfo?.cantidad}
-                      placeholder="Cant."
-                      value={item.cantidad}
-                      onChange={e => updateItem(idx, "cantidad", e.target.value)} />
-                  </div>
+
+                  {/* Si NO es ONU → input cantidad normal */}
+                    {!esOnu && (
+                      <div style={{ flex: 1 }}>
+                        <input className="form-input" type="number" min="1"
+                          max={productoInfo?.cantidad}
+                          placeholder="Cant."
+                          value={item.cantidad}
+                          onChange={e => updateItem(idx, "cantidad", e.target.value)} />
+                      </div>
+                    )}
+                   
                   {esMedible && (
                     <div style={{ flex: 1 }}>
                       <input className="form-input" type="number" min="1"
@@ -1057,10 +1290,67 @@ export default function CtrlInventario() {
                         style={{ borderColor: "var(--info)" }} />
                     </div>
                   )}
+
+
                   <button className="btn btn-danger-outline btn-sm btn-icon"
                     onClick={() => removeItem(idx)} type="button">
                     <Icon d={IC.trash} size={13} />
                   </button>
+                </div>
+
+                  {/* Sub-panel ONUs disponibles */}
+                  {esOnu && item.producto_id && (
+                      <div style={{
+                        marginTop: 6, padding: "10px 12px",
+                        background: "var(--hover)", borderRadius: 8,
+                        border: "1px solid var(--border)",
+                      }}>
+                        <div style={{
+                          fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
+                          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+                        }}>
+                          Seleccionar ONUs a asignar ({seleccionadas.length} seleccionadas)
+                        </div>
+                        {disponibles.length === 0 ? (
+                          <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                            Sin ONUs con PON-SN disponibles en esta sede
+                          </div>
+                        ) : (
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {disponibles.map(onu => {
+                              const seleccionada = seleccionadas.includes(onu.id);
+                              return (
+                                <button
+                                  key={onu.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setOnusSeleccionadas(prev => {
+                                      const actual = prev[item.producto_id] ?? [];
+                                      const nuevas = seleccionada
+                                        ? actual.filter(id => id !== onu.id)
+                                        : [...actual, onu.id];
+                                      return { ...prev, [item.producto_id]: nuevas };
+                                    });
+                                  }}
+                                  style={{
+                                    padding: "4px 10px", borderRadius: 6,
+                                    fontSize: 12, fontFamily: "monospace",
+                                    cursor: "pointer", fontWeight: 600,
+                                    border: "1px solid",
+                                    borderColor: seleccionada ? "var(--primary)" : "var(--border)",
+                                    background:  seleccionada ? "var(--primary)" : "white",
+                                    color:       seleccionada ? "white" : "var(--text)",
+                                    transition: "all .15s",
+                                  }}
+                                >
+                                  {onu.codigo_pon}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    )}
                 </div>
               );
             })}
@@ -1077,6 +1367,91 @@ export default function CtrlInventario() {
               value={salida.comentario}
               onChange={e => setSalida(prev => ({ ...prev, comentario: e.target.value }))} />
           </div>
+        </Modal>
+      )}
+
+      {/* Modal ONUs */}
+      {onuModal && (
+        <Modal
+          title={`ONUs — ${onuModalItem?.nombre}`}
+          onClose={() => { setOnuModal(false); setOnuEditando(null); setOnuCodigo("") }}
+          footer={
+            <button className="btn btn-outline"
+              onClick={() => { setOnuModal(false); setOnuEditando(null); setOnuCodigo("") }}>
+              Cerrar
+            </button>
+          }
+        >
+          {loadingOnus ? (
+            <div style={{ padding: 24, color: "var(--text-muted)" }}>Cargando ONUs...</div>
+          ) : onusLista.length === 0 ? (
+            <div style={{ padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
+              No hay ONUs registradas para este producto en tu sede
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {onusLista.map(onu => (
+                <div key={onu.id} style={{
+                  padding: "10px 12px", borderRadius: 8,
+                  border: "1px solid var(--border)", background: "var(--hover)",
+                  display: "flex", alignItems: "center", gap: 10,
+                }}>
+                  <div style={{ flex: 1 }}>
+                    {onu.codigo_pon ? (
+                      <span className="mono" style={{ fontSize: 13, fontWeight: 600 }}>
+                        {onu.codigo_pon}
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                        Sin código PON
+                      </span>
+                    )}
+                    {onu.tecnico_id && (
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                        Asignada a técnico
+                      </div>
+                    )}
+                  </div>
+
+                  {(!onu.tecnico_id && !onu.activacion_id) && (
+                    onuEditando?.id === onu.id ? (
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        <input
+                          className="form-input"
+                          placeholder="Ej: ZTEG-AB123456"
+                          value={onuCodigo}
+                          onChange={e => setOnuCodigo(e.target.value)}
+                          style={{ fontSize: 12, fontFamily: "monospace", width: 180 }}
+                          autoFocus
+                        />
+                        <button className="btn btn-primary btn-sm"
+                          onClick={handleGuardarCodigo}
+                          disabled={savingOnu || !onuCodigo.trim()}>
+                          {savingOnu ? "..." : <Icon d={IC.check} size={13} />}
+                        </button>
+                        <button className="btn btn-outline btn-sm"
+                          onClick={() => { setOnuEditando(null); setOnuCodigo("") }}>
+                          <Icon d={IC.remove} size={13} />
+                        </button>
+                      </div>
+                    ) : (
+                      <button 
+                        className="btn btn-outline btn-sm btn-icon"
+                        onClick={() => {
+                          setOnuEditando(onu)
+                          setOnuCodigo(onu.codigo_pon ?? "")
+                        }}>
+                        {onu.codigo_pon
+                          ? <Icon d={IC.edit} size={13} />
+                          : <><Icon d={IC.plus} size={13} /> Agregar código</>
+                        }
+                      </button>
+                    )
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </Modal>
       )}
 

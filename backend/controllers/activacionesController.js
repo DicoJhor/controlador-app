@@ -100,18 +100,34 @@ exports.create = async (req, res) => {
     await conn.beginTransaction()
 
     const tecnico_id  = req.user.id
-    const { cliente, direccion, comentario, items } = req.body
+    const { cliente, direccion, comentario, items, onu_id } = req.body
+
     const itemsParsed = items
       ? (typeof items === "string" ? JSON.parse(items) : items)
       : []
 
-    // Verificar stock
+    const onuId = onu_id ? Number(onu_id) : null
+
+    // ── Validar ONU si viene ───────────────────────────────────────────────
+    if (onuId) {
+      const [[onu]] = await conn.query(
+        `SELECT id FROM onus
+         WHERE id = ? AND tecnico_id = ? AND activacion_id IS NULL`,
+        [onuId, tecnico_id]
+      )
+      if (!onu) {
+        await conn.rollback()
+        return res.status(400).json({ message: "La ONU seleccionada no está disponible" })
+      }
+    }
+
+    // ── Verificar stock de items normales ──────────────────────────────────
     for (const item of itemsParsed) {
       const [[asignacion]] = await conn.query(
         `SELECT a.cantidad, p.es_medible, p.metros_por_unidad
-        FROM asignaciones_tecnicos a
-        JOIN productos p ON p.id = a.producto_id
-        WHERE a.tecnico_id = ? AND a.producto_id = ?`,
+         FROM asignaciones_tecnicos a
+         JOIN productos p ON p.id = a.producto_id
+         WHERE a.tecnico_id = ? AND a.producto_id = ?`,
         [tecnico_id, item.producto_id]
       )
       if (!asignacion) {
@@ -128,7 +144,7 @@ exports.create = async (req, res) => {
       const asignadoEfectivo = esMedible
         ? parseFloat(asignacion.cantidad) * mpu
         : parseFloat(asignacion.cantidad)
-      const disponible = asignadoEfectivo - parseFloat(consumido)     
+      const disponible = asignadoEfectivo - parseFloat(consumido)
       if (parseFloat(item.cantidad) > disponible) {
         await conn.rollback()
         return res.status(400).json({
@@ -137,21 +153,22 @@ exports.create = async (req, res) => {
       }
     }
 
-    // Generar código AC-2026-00001
+    // ── Generar código AC-2026-00001 ───────────────────────────────────────
     const codigo = await generarCodigo(conn, "AC", "activaciones")
 
-    // Crear activación
+    // ── Crear activación (con onu_id si viene) ─────────────────────────────
     const [result] = await conn.query(
-      `INSERT INTO activaciones (codigo, tecnico_id, cliente, direccion, comentario, estado, fecha)
-       VALUES (?, ?, ?, ?, ?, 'completado', NOW())`,
-      [codigo, tecnico_id, cliente || null, direccion || null, comentario || null]
+      `INSERT INTO activaciones
+         (codigo, tecnico_id, cliente, direccion, comentario, estado, onu_id, fecha)
+       VALUES (?, ?, ?, ?, ?, 'completado', ?, NOW())`,
+      [codigo, tecnico_id, cliente || null, direccion || null, comentario || null, onuId]
     )
     const activacion_id = result.insertId
 
-    // Guardar hasta 5 fotos
+    // ── Guardar hasta 5 fotos ──────────────────────────────────────────────
     await guardarFotos(conn, "activacion", activacion_id, req.files || [])
 
-    // Registrar materiales y consumo
+    // ── Registrar materiales normales y consumo ────────────────────────────
     for (const item of itemsParsed) {
       await conn.query(
         "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?, ?, ?)",
@@ -163,6 +180,36 @@ exports.create = async (req, res) => {
          VALUES (?, ?, ?, 'instalacion', ?, NOW())`,
         [tecnico_id, item.producto_id, item.cantidad, `Activación ${codigo} — ${cliente || "—"}`]
       )
+    }
+
+    // ── Vincular ONU a la activación y al cliente ──────────────────────────
+    if (onuId) {
+      await conn.query(
+        `UPDATE onus
+         SET activacion_id = ?, cliente = ?, tecnico_id = NULL
+         WHERE id = ?`,
+        [activacion_id, cliente || null, onuId]
+      )
+
+      // Descontar 1 unidad del stock de asignaciones del técnico para la ONU
+      const [[onuProducto]] = await conn.query(
+        "SELECT producto_id FROM onus WHERE id = ?",
+        [onuId]
+      )
+      if (onuProducto) {
+        await conn.query(
+          `UPDATE asignaciones_tecnicos
+           SET cantidad = cantidad - 1
+           WHERE tecnico_id = ? AND producto_id = ?`,
+          [tecnico_id, onuProducto.producto_id]
+        )
+        await conn.query(
+          `INSERT INTO consumo_tecnico
+             (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+           VALUES (?, ?, 1, 'instalacion', ?, NOW())`,
+          [tecnico_id, onuProducto.producto_id, `Activación ${codigo} — ${cliente || "—"}`]
+        )
+      }
     }
 
     await conn.commit()

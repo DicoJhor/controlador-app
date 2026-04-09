@@ -129,6 +129,20 @@ exports.crearEnvio = async (req, res) => {
            ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
           [sede_id, item.producto_id, item.cantidad]
         )
+
+        // Si es ONU → crear registros sin código en tabla onus (sede destino)
+        const [[prod]] = await conn.query(
+          "SELECT categoria FROM productos WHERE id = ?",
+          [item.producto_id]
+        )
+        if (prod?.categoria === "onu") {
+          for (let i = 0; i < item.cantidad; i++) {
+            await conn.query(
+              "INSERT INTO onus (producto_id, sede_id, codigo_pon) VALUES (?, ?, NULL)",
+              [item.producto_id, sede_id]
+            )
+          }
+        }
       }
     }
 

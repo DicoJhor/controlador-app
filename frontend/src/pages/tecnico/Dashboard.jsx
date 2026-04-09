@@ -4,6 +4,7 @@ import { formatNumber } from "../../utils/formatters";
 import tecnicoService from "../../services/tecnicoService";
 
 function StockRow({ item }) {
+  const esRollo = item.es_medible && item.metros_por_unidad;
   const pct   = item.asignado > 0 ? Math.round((item.usado / item.asignado) * 100) : 0;
   const color = pct >= 100 ? "var(--danger)" : pct >= 75 ? "var(--warning)" : "var(--primary)";
   return (
@@ -11,12 +12,26 @@ function StockRow({ item }) {
       <td><span className="mono">{item.codigo ?? "—"}</span></td>
       <td>
         <div className="fw-600">{item.nombre}</div>
-        <div className="text-sm text-muted">{item.es_medible ? "metros" : item.unidad}</div>
+        {esRollo ? (
+          <div className="text-sm text-muted">
+            {item.asignado_unidades} rollo{item.asignado_unidades !==1 ? "s" : ""}
+            &nbsp;·&nbsp;{item.metros_por_unidad} m/rollo
+          </div>
+        ) : (
+          <div className="text-sm text-muted">{item.unidad}</div>
+        )}
       </td>
-      <td className="mono">{formatNumber(item.asignado)}</td>
-      <td className="mono" style={{ color: "var(--warning)", fontWeight: 600 }}>{formatNumber(item.usado)}</td>
+      <td className="mono">
+        {formatNumber(item.asignado)}
+        {esRollo && <span className="text-sm text-muted"> m</span>}
+        </td>
+      <td className="mono" style={{ color: "var(--warning)", fontWeight: 600 }}>
+        {formatNumber(item.usado)}
+        {esRollo && <span className="text-sm text-muted"> m</span>}
+      </td>
       <td className="mono fw-600" style={{ color: item.disponible === 0 ? "var(--danger)" : "var(--success)" }}>
         {formatNumber(item.disponible)}
+        {esRollo && <span className="text-sm text-muted"> m</span>}
       </td>
       <td style={{ width: 140 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -44,9 +59,9 @@ export default function TecDashboard() {
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
-  const totalAsignado   = inventario.reduce((a, i) => a + i.asignado,   0);
-  const totalUsado      = inventario.reduce((a, i) => a + i.usado,      0);
-  const totalDisponible = inventario.reduce((a, i) => a + i.disponible, 0);
+  const totalAsignado   = inventario.reduce((a, i) => a + i.asignado_unidades, 0);
+  const totalUsado      = inventario.reduce((a, i) => a + (i.es_medible ? 0 : i.usado), 0);
+  const totalDisponible = inventario.reduce((a, i) => a + (i.es_medible ? i.asignado_unidades : i.disponible), 0);
   const sinStock        = inventario.filter(i => i.disponible === 0);
 
   return (

@@ -24,6 +24,8 @@ import CtrlTecnicos    from "../pages/controlador/Tecnicos";
 import CtrlInventario  from "../pages/controlador/Inventario";
 import CtrlAuditoria   from "../pages/controlador/Auditoria";
 import CtrlRecojos   from "../pages/controlador/Recojos";
+import CtrlOnusRecicladas  from "../pages/controlador/EquiposReciclados";
+
 
 
 // Técnico
@@ -80,6 +82,8 @@ export default function AppRouter() {
             <Route path="/controlador/inventario" element={<CtrlInventario />} />
             <Route path="/controlador/auditoria"  element={<CtrlAuditoria />} />
             <Route path="/controlador/recojos"  element={<CtrlRecojos />} />
+            <Route path="/controlador/onus-recicladas"  element={<CtrlOnusRecicladas />} />
+
 
           </Route>
         </Route>

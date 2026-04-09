@@ -24,6 +24,7 @@ const IC = {
   package:   "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z M3.27 6.96L12 12.01l8.73-5.05 M12 22.08V12",
   logout:    "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4 M16 17l5-5-5-5 M21 12H9",
   close:     "M18 6L6 18 M6 6l12 12",
+  recycle:   "M4 2v6h6 M20 22v-6h-6 M20 11A8 8 0 004.93 7.1 M4 13a8 8 0 0015.07 3.9",
 };
 
 const navConfig = {
@@ -79,6 +80,7 @@ const navConfig = {
       section: "Inventario",
       items: [
         { to: "/controlador/inventario",  label: "Inventario",   icon: IC.inventory },
+        { to: "/controlador/onus-recicladas", label: "ONUs Recicladas", icon: IC.recycle   },
         { to: "/controlador/auditoria",   label: "Auditoría",    icon: IC.audit     },
       ],
     },
