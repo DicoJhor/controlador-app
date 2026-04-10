@@ -92,17 +92,28 @@ function ProductoSelector({ tipoEquipo, value, onChange }) {
   const [abierto,    setAbierto]    = useState(false);
 
   useEffect(() => {
-    setCargando(true);
-    api.get("/productos")
-      .then(data => {
+    let activo = true;
+
+    const cargar = async () => {
+      setCargando(true);
+      try {
+        const data = await api.get("/productos");
+        if (!activo) return;
         const cats = CATEGORIAS_POR_TIPO[tipoEquipo] || [];
         const filtrados = cats.length > 0
           ? data.filter(p => cats.includes(p.categoria))
           : data;
         setProductos(filtrados);
-      })
-      .catch(() => {})
-      .finally(() => setCargando(false));
+      } catch {
+        // ignorar error de carga
+      }
+      finally {
+        if (activo) setCargando(false);
+      }
+    };
+
+  cargar();
+  return () => { activo = false; };
   }, [tipoEquipo]);
 
   const productoSeleccionado = productos.find(p => p.id === value);
@@ -269,9 +280,6 @@ export default function TecRecojos() {
     }));
 
   // ONUs sin codigo_pon requieren que el técnico lo ingrese
-  const onusSinCodigo = selected?.items.filter(
-    item => item.tipo_equipo === "ONU" && !item.codigo_pon
-  ) ?? [];
 
   // Validar: todas las ONUs sin código previo deben tener codigo_pon ingresado
   // y todos los items deben tener producto_id seleccionado

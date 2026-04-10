@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect} from "react";
 import { Badge } from "../../components/ui/Badge";
 import Modal from "../../components/ui/Modal";
 import { formatDate } from "../../utils/formatters";
