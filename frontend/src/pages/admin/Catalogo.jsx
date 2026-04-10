@@ -76,7 +76,7 @@ function VarianteBadge({ talla, genero }) {
 }
 
 export default function AdminCatalogo() {
-  const { isSuperadmin } = useAuth();
+  const { isSuperadmin, isAdmin } = useAuth();
 
   const [catalogo,       setCatalogo]       = useState([]);
   const [loading,        setLoading]        = useState(true);
@@ -389,10 +389,12 @@ export default function AdminCatalogo() {
             <option key={c} value={c}>{c.charAt(0).toUpperCase() + c.slice(1)}</option>
           ))}
         </select>
-        <button className="btn btn-primary" onClick={openCrear}>
-          <Icon d={IC.plus} size={15} />
-          Nuevo producto
-        </button>
+        {(isSuperadmin || isAdmin) && (
+           <button className="btn btn-primary" onClick={openCrear}>
+             <Icon d={IC.plus} size={15} />
+             Nuevo producto
+           </button> 
+         )}
       </div>
 
       {/* Tabla catálogo */}
@@ -463,9 +465,11 @@ export default function AdminCatalogo() {
                       </td>
                       <td>
                         <div style={{ display: "flex", gap: 6 }}>
-                          <button className="btn btn-outline btn-sm btn-icon" onClick={() => openEditar(p)}>
-                            <Icon d={IC.edit} size={13} />
-                          </button>
+                          {isSuperadmin && (
+                             <button className="btn btn-outline btn-sm btn-icon" onClick={() => openEditar(p)}>
+                                <Icon d={IC.edit} size={13} />
+                             </button>
+                            )}
                           {isSuperadmin && (
                             <button className="btn btn-danger-outline btn-sm btn-icon" onClick={() => openEliminar(p)}>
                               <Icon d={IC.trash} size={13} />
@@ -504,10 +508,12 @@ export default function AdminCatalogo() {
                                           </td>
                                           <td style={{ padding: "8px 12px" }}>
                                             <div style={{ display: "flex", gap: 6 }}>
-                                              <button className="btn btn-outline btn-sm btn-icon"
-                                                onClick={() => openEditarVariante(v, p.id)}>
-                                                <Icon d={IC.edit} size={12} />
-                                              </button>
+                                              {isSuperadmin && (
+                                                <button className="btn btn-outline btn-sm btn-icon"
+                                                  onClick={() => openEditarVariante(v, p.id)}>
+                                                  <Icon d={IC.edit} size={12} />
+                                                </button>
+                                               )}
                                               {isSuperadmin && (
                                                 <button className="btn btn-danger-outline btn-sm btn-icon"
                                                   onClick={() => openEliminarVariante(v, p.id)}>

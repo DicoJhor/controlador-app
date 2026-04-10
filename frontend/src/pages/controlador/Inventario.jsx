@@ -59,13 +59,6 @@ const emptyVarianteInline = {
 
 // ── Estado inicial entrada y salida ───────────────────────────────────────────
 const emptyEntrada = { motivo: "", comentario: "", items: [] };
-const emptyEntradaItem = {
-  producto_id: "", nombre: "", codigo: "", cantidad: "",
-  es_medible: false, metros_por_unidad: null,
-  es_onu: false,          // ← nuevo
-  codigos_pon: [],        // ← nuevo: array de strings, uno por ONU
-  mostrar_ponsn: false,   // ← nuevo: toggle del sub-panel
-};
 const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
 const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
 const emptyActivoForm = { nombre: "", descripcion: "", nro_serie: "", estado: "operativo", area: "NOC" };
@@ -131,7 +124,6 @@ export default function CtrlInventario() {
   const [modal,    setModal]    = useState(false);
   const [entrada,  setEntrada]  = useState(emptyEntrada);
   const [entradaSearch,  setEntradaSearch]  = useState("");
-  const [entradaFiltros, setEntradaFiltros] = useState([]);
   const [salida,   setSalida]   = useState(emptySalida);
   const [onusDisponibles, setOnusDisponibles] = useState({}); // { producto_id: [{ id, codigo_pon }] }
   const [onusSeleccionadas, setOnusSeleccionadas] = useState({}); // { producto_id: [onu_id, ...] }
@@ -363,7 +355,6 @@ export default function CtrlInventario() {
       setModal(false);
       setEntrada(emptyEntrada);
       setEntradaSearch("");
-      setEntradaFiltros([]);
       setSuccess("entrada");
       setTimeout(() => setSuccess(null), 3500);
     } catch (err) {
@@ -465,7 +456,6 @@ export default function CtrlInventario() {
     }
   };
 
-  const fieldE               = (key) => ({ value: entrada[key], onChange: (e) => setEntrada(prev => ({ ...prev, [key]: e.target.value })) });
   const productosYaAgregados = salida.items.map(i => String(i.producto_id));
 
   const openOnuModal = async (item) => {
@@ -567,7 +557,6 @@ export default function CtrlInventario() {
             <button className="btn btn-outline" onClick={async () => {
               setEntrada(emptyEntrada);
               setEntradaSearch("");
-              setEntradaFiltros([]);
               const data = await productosService.getAll();
               setProductosGlobales(data);
               setModal ("entrada");
