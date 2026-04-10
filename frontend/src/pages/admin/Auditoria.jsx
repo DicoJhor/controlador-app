@@ -27,10 +27,12 @@ const IC = {
   calendar: "M3 4h18v18H3V4z M16 2v4 M8 2v4 M3 10h18",
   pdf:      "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M16 13H8 M16 17H8 M10 9H8",
   excel:    "M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z M14 2v6h6 M8 13h2 M8 17h2 M14 13h2",
+  box:      "M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z",
 };
 
 const TIPO_CONFIG = {
-  entrada: { label: "Entrada",          variant: "entrada", color: "#16a34a" },
+  entrada: { label: "Entrada stock",          variant: "entrada", color: "#16a34a" },
+  recepcion: { label: "Recepción de envío", variant: "blue",    color: "#0d9488" },
   salida:  { label: "Salida a técnico", variant: "salida",  color: "#dc2626" },
   envio:   { label: "Envío a sede",     variant: "blue",    color: "#2563eb" },
   consumo: { label: "Consumo técnico",  variant: "warning", color: "#d97706" },
@@ -118,7 +120,20 @@ function agruparPorFecha(movimientos) {
   return Object.entries(grupos).sort((a, b) => b[0].localeCompare(a[0]));
 }
 
-const emptyExport = { fechaDesde: "", fechaHasta: "", sede: "todas", tipo: "todos", formato: "pdf" };
+// Extrae nombres únicos de productos/ítems de los movimientos
+function extraerProductos(movimientos) {
+  const set = new Set();
+  for (const m of movimientos) {
+    if (m.item) {
+      // Para envíos, solo tomamos la parte antes del " → "
+      const nombre = m.tipo === "envio" ? m.item.split(" → ")[0].trim() : m.item.trim();
+      if (nombre) set.add(nombre);
+    }
+  }
+  return Array.from(set).sort((a, b) => a.localeCompare(b));
+}
+
+const emptyExport = { fechaDesde: "", fechaHasta: "", sede: "todas", tipo: "todos", producto: "todos", formato: "pdf" };
 
 export default function AdminAuditoria() {
   const [movimientos, setMovimientos] = useState([]);
@@ -137,6 +152,9 @@ export default function AdminAuditoria() {
       .catch(() => { setError("No se pudieron cargar los movimientos"); setLoading(false); });
   }, []);
 
+  // Lista de productos únicos para el selector del modal
+  const productos = extraerProductos(movimientos);
+
   const filtered = movimientos.filter(m => {
     const matchSearch = (m.item ?? "").toLowerCase().includes(search.toLowerCase()) ||
                         (m.usuario ?? "").toLowerCase().includes(search.toLowerCase()) ||
@@ -151,6 +169,7 @@ export default function AdminAuditoria() {
   const grupos  = agruparPorFecha(filtered);
   const totales = {
     entrada: filtered.filter(m => m.tipo === "entrada").length,
+    recepcion: filtered.filter(m => m.tipo === "recepcion").length,
     salida:  filtered.filter(m => m.tipo === "salida").length,
     envio:   filtered.filter(m => m.tipo === "envio").length,
     consumo: filtered.filter(m => m.tipo === "consumo").length,
@@ -162,20 +181,31 @@ export default function AdminAuditoria() {
     const sedeDestino = m.tipo === "envio" ? (m.item ?? "").split(" → ")[1] ?? "" : "";
     const matchSede   = exportForm.sede === "todas" || m.sede === exportForm.sede || sedeDestino === exportForm.sede;
     const matchTipo   = exportForm.tipo === "todos" || m.tipo === exportForm.tipo;
-    let matchFecha    = true;
+
+    // ── Filtro por producto ──────────────────────────────────
+    let matchProducto = true;
+    if (exportForm.producto !== "todos") {
+      const itemNombre = m.tipo === "envio"
+        ? (m.item ?? "").split(" → ")[0].trim()
+        : (m.item ?? "").trim();
+      matchProducto = itemNombre === exportForm.producto;
+    }
+
+    let matchFecha = true;
     if (m.fecha) {
       const d = new Date(m.fecha).toISOString().split("T")[0];
       if (exportForm.fechaDesde && d < exportForm.fechaDesde) matchFecha = false;
       if (exportForm.fechaHasta && d > exportForm.fechaHasta) matchFecha = false;
     }
-    return matchSede && matchTipo && matchFecha;
+    return matchSede && matchTipo && matchProducto && matchFecha;
   });
 
   // ── Excel profesional (HTML → .xls que Excel abre con estilos) ──
   const exportarExcel = (datos) => {
-    const sedeLabel  = exportForm.sede === "todas" ? "Todas las sedes" : exportForm.sede;
-    const tipoLabel  = exportForm.tipo === "todos" ? "Todos" : (TIPO_CONFIG[exportForm.tipo]?.label ?? exportForm.tipo);
-    const fechaLabel = exportForm.fechaDesde || exportForm.fechaHasta
+    const sedeLabel     = exportForm.sede === "todas" ? "Todas las sedes" : exportForm.sede;
+    const tipoLabel     = exportForm.tipo === "todos" ? "Todos" : (TIPO_CONFIG[exportForm.tipo]?.label ?? exportForm.tipo);
+    const productoLabel = exportForm.producto === "todos" ? "Todos los productos" : exportForm.producto;
+    const fechaLabel    = exportForm.fechaDesde || exportForm.fechaHasta
       ? `${exportForm.fechaDesde || "—"} al ${exportForm.fechaHasta || "—"}`
       : "Sin filtro";
 
@@ -183,7 +213,6 @@ export default function AdminAuditoria() {
       entrada: "#16a34a", salida: "#dc2626", envio: "#2563eb", consumo: "#d97706"
     };
 
-    // Resumen por tipo
     const resumen = {
       entrada: datos.filter(m => m.tipo === "entrada").length,
       salida:  datos.filter(m => m.tipo === "salida").length,
@@ -191,7 +220,6 @@ export default function AdminAuditoria() {
       consumo: datos.filter(m => m.tipo === "consumo").length,
     };
 
-    // Filas de detalle
     const filas = datos.map((m, i) => {
       const color = tipoColors[m.tipo] ?? "#333";
       const bg    = i % 2 === 0 ? "#fafafa" : "#ffffff";
@@ -208,7 +236,6 @@ export default function AdminAuditoria() {
         </tr>`;
     }).join("");
 
-    // Filas por sede
     const porSede = {};
     datos.forEach(m => {
       const s = m.sede ?? "Sin sede";
@@ -246,8 +273,9 @@ export default function AdminAuditoria() {
           <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px;width:180px">Generado el:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${new Date().toLocaleString("es-PE")}</td></tr>
           <tr><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Sede:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${sedeLabel}</td></tr>
           <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Tipo:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${tipoLabel}</td></tr>
-          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Período:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${fechaLabel}</td></tr>
-          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Total registros:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;font-weight:bold">${datos.length}</td></tr>
+          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Producto:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${productoLabel}</td></tr>
+          <tr style="background:#f5f5f5"><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Período:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px">${fechaLabel}</td></tr>
+          <tr><td style="border:1px solid #ddd;padding:7px 12px;font-weight:bold;font-size:11px">Total registros:</td><td style="border:1px solid #ddd;padding:7px 12px;font-size:11px;font-weight:bold">${datos.length}</td></tr>
           <tr><td colspan="2" style="padding:12px 0"></td></tr>
           <tr><td colspan="2" style="font-size:12px;font-weight:bold;padding:6px 0;color:#1a1a1a">RESUMEN POR TIPO</td></tr>
           <tr><th ${thStyle}>Tipo de movimiento</th><th ${thStyle}>Cantidad</th></tr>
@@ -319,13 +347,13 @@ export default function AdminAuditoria() {
 
   // ── PDF tipo informe ───────────────────────────────────────
   const exportarPDF = (datos) => {
-    const sedeLabel  = exportForm.sede === "todas" ? "Todas las sedes" : exportForm.sede;
-    const tipoLabel  = exportForm.tipo === "todos" ? "Todos los tipos" : (TIPO_CONFIG[exportForm.tipo]?.label ?? exportForm.tipo);
-    const fechaLabel = exportForm.fechaDesde || exportForm.fechaHasta
+    const sedeLabel     = exportForm.sede === "todas" ? "Todas las sedes" : exportForm.sede;
+    const tipoLabel     = exportForm.tipo === "todos" ? "Todos los tipos" : (TIPO_CONFIG[exportForm.tipo]?.label ?? exportForm.tipo);
+    const productoLabel = exportForm.producto === "todos" ? "Todos los productos" : exportForm.producto;
+    const fechaLabel    = exportForm.fechaDesde || exportForm.fechaHasta
       ? `${exportForm.fechaDesde || "—"} al ${exportForm.fechaHasta || "—"}`
       : "Sin filtro de fecha";
 
-    // Resumen por tipo
     const resumen = {
       entrada: datos.filter(m => m.tipo === "entrada").length,
       salida:  datos.filter(m => m.tipo === "salida").length,
@@ -333,7 +361,6 @@ export default function AdminAuditoria() {
       consumo: datos.filter(m => m.tipo === "consumo").length,
     };
 
-    // Agrupar por fecha para el informe
     const gruposExp = agruparPorFecha(datos);
 
     const filasPorGrupo = gruposExp.map(([fechaKey, items]) => `
@@ -375,6 +402,13 @@ export default function AdminAuditoria() {
       </div>
     `).join("");
 
+    // Bloque extra en filtros aplicados solo si se filtró por producto
+    const productoFiltroHTML = exportForm.producto !== "todos" ? `
+      <div class="filtro-item">
+        <span class="filtro-label">Producto</span>
+        <span class="filtro-value">${productoLabel}</span>
+      </div>` : "";
+
     const html = `<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -384,35 +418,25 @@ export default function AdminAuditoria() {
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { font-family: 'Arial', sans-serif; font-size: 11px; color: #1a1a1a; background: white; }
     .page { padding: 36px 40px; max-width: 900px; margin: 0 auto; }
-
-    /* Header */
     .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 3px solid #1a1a1a; }
     .header-left { display: flex; align-items: center; gap: 16px; }
     .logo { height: 52px; object-fit: contain; }
     .company-name { font-size: 18px; font-weight: 800; color: #1a1a1a; letter-spacing: -0.3px; }
     .report-title { font-size: 12px; color: #666; margin-top: 2px; }
     .header-right { text-align: right; font-size: 10px; color: #888; line-height: 1.6; }
-
-    /* Filtros aplicados */
     .filtros { background: #f8f8f8; border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; display: flex; gap: 24px; flex-wrap: wrap; }
     .filtro-item { display: flex; flex-direction: column; gap: 2px; }
     .filtro-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.5px; color: #888; font-weight: 600; }
     .filtro-value { font-size: 11px; font-weight: 700; color: #1a1a1a; }
-
-    /* Tarjetas resumen */
     .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 24px; }
     .stat { border: 1px solid #e5e5e5; border-radius: 8px; padding: 12px 14px; }
     .stat-num { font-size: 24px; font-weight: 800; line-height: 1; }
     .stat-label { font-size: 10px; color: #888; margin-top: 4px; }
     .stat-bar { height: 3px; border-radius: 2px; margin-top: 8px; }
-
-    /* Grupos */
     .grupo { margin-bottom: 20px; page-break-inside: avoid; }
     .grupo-header { display: flex; align-items: center; gap: 10px; padding: 6px 0; margin-bottom: 6px; border-bottom: 1.5px solid #e5e5e5; }
     .grupo-fecha { font-weight: 700; font-size: 12px; }
     .grupo-count { font-size: 10px; color: #888; background: #f0f0f0; padding: 2px 8px; border-radius: 10px; }
-
-    /* Tabla */
     table { width: 100%; border-collapse: collapse; }
     th { background: #1a1a1a; color: white; padding: 7px 10px; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; }
     td { padding: 6px 10px; border-bottom: 1px solid #f0f0f0; vertical-align: top; font-size: 10px; }
@@ -423,21 +447,12 @@ export default function AdminAuditoria() {
     .center { text-align: center; font-weight: 700; }
     .small { font-size: 10px; }
     .muted { color: #888; }
-
-    /* Footer */
     .footer { margin-top: 28px; padding-top: 12px; border-top: 1px solid #e5e5e5; display: flex; justify-content: space-between; font-size: 9px; color: #aaa; }
-
-    @media print {
-      body { font-size: 10px; }
-      .page { padding: 20px; }
-      .grupo { page-break-inside: avoid; }
-    }
+    @media print { body { font-size: 10px; } .page { padding: 20px; } .grupo { page-break-inside: avoid; } }
   </style>
 </head>
 <body>
 <div class="page">
-
-  <!-- Encabezado -->
   <div class="header">
     <div class="header-left">
       <img src="${logoEnet}" class="logo" alt="Enet Fiber Perú" />
@@ -453,7 +468,6 @@ export default function AdminAuditoria() {
     </div>
   </div>
 
-  <!-- Filtros aplicados -->
   <div class="filtros">
     <div class="filtro-item">
       <span class="filtro-label">Período</span>
@@ -467,9 +481,9 @@ export default function AdminAuditoria() {
       <span class="filtro-label">Tipo de movimiento</span>
       <span class="filtro-value">${tipoLabel}</span>
     </div>
+    ${productoFiltroHTML}
   </div>
 
-  <!-- Resumen estadístico -->
   <div class="stats">
     <div class="stat">
       <div class="stat-num" style="color:#16a34a">${resumen.entrada}</div>
@@ -493,15 +507,12 @@ export default function AdminAuditoria() {
     </div>
   </div>
 
-  <!-- Movimientos agrupados por fecha -->
   ${filasPorGrupo}
 
-  <!-- Footer -->
   <div class="footer">
     <span>Enet Fiber Perú — Sistema de Control de Materiales</span>
     <span>Generado el ${new Date().toLocaleString("es-PE")} · ${datos.length} registros</span>
   </div>
-
 </div>
 </body>
 </html>`;
@@ -576,6 +587,7 @@ export default function AdminAuditoria() {
         </div>
       )}
 
+      {/* Tabla agrupada por fecha */}
       {grupos.map(([fechaKey, items]) => (
         <div key={fechaKey} style={{ marginBottom: 20 }}>
           <div style={{
@@ -595,6 +607,8 @@ export default function AdminAuditoria() {
               <table>
                 <thead>
                   <tr>
+                    {/* ── NUEVA COLUMNA FECHA ── */}
+                    <th>Fecha</th>
                     <th>Tipo</th><th>Detalle</th><th>Cant.</th>
                     <th>Sede</th><th>Comentario</th>
                   </tr>
@@ -602,6 +616,15 @@ export default function AdminAuditoria() {
                 <tbody>
                   {items.map((m, i) => (
                     <tr key={i}>
+                      {/* ── CELDA FECHA ── */}
+                      <td style={{ whiteSpace: "nowrap", fontSize: 12, color: "var(--text-muted)" }}>
+                        {m.fecha
+                          ? new Date(m.fecha).toLocaleString("es-PE", {
+                              day: "2-digit", month: "2-digit", year: "numeric",
+                              hour: "2-digit", minute: "2-digit",
+                            })
+                          : "—"}
+                      </td>
                       <td style={{ whiteSpace: "nowrap" }}><TipoBadge tipo={m.tipo} /></td>
                       <td><DetalleMovimiento m={m} /></td>
                       <td className="mono fw-600">{m.cantidad}</td>
@@ -643,8 +666,8 @@ export default function AdminAuditoria() {
             <label className="form-label">Formato</label>
             <div style={{ display: "flex", gap: 10 }}>
               {[
-                { key: "pdf",   label: "PDF",   sub: "Informe imprimible con logo",  icon: IC.pdf   },
-                { key: "excel", label: "Excel",  sub: "3 hojas: resumen, detalle, sedes", icon: IC.excel },
+                { key: "pdf",   label: "PDF",   sub: "Informe imprimible con logo",       icon: IC.pdf   },
+                { key: "excel", label: "Excel",  sub: "3 hojas: resumen, detalle, sedes",  icon: IC.excel },
               ].map(f => (
                 <div key={f.key} onClick={() => setExportForm(prev => ({ ...prev, formato: f.key }))}
                   style={{
@@ -695,6 +718,20 @@ export default function AdminAuditoria() {
             </div>
           </div>
 
+          {/* ── NUEVO: Selector de producto ── */}
+          <div className="form-group">
+            <label className="form-label">
+              <Icon d={IC.box} size={13} color="var(--text-muted)" style={{ marginRight: 4 }} />
+              Producto
+            </label>
+            <select className="form-input" {...expField("producto")}>
+              <option value="todos">Todos los productos</option>
+              {productos.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Preview */}
           <div style={{
             padding: "10px 14px", background: "var(--hover)",
@@ -703,6 +740,11 @@ export default function AdminAuditoria() {
             Se exportarán <strong style={{ color: "var(--text)" }}>
               {aplicarFiltrosExport().length}
             </strong> registro(s) con los filtros seleccionados.
+            {exportForm.producto !== "todos" && (
+              <span style={{ marginLeft: 6, color: "var(--primary)", fontWeight: 600 }}>
+                · Producto: {exportForm.producto}
+              </span>
+            )}
           </div>
         </Modal>
       )}

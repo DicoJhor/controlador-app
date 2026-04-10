@@ -105,11 +105,11 @@ exports.getMovimientos = async (req, res) => {
 
       UNION ALL
 
-      -- Envíos: ENTRADA en sede destino (recepción)
+      -- Envíos: RECEPCIÓN en sede destino
       SELECT
         MIN(ed.id) as id,
         e.fecha_envio as fecha,
-        'entrada' as tipo,
+        'recepcion' as tipo,
         CONCAT(
           p.nombre,
           ' ← ', se_orig.nombre,
