@@ -3,7 +3,7 @@ FROM node:20-alpine as build
 
 WORKDIR /app
 
-ARG VITE_API_URL=https://api.38.224.68.30.nip.io
+ARG VITE_API_URL=https://api.38.224.68.30.nip.io/api
 ENV VITE_API_URL=$VITE_API_URL
 
 COPY package*.json ./
