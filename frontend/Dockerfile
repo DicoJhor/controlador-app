@@ -3,15 +3,13 @@ FROM node:20-alpine as build
 
 WORKDIR /app
 
-# Declarar el ARG
-ARG VITE_API_URL
+ARG VITE_API_URL=https://api.38.224.68.30.nip.io
 ENV VITE_API_URL=$VITE_API_URL
 
 COPY package*.json ./
 RUN npm install
 
 COPY . .
-
 RUN npm run build
 
 # Etapa 2: servir con nginx
