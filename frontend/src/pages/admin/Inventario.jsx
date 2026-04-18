@@ -842,7 +842,7 @@ export default function AdminInventario() {
                         <td className="text-sm">{p.unidad ?? "—"}</td>
                         <td>
                           <StockBar stock={p.stock_total} minimo={p.stock_minimo} />
-                          {p.tiene_variantes && (
+                          {!!p.tiene_variantes && (
                             <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                               {variantesMap[p.id]
                                 ? `${variantesMap[p.id].length} variante(s)`

@@ -4,6 +4,8 @@ import Modal from "../../components/ui/Modal";
 import { formatDate } from "../../utils/formatters";
 import auditoriaService from "../../services/auditoriaService";
 import sedesService from "../../services/sedesService";
+import { useAuth } from "../../hooks/useAuth";
+
 
 import logoEnet from "../../assets/logo_enet.png";
 
@@ -20,6 +22,9 @@ const IC = {
   search:   "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4 M7 10l5 5 5-5 M12 15V3",
   comment:  "M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z",
+  edit:     "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
+  remove:   "M18 6L6 18 M6 6l12 12",
+  alert:    "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
   entrada:  "M5 12h14 M12 5l7 7-7 7",
   salida:   "M19 12H5 M12 19l-7-7 7-7",
   envio:    "M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z",
@@ -110,14 +115,18 @@ function DetalleMovimiento({ m }) {
   }
 }
 
-function agruparPorFecha(movimientos) {
-  const grupos = {};
+function agruparPorFechaYGuia(movimientos) {
+  const porFecha = {};
   for (const m of movimientos) {
-    const key = m.fecha ? new Date(m.fecha).toISOString().split("T")[0] : "sin-fecha";
-    if (!grupos[key]) grupos[key] = [];
-    grupos[key].push(m);
+    const fechaKey = m.fecha ? new Date(m.fecha).toISOString().split("T")[0] : "sin-fecha";
+    if (!porFecha[fechaKey]) porFecha[fechaKey] = {};
+    const guiaKey = m.motivo || m.guia || "sin-guia";
+    if (!porFecha[fechaKey][guiaKey]) porFecha[fechaKey][guiaKey] = [];
+    porFecha[fechaKey][guiaKey].push(m);
   }
-  return Object.entries(grupos).sort((a, b) => b[0].localeCompare(a[0]));
+  return Object.entries(porFecha)
+    .sort((a, b) => b[0].localeCompare(a[0]))
+    .map(([fecha, guias]) => [fecha, Object.entries(guias)]);
 }
 
 // Extrae nombres únicos de productos/ítems de los movimientos
@@ -136,6 +145,8 @@ function extraerProductos(movimientos) {
 const emptyExport = { fechaDesde: "", fechaHasta: "", sede: "todas", tipo: "todos", producto: "todos", formato: "pdf" };
 
 export default function AdminAuditoria() {
+  const { isSuperadmin } = useAuth();
+
   const [movimientos, setMovimientos] = useState([]);
   const [sedes,       setSedes]       = useState([]);
   const [loading,     setLoading]     = useState(true);
@@ -145,6 +156,12 @@ export default function AdminAuditoria() {
   const [filterTipo,  setFilterTipo]  = useState("todos");
   const [modalExport, setModalExport] = useState(false);
   const [exportForm,  setExportForm]  = useState(emptyExport);
+
+  const [modalEditar, setModalEditar] = useState(false);
+  const [envioEditar, setEnvioEditar] = useState(null);
+  const [editForm,    setEditForm]    = useState(null);
+  const [editSaving,  setEditSaving]  = useState(false);
+  const [editError,   setEditError]   = useState("");
 
   useEffect(() => {
     Promise.all([auditoriaService.getAll(), sedesService.getAll()])
@@ -166,7 +183,7 @@ export default function AdminAuditoria() {
     return matchSearch && matchSede && matchTipo;
   });
 
-  const grupos  = agruparPorFecha(filtered);
+  const grupos  = agruparPorFechaYGuia(filtered);
   const totales = {
     entrada: filtered.filter(m => m.tipo === "entrada").length,
     recepcion: filtered.filter(m => m.tipo === "recepcion").length,
@@ -176,6 +193,74 @@ export default function AdminAuditoria() {
   };
 
   const toggleTipo = (tipo) => setFilterTipo(t => t === tipo ? "todos" : tipo);
+
+  const openEditarEnvio = async (guiaKey, items) => {
+    setEditError("");
+    try {
+      // Buscar el envío completo desde obtenerEnvios
+      const envios = await auditoriaService.getEnvios();
+      const envio  = envios.find(e => e.guia === guiaKey);
+      if (!envio) return alert("No se encontró el envío");
+
+      setEnvioEditar(envio);
+      setEditForm({
+        guia:        envio.guia,
+        fecha_envio: envio.fecha_envio
+          ? new Date(envio.fecha_envio).toISOString().split("T")[0]
+          : "",
+        comentario:  envio.comentario ?? "",
+        sede_id:     String(envio.sede_id ?? ""),
+        productos:   envio.productos.map(p => ({
+          producto_id: p.producto_id ?? p.id,
+          variante_id: p.variante_id ?? null,
+          nombre:      p.nombre,
+          talla:       p.talla ?? null,
+          genero:      p.genero ?? null,
+          cantidad:    p.cantidad,
+        })),
+      });
+      setModalEditar(true);
+    } catch (err) {
+      alert("Error al cargar el envío: " + err.message);
+    }
+  };
+
+  const handleEditarEnvio = async () => {
+    setEditError("");
+    if (!editForm.guia.trim())    return setEditError("Ingresá el número de guía.");
+    if (!editForm.fecha_envio)    return setEditError("Ingresá la fecha.");
+    if (!editForm.sede_id)        return setEditError("Seleccioná una sede destino.");
+    if (!editForm.productos?.length) return setEditError("Debe haber al menos un producto.");
+
+    for (const p of editForm.productos) {
+      if (!p.cantidad || p.cantidad <= 0)
+        return setEditError(`Cantidad inválida en "${p.nombre}".`);
+    }
+
+    setEditSaving(true);
+    try {
+      await auditoriaService.editarEnvio(envioEditar.id, {
+        guia:        editForm.guia,
+        fecha_envio: editForm.fecha_envio,
+        comentario:  editForm.comentario,
+        sede_id:     editForm.sede_id,
+        productos:   editForm.productos.map(p => ({
+          producto_id: p.producto_id,
+          variante_id: p.variante_id ?? null,
+          cantidad:    Number(p.cantidad),
+        })),
+      });
+
+      // Recargar movimientos
+      const data = await auditoriaService.getAll();
+      setMovimientos(data);
+      setModalEditar(false);
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
 
   const aplicarFiltrosExport = () => movimientos.filter(m => {
     const sedeDestino = m.tipo === "envio" ? (m.item ?? "").split(" → ")[1] ?? "" : "";
@@ -588,63 +673,212 @@ export default function AdminAuditoria() {
       )}
 
       {/* Tabla agrupada por fecha */}
-      {grupos.map(([fechaKey, items]) => (
-        <div key={fechaKey} style={{ marginBottom: 20 }}>
+      {grupos.map(([fechaKey, guias]) => (
+        <div key={fechaKey} style={{ marginBottom: 24 }}>
+          {/* Cabecera de fecha */}
           <div style={{
             display: "flex", alignItems: "center", gap: 8,
-            marginBottom: 8, paddingBottom: 6, borderBottom: "2px solid var(--border)",
+            marginBottom: 12, paddingBottom: 6, borderBottom: "2px solid var(--border)",
           }}>
             <Icon d={IC.calendar} size={14} color="var(--text-muted)" />
             <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>
               {fechaKey === "sin-fecha" ? "Sin fecha" : formatDate(fechaKey)}
             </span>
             <span style={{ fontSize: 12, color: "var(--text-muted)", background: "var(--hover)", borderRadius: 12, padding: "2px 8px" }}>
-              {items.length} movimiento{items.length !== 1 ? "s" : ""}
+              {guias.reduce((sum, [, items]) => sum + items.length, 0)} movimiento{guias.reduce((sum, [, items]) => sum + items.length, 0) !== 1 ? "s" : ""}
             </span>
           </div>
-          <div className="card" style={{ marginBottom: 0 }}>
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    {/* ── NUEVA COLUMNA FECHA ── */}
-                    <th>Fecha</th>
-                    <th>Tipo</th><th>Detalle</th><th>Cant.</th>
-                    <th>Sede</th><th>Comentario</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {items.map((m, i) => (
-                    <tr key={i}>
-                      {/* ── CELDA FECHA ── */}
-                      <td style={{ whiteSpace: "nowrap", fontSize: 12, color: "var(--text-muted)" }}>
-                        {m.fecha
-                          ? new Date(m.fecha).toLocaleString("es-PE", {
-                              day: "2-digit", month: "2-digit", year: "numeric",
-                              hour: "2-digit", minute: "2-digit",
-                            })
-                          : "—"}
-                      </td>
-                      <td style={{ whiteSpace: "nowrap" }}><TipoBadge tipo={m.tipo} /></td>
-                      <td><DetalleMovimiento m={m} /></td>
-                      <td className="mono fw-600">{m.cantidad}</td>
-                      <td className="text-sm">{m.sede ?? "—"}</td>
-                      <td>
-                        {m.comentario ? (
-                          <div style={{ display: "flex", alignItems: "flex-start", gap: 4, maxWidth: 200 }}>
-                            <Icon d={IC.comment} size={11} color="var(--text-muted)" />
-                            <span className="text-sm text-muted">{m.comentario}</span>
-                          </div>
-                        ) : <span className="text-muted">—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+
+          {/* Bloques por guía */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            {guias.map(([guiaKey, items]) => {
+              const primerItem = items[0];
+              const cfg = TIPO_CONFIG[primerItem?.tipo] ?? { label: primerItem?.tipo, color: "#2563eb" };
+              return (
+                <div key={guiaKey} style={{
+                  border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden"
+                }}>
+                  {/* Cabecera del bloque guía */}
+                  <div style={{
+                    display: "flex", alignItems: "center", gap: 10,
+                    padding: "8px 14px",
+                    background: cfg.color + "10",
+                    borderBottom: "1px solid var(--border)",
+                  }}>
+                    <TipoBadge tipo={primerItem?.tipo} />
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
+                      Guía: {guiaKey === "sin-guia" ? "—" : guiaKey}
+                    </span>
+                    {primerItem?.sede && (
+                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                        · {primerItem.sede}
+                      </span>
+                    )}
+                    <span style={{
+                      marginLeft: "auto", fontSize: 11, color: "var(--text-muted)",
+                      background: "var(--hover)", borderRadius: 10, padding: "2px 8px"
+                    }}>
+                      {items.length} producto{items.length !== 1 ? "s" : ""}
+                    </span>
+                    {isSuperadmin && primerItem?.tipo === "envio" && guiaKey !== "sin-guia" && (
+                      <button
+                        className="btn btn-outline btn-sm"
+                        onClick={() => openEditarEnvio(guiaKey, items)}
+                        style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}
+                      >
+                        <Icon d={IC.edit} size={12} />
+                        Editar
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Tabla de productos del bloque */}
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Detalle</th>
+                          <th>Cant.</th>
+                          <th>Sede</th>
+                          <th>Comentario</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((m, i) => (
+                          <tr key={i}>
+                            <td><DetalleMovimiento m={m} /></td>
+                            <td className="mono fw-600">{m.cantidad}</td>
+                            <td className="text-sm">{m.sede ?? "—"}</td>
+                            <td>
+                              {m.comentario ? (
+                                <div style={{ display: "flex", alignItems: "flex-start", gap: 4, maxWidth: 200 }}>
+                                  <Icon d={IC.comment} size={11} color="var(--text-muted)" />
+                                  <span className="text-sm text-muted">{m.comentario}</span>
+                                </div>
+                              ) : <span className="text-muted">—</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       ))}
+
+      {/* Modal editar envío */}
+      {modalEditar && editForm && (
+        <Modal
+          title={`Editar envío — Guía: ${envioEditar?.guia}`}
+          onClose={() => setModalEditar(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModalEditar(false)} disabled={editSaving}>
+                Cancelar
+              </button>
+              <button className="btn btn-primary" onClick={handleEditarEnvio} disabled={editSaving}>
+                {editSaving ? "Guardando..." : "Guardar cambios"}
+              </button>
+            </>
+          }
+        >
+          <div style={{
+            background: "#FEF3C7", border: "1px solid #F59E0B",
+            borderRadius: 8, padding: "10px 14px", marginBottom: 16,
+            display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13,
+          }}>
+            <Icon d={IC.alert} size={15} color="#D97706" />
+            <span style={{ color: "#92400E" }}>
+              <strong>Atención:</strong> Esta acción modifica el stock de las sedes involucradas.
+              Usala solo para corregir errores.
+            </span>
+          </div>
+
+          {editError && (
+            <div className="alert alert-danger" style={{ marginBottom: 12 }}>
+              <Icon d={IC.alert} size={14} color="var(--danger)" /> {editError}
+            </div>
+          )}
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Número de guía *</label>
+              <input className="form-input" value={editForm.guia}
+                onChange={e => setEditForm(prev => ({ ...prev, guia: e.target.value }))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Fecha de envío *</label>
+              <input className="form-input" type="date" value={editForm.fecha_envio}
+                onChange={e => setEditForm(prev => ({ ...prev, fecha_envio: e.target.value }))} />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Sede destino *</label>
+              <select className="form-input" value={editForm.sede_id}
+                onChange={e => setEditForm(prev => ({ ...prev, sede_id: e.target.value }))}>
+                <option value="">Seleccionar sede...</option>
+                {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Comentario</label>
+              <input className="form-input" placeholder="Opcional..."
+                value={editForm.comentario}
+                onChange={e => setEditForm(prev => ({ ...prev, comentario: e.target.value }))} />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Productos</label>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {editForm.productos.map((p, i) => (
+                <div key={i} style={{
+                  display: "flex", alignItems: "center", gap: 8,
+                  padding: "8px 10px", borderRadius: 8,
+                  background: "var(--hover)", border: "1px solid var(--border)"
+                }}>
+                  <div style={{ flex: 1, fontSize: 13 }}>
+                    <span className="fw-600">{p.nombre}</span>
+                    {p.talla && (
+                      <span style={{ fontSize: 11, marginLeft: 6, color: "var(--text-muted)" }}>
+                        {p.genero} — {p.talla}
+                      </span>
+                    )}
+                  </div>
+                  <input
+                    type="number" min={1} value={p.cantidad}
+                    onChange={e => setEditForm(prev => ({
+                      ...prev,
+                      productos: prev.productos.map((item, idx) =>
+                        idx === i ? { ...item, cantidad: Number(e.target.value) } : item
+                      )
+                    }))}
+                    style={{
+                      width: 70, padding: "4px 8px", borderRadius: 6,
+                      border: "1px solid var(--border)", fontSize: 13,
+                      background: "var(--surface)", color: "var(--text)"
+                    }}
+                  />
+                  <button
+                    className="btn btn-danger-outline btn-sm btn-icon"
+                    onClick={() => setEditForm(prev => ({
+                      ...prev,
+                      productos: prev.productos.filter((_, idx) => idx !== i)
+                    }))}
+                  >
+                    <Icon d={IC.remove} size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* Modal exportar */}
       {modalExport && (

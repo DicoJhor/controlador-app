@@ -190,3 +190,150 @@ exports.obtenerEnvios = async (req, res) => {
     res.status(500).json({ message: "Error al obtener envíos", error: err.message })
   }
 }
+
+// EDITAR ENVÍO (solo superadmin)
+exports.editarEnvio = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const { id } = req.params
+    const { guia, comentario, fecha_envio, sede_id, productos } = req.body
+
+    // Obtener envío original
+    const [[envioOriginal]] = await conn.query(
+      "SELECT * FROM envios WHERE id = ?", [id]
+    )
+    if (!envioOriginal)
+      return res.status(404).json({ message: "Envío no encontrado" })
+
+    const sedeOrigenId  = envioOriginal.sede_origen_id
+    const sedeDestinoOriginal = envioOriginal.sede_id
+    const sedeDestinoNueva    = Number(sede_id) || sedeDestinoOriginal
+
+    // Obtener detalles originales
+    const [detallesOriginales] = await conn.query(
+      "SELECT * FROM envio_detalles WHERE envio_id = ?", [id]
+    )
+
+    // ── REVERTIR stock original completamente ──────────────
+    for (const det of detallesOriginales) {
+      if (det.variante_id) {
+        // Devolver a origen
+        await conn.query(
+          "UPDATE stock_sede_variante SET cantidad = cantidad + ? WHERE sede_id = ? AND variante_id = ?",
+          [det.cantidad, sedeOrigenId, det.variante_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, sedeOrigenId, det.producto_id]
+        )
+        // Quitar de destino original
+        await conn.query(
+          "UPDATE stock_sede_variante SET cantidad = cantidad - ? WHERE sede_id = ? AND variante_id = ?",
+          [det.cantidad, sedeDestinoOriginal, det.variante_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, sedeDestinoOriginal, det.producto_id]
+        )
+        // Restaurar stock global variante
+        await conn.query(
+          "UPDATE producto_variantes SET stock_total = stock_total + ? WHERE id = ?",
+          [det.cantidad, det.variante_id]
+        )
+      } else {
+        // Devolver a origen
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, sedeOrigenId, det.producto_id]
+        )
+        // Quitar de destino original
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, sedeDestinoOriginal, det.producto_id]
+        )
+      }
+      // Restaurar stock global producto
+      await conn.query(
+        "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
+        [det.cantidad, det.producto_id]
+      )
+    }
+
+    // ── ELIMINAR detalles viejos ───────────────────────────
+    await conn.query("DELETE FROM envio_detalles WHERE envio_id = ?", [id])
+
+    // ── ACTUALIZAR cabecera del envío ──────────────────────
+    await conn.query(
+      `UPDATE envios SET guia = ?, comentario = ?, fecha_envio = ?, sede_id = ? WHERE id = ?`,
+      [guia, comentario || null, fecha_envio, sedeDestinoNueva, id]
+    )
+
+    // ── APLICAR nuevos productos y stock ──────────────────
+    for (const item of productos) {
+      if (item.variante_id) {
+        await conn.query(
+          "INSERT INTO envio_detalles (envio_id, producto_id, variante_id, cantidad) VALUES (?, ?, ?, ?)",
+          [id, item.producto_id, item.variante_id, item.cantidad]
+        )
+        await conn.query(
+          "UPDATE producto_variantes SET stock_total = stock_total - ? WHERE id = ?",
+          [item.cantidad, item.variante_id]
+        )
+        await conn.query(
+          "UPDATE productos SET stock_total = stock_total - ? WHERE id = ?",
+          [item.cantidad, item.producto_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+          [item.cantidad, sedeOrigenId, item.producto_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede_variante SET cantidad = cantidad - ? WHERE sede_id = ? AND variante_id = ?",
+          [item.cantidad, sedeOrigenId, item.variante_id]
+        )
+        await conn.query(
+          `INSERT INTO stock_sede_variante (sede_id, variante_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sedeDestinoNueva, item.variante_id, item.cantidad]
+        )
+        await conn.query(
+          `INSERT INTO stock_sede (sede_id, producto_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sedeDestinoNueva, item.producto_id, item.cantidad]
+        )
+      } else {
+        await conn.query(
+          "INSERT INTO envio_detalles (envio_id, producto_id, cantidad) VALUES (?, ?, ?)",
+          [id, item.producto_id, item.cantidad]
+        )
+        await conn.query(
+          "UPDATE productos SET stock_total = stock_total - ? WHERE id = ?",
+          [item.cantidad, item.producto_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+          [item.cantidad, sedeOrigenId, item.producto_id]
+        )
+        await conn.query(
+          `INSERT INTO stock_sede (sede_id, producto_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sedeDestinoNueva, item.producto_id, item.cantidad]
+        )
+      }
+    }
+
+    await conn.commit()
+    res.json({ message: "Envío actualizado correctamente" })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ Error editarEnvio:", err.message)
+    res.status(500).json({ message: "Error al editar envío", error: err.message })
+  } finally {
+    conn.release()
+  }
+}
