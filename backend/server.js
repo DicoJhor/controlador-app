@@ -31,6 +31,7 @@ const allowedOrigins = [
   "http://localhost:5173",
   "capacitor://localhost",
   "http://localhost",
+  "https://localhost",
 ]
 
 app.use(cors({
