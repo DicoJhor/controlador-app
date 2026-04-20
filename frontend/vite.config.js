@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-  base: '/admin/', // ← cambiar './' por la ruta real
+  base: '/', // ← cambiar './' por la ruta real
 
   plugins: [
     react(),
