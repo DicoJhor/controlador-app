@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">App Técnico</string>
+    <string name="title_activity_main">App Técnico</string>
+    <string name="package_name">com.enetfiber.tecnico</string>
+    <string name="custom_url_scheme">com.enetfiber.tecnico</string>
+</resources>

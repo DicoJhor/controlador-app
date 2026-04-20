@@ -2,6 +2,9 @@ import { useState, useEffect } from "react";
 import Modal from "../../components/ui/Modal";
 import tecnicoService from "../../services/tecnicoService";
 import api from "../../services/api";
+import { db } from "../../db/localDB";
+import { fileToBase64 } from "../../services/syncService";
+import { useOnlineStatus } from "../../hooks/useOnlineStatus";
 
 const BASE_URL = "https://api.38.224.68.30.nip.io";
 
@@ -93,11 +96,16 @@ function ProductoSelector({ tipoEquipo, value, onChange }) {
 
   useEffect(() => {
     let activo = true;
-
     const cargar = async () => {
       setCargando(true);
       try {
-        const data = await api.get("/productos");
+        let data;
+        if (navigator.onLine) {
+          data = await api.get("/productos");
+        } else {
+          // Offline: usar inventario cacheado como catálogo de productos
+          data = await db.inventario.toArray();
+        }
         if (!activo) return;
         const cats = CATEGORIAS_POR_TIPO[tipoEquipo] || [];
         const filtrados = cats.length > 0
@@ -105,15 +113,20 @@ function ProductoSelector({ tipoEquipo, value, onChange }) {
           : data;
         setProductos(filtrados);
       } catch {
-        // ignorar error de carga
-      }
-      finally {
+        // Si la API falla, caer a cache
+        const data = await db.inventario.toArray();
+        if (!activo) return;
+        const cats = CATEGORIAS_POR_TIPO[tipoEquipo] || [];
+        const filtrados = cats.length > 0
+          ? data.filter(p => cats.includes(p.categoria))
+          : data;
+        setProductos(filtrados);
+      } finally {
         if (activo) setCargando(false);
       }
     };
-
-  cargar();
-  return () => { activo = false; };
+    cargar();
+    return () => { activo = false; };
   }, [tipoEquipo]);
 
   const productoSeleccionado = productos.find(p => p.id === value);
@@ -236,6 +249,7 @@ function agruparOrdenes(ordenes) {
 }
 
 export default function TecRecojos() {
+  const online = useOnlineStatus();
   const [ordenes,    setOrdenes]    = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(null);

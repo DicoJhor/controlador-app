@@ -1,6 +1,10 @@
 import { useState, useEffect } from "react";
 import tecnicoService from "../../services/tecnicoService";
 import onuService from "../../services/onuService";
+import { db } from "../../db/localDB";
+import { fileToBase64 } from "../../services/syncService";
+import { useOnlineStatus } from "../../hooks/useOnlineStatus";
+
 
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
@@ -260,6 +264,8 @@ const emptyOnuRecogida = { producto_id: "", codigo_pon: "" };
 // ── Componente principal ───────────────────────────────────────────────────
 export default function TecRegistrarSalida() {
   const [tab, setTab] = useState("averia");
+  const online = useOnlineStatus();
+
 
   const [inventario,   setInventario]   = useState([]);
   const [misOnus,      setMisOnus]      = useState([]);
@@ -282,19 +288,47 @@ export default function TecRegistrarSalida() {
   const [errorsActiv, setErrorsActiv] = useState({});
 
   useEffect(() => {
-    Promise.all([
-      tecnicoService.getMiInventario(),
-      onuService.getMisOnus(),
-      tecnicoService.getCatalogoOnus(),
-    ])
-      .then(([inv, onus, catalogo]) => {
-         console.log("catalogo onus:", catalogo)
+    const cargar = async () => {
+      try {
+        if (navigator.onLine) {
+          const [inv, onus, catalogo] = await Promise.all([
+            tecnicoService.getMiInventario(),
+            onuService.getMisOnus(),
+            tecnicoService.getCatalogoOnus(),
+          ]);
+          setInventario(inv);
+          setMisOnus(onus);
+          setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
+          await db.inventario.clear();
+          await db.inventario.bulkAdd(inv);
+          await db.mis_onus.clear();
+          await db.mis_onus.bulkAdd(onus);
+          await db.catalogo_onus.clear();
+          await db.catalogo_onus.bulkAdd(Array.isArray(catalogo) ? catalogo : []);
+        } else {
+          const [inv, onus, catalogo] = await Promise.all([
+            db.inventario.toArray(),
+            db.mis_onus.toArray(),
+            db.catalogo_onus.toArray(),
+          ]);
+          setInventario(inv);
+          setMisOnus(onus);
+          setCatalogoOnus(catalogo);
+        }
+      } catch {
+        const [inv, onus, catalogo] = await Promise.all([
+          db.inventario.toArray(),
+          db.mis_onus.toArray(),
+          db.catalogo_onus.toArray(),
+        ]);
         setInventario(inv);
         setMisOnus(onus);
-        setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
+        setCatalogoOnus(catalogo);
+      } finally {
         setLoading(false);
-      })
-      .catch(() => setLoading(false));
+      }
+    };
+    cargar();
   }, []);
 
   const recargarInventario = async () => {
@@ -354,40 +388,78 @@ export default function TecRegistrarSalida() {
     if (Object.keys(e).length > 0) { setErrorsAveria(e); return; }
     setErrorsAveria({});
     setSavingAveria(true);
+    // DESPUÉS:
     try {
-      const fd = new FormData();
-      fd.append("comentario", averiaForm.comentario || "");
-
-      const itemsNormales = averiaForm.items.filter(i => {
-        const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-        return prod?.categoria !== "onu";
-      });
-      fd.append("items", JSON.stringify(itemsNormales));
-
-      const onuId = getOnuId(averiaForm.items);
-      if (onuId) {
-        fd.append("onu_id",    onuId);
-        fd.append("cliente",   averiaForm.cliente);
-        fd.append("direccion", averiaForm.direccion);
+      if (navigator.onLine) {
+        const fd = new FormData();
+        fd.append("comentario", averiaForm.comentario || "");
+        const itemsNormales = averiaForm.items.filter(i => {
+          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
+          return prod?.categoria !== "onu";
+        });
+        fd.append("items", JSON.stringify(itemsNormales));
+        const onuId = getOnuId(averiaForm.items);
+        if (onuId) {
+          fd.append("onu_id",    onuId);
+          fd.append("cliente",   averiaForm.cliente);
+          fd.append("direccion", averiaForm.direccion);
+        }
+        if (tipoAveria === "cambio_onu") {
+          fd.append("onu_recogida_producto_id", onuRecogida.producto_id);
+          fd.append("onu_recogida_codigo_pon",  onuRecogida.codigo_pon.trim());
+        }
+        fotosAveria.forEach(f => fd.append("fotos", f.file));
+        const res = await tecnicoService.registrarSalidaMultiple(fd);
+        setSuccess(`averia:${res?.codigo || ""}`);
+      } else {
+        const itemsNormales = averiaForm.items.filter(i => {
+          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
+          return prod?.categoria !== "onu";
+        });
+        const onuId = getOnuId(averiaForm.items);
+        const payload = {
+          comentario: averiaForm.comentario || "",
+          items:      JSON.stringify(itemsNormales),
+          ...(onuId && {
+            onu_id:    onuId,
+            cliente:   averiaForm.cliente,
+            direccion: averiaForm.direccion,
+          }),
+          ...(tipoAveria === "cambio_onu" && {
+            onu_recogida_producto_id: onuRecogida.producto_id,
+            onu_recogida_codigo_pon:  onuRecogida.codigo_pon.trim(),
+          }),
+        };
+        const localId = await db.salidas_pendientes.add({
+          tipo: 'averia', payload,
+          syncStatus: 'pending',
+          creadoEn: new Date().toISOString(),
+        });
+        for (const foto of fotosAveria) {
+          const base64 = await fileToBase64(foto.file);
+          await db.fotos_pendientes.add({
+            salidaLocalId: localId,
+            base64, filename: foto.file.name, mime: foto.file.type,
+          });
+        }
+        for (const item of itemsNormales) {
+          const local = await db.inventario
+            .where('producto_id').equals(Number(item.producto_id)).first();
+          if (local) {
+            await db.inventario.update(local.id, {
+              disponible: local.disponible - Number(item.cantidad)
+            });
+          }
+        }
+        setSuccess("averia:OFFLINE-GUARDADO");
       }
-
-      // ONU recogida del cliente
-      if (tipoAveria === "cambio_onu") {
-        fd.append("onu_recogida_producto_id", onuRecogida.producto_id);
-        fd.append("onu_recogida_codigo_pon",  onuRecogida.codigo_pon.trim());
-      }
-
-      fotosAveria.forEach(f => fd.append("fotos", f.file));
-
-      const res = await tecnicoService.registrarSalidaMultiple(fd);
-
+      // Siempre se ejecutan:
       setAveriaForm(emptyAveriaForm);
       setFotosAveria([]);
       setOnuRecogida(emptyOnuRecogida);
       setTipoAveria("comun");
-      setSuccess(`averia:${res?.codigo || ""}`);
       setTimeout(() => setSuccess(null), 5000);
-      await recargarInventario();
+      if (navigator.onLine) await recargarInventario();
     } catch (err) {
       alert(err.message);
     } finally {
@@ -417,29 +489,53 @@ export default function TecRegistrarSalida() {
     setErrorsActiv({});
     setSavingActiv(true);
     try {
-      const fd = new FormData();
-      fd.append("cliente",    activForm.cliente);
-      fd.append("direccion",  activForm.direccion);
-      fd.append("comentario", activForm.comentario || "");
-
-      const itemsNormales = activForm.items.filter(i => {
-        const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-        return prod?.categoria !== "onu";
-      });
-      fd.append("items", JSON.stringify(itemsNormales));
-
-      const onuId = getOnuId(activForm.items);
-      if (onuId) fd.append("onu_id", onuId);
-
-      fotosActiv.forEach(f => fd.append("fotos", f.file));
-
-      const res = await tecnicoService.registrarActivacion(fd);
-
+      if (navigator.onLine) {
+        const fd = new FormData();
+        fd.append("cliente",    activForm.cliente);
+        fd.append("direccion",  activForm.direccion);
+        fd.append("comentario", activForm.comentario || "");
+        const itemsNormales = activForm.items.filter(i => {
+          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
+          return prod?.categoria !== "onu";
+        });
+        fd.append("items", JSON.stringify(itemsNormales));
+        const onuId = getOnuId(activForm.items);
+        if (onuId) fd.append("onu_id", onuId);
+        fotosActiv.forEach(f => fd.append("fotos", f.file));
+        const res = await tecnicoService.registrarActivacion(fd);
+        setSuccess(`activacion:${res?.codigo || ""}`);
+      } else {
+        const itemsNormales = activForm.items.filter(i => {
+          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
+          return prod?.categoria !== "onu";
+        });
+        const onuId = getOnuId(activForm.items);
+        const payload = {
+          cliente:    activForm.cliente,
+          direccion:  activForm.direccion,
+          comentario: activForm.comentario || "",
+          items:      JSON.stringify(itemsNormales),
+          ...(onuId && { onu_id: onuId }),
+        };
+        const localId = await db.salidas_pendientes.add({
+          tipo: 'activacion', payload,
+          syncStatus: 'pending',
+          creadoEn: new Date().toISOString(),
+        });
+        for (const foto of fotosActiv) {
+          const base64 = await fileToBase64(foto.file);
+          await db.fotos_pendientes.add({
+            salidaLocalId: localId,
+            base64, filename: foto.file.name, mime: foto.file.type,
+          });
+        }
+        setSuccess("activacion:OFFLINE-GUARDADO");
+      }
+      // Siempre se ejecutan:
       setActivForm(emptyActivForm);
       setFotosActiv([]);
-      setSuccess(`activacion:${res?.codigo || ""}`);
       setTimeout(() => setSuccess(null), 5000);
-      await recargarInventario();
+      if (navigator.onLine) await recargarInventario();
     } catch (err) {
       alert(err.message);
     } finally {
@@ -459,12 +555,19 @@ export default function TecRegistrarSalida() {
         <div className="alert alert-success" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <Icon d={IC.check} size={16} color="var(--success)" />
           <div>
-            <strong>{successTipo === "averia" ? "Avería" : "Activación"} registrada correctamente</strong>
-            {successCodigo && (
+            <strong>
+              {successTipo === "averia" ? "Avería" : "Activación"}{" "}
+              {successCodigo === "OFFLINE-GUARDADO" ? "guardada offline" : "registrada correctamente"}
+            </strong>
+            {successCodigo === "OFFLINE-GUARDADO" ? (
+              <div style={{ fontSize: 13, marginTop: 2, color: "var(--text-muted)" }}>
+                Se subirá automáticamente cuando haya internet
+              </div>
+            ) : successCodigo ? (
               <div style={{ fontSize: 13, marginTop: 2 }}>
                 Código: <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{successCodigo}</span>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       )}
