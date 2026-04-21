@@ -199,7 +199,8 @@ export default function AdminAuditoria() {
     try {
       // Buscar el envío completo desde obtenerEnvios
       const envios = await auditoriaService.getEnvios();
-      const envio  = envios.find(e => e.guia === guiaKey);
+      const guiaReal = guiaKey.replace(/^Guía:\s*/i, "").trim();
+      const envio  = envios.find(e => e.guia === guiaReal);
       if (!envio) return alert("No se encontró el envío");
 
       setEnvioEditar(envio);
