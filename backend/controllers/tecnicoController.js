@@ -1,4 +1,5 @@
 const db = require("../config/db")
+const { moverYGuardarFotos } = require("../helpers/fotos")
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -223,7 +224,13 @@ exports.registrarSalidaMultiple = async (req, res) => {
     const averia_id = result.insertId
 
     // ── Guardar hasta 5 fotos ──────────────────────────────────────────────
-    await guardarFotos(conn, "averia", averia_id, req.files || [])
+    await moverYGuardarFotos(conn, {           // ✅ CAMBIAR
+      tipo:        "averia",
+      registro_id: averia_id,
+      sede_id:     req.user.sede_id,
+      cliente:     cliente,
+      archivos:    req.files || [],
+    })
 
     // ── Registrar materiales normales y consumo ────────────────────────────
     for (const item of itemsParsed) {

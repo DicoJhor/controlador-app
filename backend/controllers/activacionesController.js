@@ -1,4 +1,5 @@
 const db = require("../config/db")
+const { moverYGuardarFotos } = require("../helpers/fotos")
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -166,7 +167,13 @@ exports.create = async (req, res) => {
     const activacion_id = result.insertId
 
     // ── Guardar hasta 5 fotos ──────────────────────────────────────────────
-    await guardarFotos(conn, "activacion", activacion_id, req.files || [])
+    await moverYGuardarFotos(conn, {           // ✅ CAMBIAR
+      tipo:        "activacion",
+      registro_id: activacion_id,
+      sede_id:     req.user.sede_id,
+      cliente:     cliente,
+      archivos:    req.files || [],
+    })
 
     // ── Registrar materiales normales y consumo ────────────────────────────
     for (const item of itemsParsed) {
@@ -255,5 +262,44 @@ exports.getAllAdmin = async (req, res) => {
   } catch (err) {
     console.error("❌ Error getAllAdmin activaciones:", err.message)
     res.status(500).json({ message: "Error al obtener activaciones", error: err.message })
+  }
+}
+
+// ── Buscar cliente existente ───────────────────────────────────────────────
+
+exports.buscarCliente = async (req, res) => {
+  try {
+    const { q } = req.query
+    if (!q || q.trim().length < 2)
+      return res.status(400).json({ message: "Ingresá al menos 2 caracteres" })
+
+    const sede_id = req.user.sede_id
+
+    const [rows] = await db.query(`
+      SELECT cliente, direccion,
+            o.id AS onu_id, o.codigo_pon, o.producto_id,
+            p.nombre AS modelo_onu
+      FROM activaciones a
+      LEFT JOIN onus o ON o.activacion_id = a.id
+      LEFT JOIN productos p ON p.id = o.producto_id
+      JOIN usuarios u ON u.id = a.tecnico_id
+      WHERE u.sede_id = ? AND a.cliente LIKE ?
+
+      UNION
+
+      SELECT cliente, direccion,
+            NULL AS onu_id, NULL AS codigo_pon, NULL AS producto_id,
+            NULL AS modelo_onu
+      FROM averias av
+      JOIN usuarios u ON u.id = av.tecnico_id
+      WHERE u.sede_id = ? AND av.cliente LIKE ?
+
+      ORDER BY cliente ASC
+      LIMIT 10
+    `, [sede_id, `%${q}%`, sede_id, `%${q}%`])
+    res.json(rows)
+  } catch (err) {
+    console.error("❌ buscarCliente:", err.message)
+    res.status(500).json({ message: "Error al buscar cliente", error: err.message })
   }
 }

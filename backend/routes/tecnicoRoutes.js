@@ -8,7 +8,7 @@ const {
 const {
   getMisRecojos, confirmarTecnico
 } = require("../controllers/recojosController")
-const { getMias, create } = require("../controllers/activacionesController")
+const { getMias, create, buscarCliente } = require("../controllers/activacionesController")
 const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
 const upload         = require("../middleware/uploadMiddleware")
@@ -17,6 +17,7 @@ router.get("/inventario",       verificarToken, verificarRol("tecnico"), getMiIn
 router.get("/historial",        verificarToken, verificarRol("tecnico"), getMiHistorial)
 router.get("/catalogo-onus",    verificarToken, verificarRol("tecnico"), getCatalogoOnus)
 router.post("/salida",          verificarToken, verificarRol("tecnico"), registrarSalida)
+router.get("/buscar-cliente", verificarToken, verificarRol("tecnico"), buscarCliente)
 
 router.post("/salida-multiple", verificarToken, verificarRol("tecnico"),
   upload.array("fotos", 5), registrarSalidaMultiple)

@@ -262,9 +262,28 @@ export default function TecRecojos() {
   const [lastCodigo, setLastCodigo] = useState(null);
 
   useEffect(() => {
-    tecnicoService.getMisRecojos()
-      .then(data => { setOrdenes(data); setLoading(false); })
-      .catch(() => { setError("No se pudieron cargar los recojos"); setLoading(false); });
+    const cargar = async () => {
+      try {
+        if (navigator.onLine) {
+          const data = await tecnicoService.getMisRecojos();
+          setOrdenes(data);
+          // Cachear en IndexedDB
+          await db.recojos.clear();
+          await db.recojos.bulkAdd(data);
+        } else {
+          const data = await db.recojos.toArray();
+          setOrdenes(data);
+        }
+      } catch {
+        // Si la API falla, caer a cache
+        const data = await db.recojos.toArray();
+        setOrdenes(data);
+        if (data.length === 0) setError("No se pudieron cargar los recojos");
+      } finally {
+        setLoading(false);
+      }
+    };
+    cargar();
   }, []);
 
   const grupos     = agruparOrdenes(ordenes);
@@ -310,32 +329,73 @@ export default function TecRecojos() {
     setSaving(true);
     try {
       const primerItem = selected.items.find(i => i.estado === "pendiente");
-      const fd = new FormData();
-      if (comentario) fd.append("comentario", comentario);
-      fotos.forEach(f => fd.append("fotos", f.file));
-
-      // Construir array de items con producto_id y codigo_pon
       const itemsArr = selected.items.map(item => ({
         id:          item.id,
         producto_id: itemsData[item.id]?.producto_id || null,
         codigo_pon:  itemsData[item.id]?.codigo_pon  || item.codigo_pon || null,
       }));
-      fd.append("items", JSON.stringify(itemsArr));
 
-      const res = await tecnicoService.confirmarRecojo(primerItem.id, fd);
+      if (navigator.onLine) {
+        // ── Online: enviar directo ──────────────────────────────────────
+        const fd = new FormData();
+        if (comentario) fd.append("comentario", comentario);
+        fotos.forEach(f => fd.append("fotos", f.file));
+        fd.append("items", JSON.stringify(itemsArr));
 
-      setOrdenes(prev => prev.map(o =>
-        selected.items.find(i => i.id === o.id)
-          ? {
-              ...o,
-              estado:     "recogido",
-              comentario,
-              codigo:     res?.codigo,
-              codigo_pon: itemsData[o.id]?.codigo_pon || o.codigo_pon,
-            }
-          : o
-      ));
-      setLastCodigo(res?.codigo);
+        const res = await tecnicoService.confirmarRecojo(primerItem.id, fd);
+
+        // Actualizar estado local y cache
+        const ordenesActualizadas = ordenes.map(o =>
+          selected.items.find(i => i.id === o.id)
+            ? { ...o, estado: "recogido", comentario, codigo: res?.codigo,
+                codigo_pon: itemsData[o.id]?.codigo_pon || o.codigo_pon }
+            : o
+        );
+        setOrdenes(ordenesActualizadas);
+        await db.recojos.clear();
+        await db.recojos.bulkAdd(ordenesActualizadas);
+
+        setLastCodigo(res?.codigo);
+
+      } else {
+        // ── Offline: guardar en IndexedDB ───────────────────────────────
+        const payload = {
+          comentario: comentario || "",
+          items:      JSON.stringify(itemsArr),
+        };
+        const localId = await db.recojos_pendientes.add({
+          primerItemId: primerItem.id,
+          grupo_orden:  selected.grupo_orden,
+          payload,
+          syncStatus:   'pending',
+          creadoEn:     new Date().toISOString(),
+        });
+
+        // Guardar fotos como base64
+        for (const foto of fotos) {
+          const base64 = await fileToBase64(foto.file);
+          await db.fotos_pendientes.add({
+            salidaLocalId: localId,
+            base64,
+            filename: foto.file.name,
+            mime:     foto.file.type,
+          });
+        }
+
+        // Actualizar estado local y cache para que se vea como "recogido" visualmente
+        const ordenesActualizadas = ordenes.map(o =>
+          selected.items.find(i => i.id === o.id)
+            ? { ...o, estado: "recogido", comentario,
+                codigo_pon: itemsData[o.id]?.codigo_pon || o.codigo_pon }
+            : o
+        );
+        setOrdenes(ordenesActualizadas);
+        await db.recojos.clear();
+        await db.recojos.bulkAdd(ordenesActualizadas);
+
+        setLastCodigo("OFFLINE-GUARDADO");
+      }
+
       setSelected(null);
     } catch (err) {
       alert(err.message);
@@ -354,10 +414,18 @@ export default function TecRecojos() {
         <div className="alert alert-success" style={{ marginBottom: 16, display: "flex", gap: 10, alignItems: "center" }}>
           <Icon d={IC.check} size={16} color="var(--success)" />
           <div>
-            <strong>Recojo confirmado</strong>
-            <div style={{ fontSize: 13, marginTop: 2 }}>
-              Código: <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{lastCodigo}</span>
-            </div>
+            <strong>
+              {lastCodigo === "OFFLINE-GUARDADO" ? "Recojo guardado offline" : "Recojo confirmado"}
+            </strong>
+            {lastCodigo === "OFFLINE-GUARDADO" ? (
+              <div style={{ fontSize: 13, marginTop: 2, color: "var(--text-muted)" }}>
+                Se subirá automáticamente cuando haya internet
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, marginTop: 2 }}>
+                Código: <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{lastCodigo}</span>
+              </div>
+            )}
           </div>
         </div>
       )}

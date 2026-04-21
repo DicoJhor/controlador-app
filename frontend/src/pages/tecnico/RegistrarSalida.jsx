@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import tecnicoService from "../../services/tecnicoService";
 import onuService from "../../services/onuService";
 import { db } from "../../db/localDB";
@@ -25,6 +25,7 @@ const IC = {
   camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z M12 17a4 4 0 100-8 4 4 0 000 8",
   tag:    "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z M7 7h.01",
   swap:   "M7 16V4m0 0L3 8m4-4l4 4 M17 8v12m0 0l4-4m-4 4l-4-4",
+  search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
 };
 
 // ── Fotos múltiples ────────────────────────────────────────────────────────
@@ -256,6 +257,102 @@ function OnuRecogidaPanel({ catalogoOnus, onuRecogida, onChange }) {
   );
 }
 
+// ── Buscador de cliente existente ─────────────────────────────────────────
+function BuscadorCliente({ onSeleccionar }) {
+  const [query,      setQuery]      = useState("")
+  const [resultados, setResultados] = useState([])
+  const [buscando,   setBuscando]   = useState(false)
+  const [abierto,    setAbierto]    = useState(false)
+  const timerRef = useRef(null)
+
+  const buscar = (val) => {
+    setQuery(val)
+    setAbierto(true)
+    clearTimeout(timerRef.current)
+    if (val.trim().length < 2) { setResultados([]); return }
+    timerRef.current = setTimeout(async () => {
+      setBuscando(true)
+      try {
+        const data = await tecnicoService.buscarCliente(val.trim())
+        setResultados(Array.isArray(data) ? data : [])
+      } catch {
+        setResultados([])
+      } finally {
+        setBuscando(false)
+      }
+    }, 350)
+  }
+
+  const seleccionar = (r) => {
+    onSeleccionar(r)
+    setQuery(r.cliente)
+    setAbierto(false)
+    setResultados([])
+  }
+
+  return (
+    <div style={{ position: "relative", marginBottom: 16 }}>
+      <label className="form-label">Buscar cliente registrado</label>
+      <div style={{ position: "relative" }}>
+        <input
+          className="form-input"
+          placeholder="Escribí el nombre del cliente..."
+          value={query}
+          onChange={e => buscar(e.target.value)}
+          onFocus={() => query.trim().length >= 2 && setAbierto(true)}
+          style={{ fontSize: 14, paddingLeft: 36 }}
+        />
+        <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}>
+          <Icon d={IC.search} size={15} color="var(--text-muted)" />
+        </span>
+      </div>
+
+      {abierto && (query.trim().length >= 2) && (
+        <>
+          <div style={{ position: "fixed", inset: 0, zIndex: 40 }}
+            onClick={() => setAbierto(false)} />
+          <div style={{
+            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50,
+            background: "var(--card-bg, #fff)", border: "1px solid var(--border)",
+            borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.14)", overflow: "hidden",
+          }}>
+            {buscando ? (
+              <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-muted)" }}>
+                Buscando...
+              </div>
+            ) : resultados.length === 0 ? (
+              <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-muted)" }}>
+                Sin resultados — completá los datos manualmente
+              </div>
+            ) : resultados.map((r, i) => (
+              <div key={i}
+                onClick={() => seleccionar(r)}
+                style={{
+                  padding: "10px 14px", cursor: "pointer", fontSize: 13,
+                  borderBottom: "1px solid var(--border)",
+                  transition: "background 0.1s",
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+              >
+                <div style={{ fontWeight: 600 }}>{r.cliente}</div>
+                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                  {r.direccion}
+                  {r.codigo_pon && (
+                    <span style={{ marginLeft: 8, fontFamily: "monospace", color: "var(--primary)" }}>
+                      ONU: {r.codigo_pon}
+                    </span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Formularios vacíos ─────────────────────────────────────────────────────
 const emptyAveriaForm = { cliente: "", direccion: "", comentario: "", items: [] };
 const emptyActivForm  = { cliente: "", direccion: "", comentario: "", items: [] };
@@ -370,10 +467,9 @@ export default function TecRegistrarSalida() {
         }
       }
     }
-    if (tieneOnu(averiaForm.items)) {
       if (!averiaForm.cliente.trim())   e.cliente   = "Ingresá el nombre del cliente";
       if (!averiaForm.direccion.trim()) e.direccion = "Ingresá la dirección";
-    }
+    
     // Validar ONU recogida si es cambio de ONU
     if (tipoAveria === "cambio_onu") {
       if (!onuRecogida.producto_id) e.onu_recogida_producto = "Seleccioná el modelo de la ONU recogida";
@@ -399,11 +495,9 @@ export default function TecRegistrarSalida() {
         });
         fd.append("items", JSON.stringify(itemsNormales));
         const onuId = getOnuId(averiaForm.items);
-        if (onuId) {
-          fd.append("onu_id",    onuId);
+        if (onuId) fd.append("onu_id", onuId);
           fd.append("cliente",   averiaForm.cliente);
           fd.append("direccion", averiaForm.direccion);
-        }
         if (tipoAveria === "cambio_onu") {
           fd.append("onu_recogida_producto_id", onuRecogida.producto_id);
           fd.append("onu_recogida_codigo_pon",  onuRecogida.codigo_pon.trim());
@@ -420,11 +514,9 @@ export default function TecRegistrarSalida() {
         const payload = {
           comentario: averiaForm.comentario || "",
           items:      JSON.stringify(itemsNormales),
-          ...(onuId && {
-            onu_id:    onuId,
+
             cliente:   averiaForm.cliente,
             direccion: averiaForm.direccion,
-          }),
           ...(tipoAveria === "cambio_onu" && {
             onu_recogida_producto_id: onuRecogida.producto_id,
             onu_recogida_codigo_pon:  onuRecogida.codigo_pon.trim(),
@@ -625,6 +717,23 @@ export default function TecRegistrarSalida() {
             </div>
           </div>
 
+          <BuscadorCliente
+            onSeleccionar={(r) => {
+              setAveriaForm(p => ({
+                ...p,
+                cliente:   r.cliente   || p.cliente,
+                direccion: r.direccion || p.direccion,
+              }))
+              // Si es cambio de ONU y el cliente tiene ONU registrada, pre-rellenar
+              if (tipoAveria === "cambio_onu" && r.onu_id) {
+                setOnuRecogida({
+                  producto_id: r.producto_id ? String(r.producto_id) : "",
+                  codigo_pon:  r.codigo_pon  || "",
+                })
+              }
+            }}
+          />
+
           <div className="form-group">
             <label className="form-label">Materiales utilizados *</label>
             <ItemSelector
@@ -638,8 +747,6 @@ export default function TecRegistrarSalida() {
             )}
           </div>
 
-          {tieneOnu(averiaForm.items) && (
-            <>
               <div className="form-group">
                 <label className="form-label">Cliente *</label>
                 <input
@@ -668,8 +775,6 @@ export default function TecRegistrarSalida() {
                 />
                 {errorsAveria.direccion && <div className="form-error">{errorsAveria.direccion}</div>}
               </div>
-            </>
-          )}
 
           {/* ONU recogida — solo si tipo es cambio_onu */}
           {tipoAveria === "cambio_onu" && (
@@ -737,6 +842,16 @@ export default function TecRegistrarSalida() {
             />
             {errorsActiv.cliente && <div className="form-error">{errorsActiv.cliente}</div>}
           </div>
+
+          <BuscadorCliente
+            onSeleccionar={(r) => {
+              setActivForm(p => ({
+                ...p,
+                cliente:   r.cliente   || p.cliente,
+                direccion: r.direccion || p.direccion,
+              }))
+            }}
+          />
 
           <div className="form-group">
             <label className="form-label">Dirección *</label>

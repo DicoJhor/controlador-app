@@ -13,6 +13,7 @@ const tecnicoService = {
   getAveriasAdmin:         (sede_id) => api.get(`/tecnico/averias/admin?sede_id=${sede_id}`),
   getRecojosControlador:   () => api.get("/tecnico/recojos/controlador"),
   getCatalogoOnus: () => api.get("/tecnico/catalogo-onus"),
+  buscarCliente: (q) => api.get(`/tecnico/buscar-cliente?q=${encodeURIComponent(q)}`),
 }
 
 export default tecnicoService

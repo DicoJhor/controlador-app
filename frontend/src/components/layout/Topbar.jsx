@@ -2,6 +2,8 @@ import { useLocation } from "react-router-dom";
 import { useAuth } from "../../hooks/useAuth";
 import { ROLES } from "../../utils/constants";
 import "./Topbar.css";
+import { useOnlineStatus } from "../../hooks/useOnlineStatus";
+import SyncBadge from "../ui/SyncBadge";
 
 function Icon({ d, size = 17 }) {
   return (
@@ -49,6 +51,7 @@ const roleLabel = {
 export default function Topbar({ onMenuClick }) {
   const { user, role } = useAuth();
   const { pathname } = useLocation();
+  const online = useOnlineStatus();
 
   const title = pageTitles[pathname] ?? "Enet Fiber Perú";
   const rl    = roleLabel[role] ?? {};
@@ -73,6 +76,9 @@ export default function Topbar({ onMenuClick }) {
 
       {/* Derecha: notificaciones + usuario + avatar */}
       <div style={styles.right}>
+        {/* Badge offline — solo visible para técnicos */}
+        {role === ROLES.TECNICO && <SyncBadge />}
+
         <button style={styles.notifBtn} title="Notificaciones">
           <Icon d={IC.bell} size={17} />
           <span style={styles.notifDot} />

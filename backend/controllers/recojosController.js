@@ -1,4 +1,5 @@
 const db = require("../config/db")
+const { moverYGuardarFotos } = require("../helpers/fotos")
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -207,7 +208,13 @@ exports.confirmarTecnico = async (req, res) => {
     }
 
     // Fotos asociadas al primer item del grupo
-    await guardarFotos(conn, "recojo", pendientes[0].id, req.files || [])
+    await moverYGuardarFotos(conn, {           // ✅ CAMBIAR
+      tipo:        "recojo",
+      registro_id: pendientes[0].id,
+      sede_id:     sede_id,
+      cliente:     pendientes[0].cliente,
+      archivos:    req.files || [],
+    })
 
     await conn.commit()
     res.json({ message: "Recojo confirmado", codigo, grupo_orden: grupo })

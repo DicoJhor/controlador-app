@@ -33,6 +33,7 @@ import TecDashboard       from "../pages/tecnico/Dashboard";
 import TecRegistrarSalida from "../pages/tecnico/RegistrarSalida";
 import TecHistorial       from "../pages/tecnico/Historial";
 import TecRecojos   from "../pages/tecnico/Recojos";
+import TecLayout          from "../components/layout/TecLayout";
 
 
 /**
@@ -90,7 +91,7 @@ export default function AppRouter() {
 
         {/* ── Técnico ── */}
         <Route element={<ProtectedRoute allowedRoles={[ROLES.TECNICO]} />}>
-          <Route element={<MainLayout />}>
+          <Route element={<TecLayout />}>
             <Route path="/tecnico/dashboard"        element={<TecDashboard />} />
             <Route path="/tecnico/registrar-salida" element={<TecRegistrarSalida />} />
             <Route path="/tecnico/historial"        element={<TecHistorial />} />
