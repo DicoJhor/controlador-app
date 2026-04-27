@@ -1,11 +1,12 @@
-import { useState, useEffect, useRef } from "react";
-import tecnicoService from "../../services/tecnicoService";
-import onuService from "../../services/onuService";
-import { db } from "../../db/localDB";
+import { useState, useEffect } from "react";
+import tecnicoService   from "../../services/tecnicoService";
+import onuService       from "../../services/onuService";
+import { db }           from "../../db/localDB";
 import { fileToBase64 } from "../../services/syncService";
 import { useOnlineStatus } from "../../hooks/useOnlineStatus";
+import TecConfigurarONU from "./TecConfigurarONU";
 
-
+/* ─── Iconos ──────────────────────────────────────────────────────────────── */
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -14,77 +15,94 @@ function Icon({ d, size = 16, color = "currentColor" }) {
     </svg>
   );
 }
-
 const IC = {
-  wifi:   "M5 12.55a11 11 0 0114.08 0 M1.42 9a16 16 0 0121.16 0 M8.53 16.11a6 6 0 016.95 0 M12 20h.01",
-  wrench: "M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z",
-  check:  "M20 6L9 17l-5-5",
-  plus:   "M12 5v14 M5 12h14",
-  trash:  "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
-  x:      "M18 6L6 18 M6 6l12 12",
-  camera: "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z M12 17a4 4 0 100-8 4 4 0 000 8",
-  tag:    "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z M7 7h.01",
-  swap:   "M7 16V4m0 0L3 8m4-4l4 4 M17 8v12m0 0l4-4m-4 4l-4-4",
-  search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
+  wifi:      "M5 12.55a11 11 0 0114.08 0 M1.42 9a16 16 0 0121.16 0 M8.53 16.11a6 6 0 016.95 0 M12 20h.01",
+  wrench:    "M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z",
+  check:     "M20 6L9 17l-5-5",
+  plus:      "M12 5v14 M5 12h14",
+  trash:     "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+  x:         "M18 6L6 18 M6 6l12 12",
+  camera:    "M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z M12 17a4 4 0 100-8 4 4 0 000 8",
+  tag:       "M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z M7 7h.01",
+  swap:      "M7 16V4m0 0L3 8m4-4l4 4 M17 8v12m0 0l4-4m-4 4l-4-4",
+  search:    "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
+  arrowLeft: "M19 12H5 M12 19l-7-7 7-7",
+  refresh:   "M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0114.85-3.36L23 10 M1 14l4.64 4.36A9 9 0 0020.49 15",
+  mapPin:    "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 7a3 3 0 100 6 3 3 0 000-6",
+  repeat:    "M17 1l4 4-4 4 M3 11V9a4 4 0 014-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 01-4 4H3",
+  list:      "M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01",
+  server:    "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-.99l7-3 7 3c.6.27 1 .86 1 1.5v6z",
 };
 
-// ── Fotos múltiples ────────────────────────────────────────────────────────
+/* ─── Helpers tipo de servicio ─────────────────────────────────────────────── */
+function clasificarServicio(s = "") {
+  const u = s.toUpperCase();
+  if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia", tipoAveria: "cambio_onu" };
+  if (u.includes("AVERIA"))           return { tab: "averia", tipoAveria: "comun" };
+  return { tab: "activacion", tipoAveria: null };
+}
+
+function labelServicio(s = "") {
+  const u = s.toUpperCase();
+  if (u.includes("CAMBIO DE EQUIPO")) return "Cambio de equipo";
+  if (u.includes("INSTALACION"))      return "Instalación";
+  if (u.includes("AVERIA"))           return "Avería";
+  if (u.includes("RECONEXION"))       return "Reconexión";
+  return s;
+}
+
+function badgeStyle(s = "") {
+  const u = s.toUpperCase();
+  if (u.includes("CAMBIO DE EQUIPO")) return { bg: "#fff3cd", color: "#856404", border: "#ffc107", icon: IC.swap   };
+  if (u.includes("INSTALACION"))      return { bg: "#d1e7dd", color: "#0a3622", border: "#198754", icon: IC.wifi   };
+  if (u.includes("AVERIA"))           return { bg: "#f8d7da", color: "#842029", border: "#dc3545", icon: IC.wrench };
+  if (u.includes("RECONEXION"))       return { bg: "#cfe2ff", color: "#084298", border: "#0d6efd", icon: IC.repeat };
+  return { bg: "var(--hover)", color: "var(--text)", border: "var(--border)", icon: IC.list };
+}
+
+/* ─── MultiPhotoUploader ───────────────────────────────────────────────────── */
 function MultiPhotoUploader({ fotos, onChange, maxFotos = 5 }) {
   const handleAdd = (e) => {
     const files  = Array.from(e.target.files);
-    const libres = maxFotos - fotos.length;
-    const nuevas = files.slice(0, libres).map(f => ({
-      file: f, preview: URL.createObjectURL(f),
-    }));
+    const nuevas = files.slice(0, maxFotos - fotos.length)
+      .map(f => ({ file: f, preview: URL.createObjectURL(f) }));
     onChange([...fotos, ...nuevas]);
     e.target.value = "";
   };
-
   return (
     <div>
-      <div style={mps.grid}>
-        {fotos.map((f, idx) => (
-          <div key={idx} style={mps.thumb}>
-            <img src={f.preview} alt="" style={mps.img} />
-            <button type="button" style={mps.removeBtn}
-              onClick={() => onChange(fotos.filter((_, i) => i !== idx))}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(80px,1fr))", gap: 8 }}>
+        {fotos.map((f, i) => (
+          <div key={i} style={{ position: "relative", borderRadius: 8, overflow: "hidden", aspectRatio: "1", background: "var(--hover)" }}>
+            <img src={f.preview} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }} />
+            <button type="button"
+              style={{ position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 }}
+              onClick={() => onChange(fotos.filter((_, j) => j !== i))}>
               <Icon d={IC.x} size={11} color="white" />
             </button>
           </div>
         ))}
         {fotos.length < maxFotos && (
-          <label style={mps.addBtn}>
+          <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", aspectRatio: "1", borderRadius: 8, border: "1.5px dashed var(--border)", cursor: "pointer", background: "var(--hover)", minHeight: 80 }}>
             <Icon d={IC.camera} size={22} color="var(--text-muted)" />
             <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
               {fotos.length === 0 ? "Agregar foto" : "Más"}
             </span>
-            <input type="file" accept="image/jpeg,image/png,image/webp" multiple
-              style={{ display: "none" }} onChange={handleAdd} />
+            <input type="file" accept="image/jpeg,image/png,image/webp" multiple style={{ display: "none" }} onChange={handleAdd} />
           </label>
         )}
       </div>
-      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>
-        {fotos.length}/{maxFotos} fotos
-      </div>
+      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6 }}>{fotos.length}/{maxFotos} fotos</div>
     </div>
   );
 }
 
-const mps = {
-  grid:      { display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 8 },
-  thumb:     { position: "relative", borderRadius: 8, overflow: "hidden", aspectRatio: "1", background: "var(--hover)" },
-  img:       { width: "100%", height: "100%", objectFit: "cover", display: "block" },
-  removeBtn: { position: "absolute", top: 4, right: 4, width: 22, height: 22, borderRadius: "50%", background: "rgba(0,0,0,.6)", border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0 },
-  addBtn:    { display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", aspectRatio: "1", borderRadius: 8, border: "1.5px dashed var(--border)", cursor: "pointer", background: "var(--hover)", minHeight: 80 },
-};
-
-// ── Selector de materiales ─────────────────────────────────────────────────
+/* ─── ItemSelector ─────────────────────────────────────────────────────────── */
 function ItemSelector({ inventario, misOnus, items, onChange }) {
   const yaAgregados = items.map(i => String(i.producto_id));
-
-  const agregarItem = () => onChange([...items, { producto_id: "", cantidad: "", onu_id: null }]);
-  const quitarItem  = (idx) => onChange(items.filter((_, i) => i !== idx));
-  const updateItem  = (idx, key, value) =>
+  const add    = () => onChange([...items, { producto_id: "", cantidad: "", onu_id: null }]);
+  const remove = (idx) => onChange(items.filter((_, i) => i !== idx));
+  const update = (idx, key, value) =>
     onChange(items.map((item, i) => {
       if (i !== idx) return item;
       if (key === "producto_id") return { ...item, [key]: value, onu_id: null, cantidad: "" };
@@ -99,101 +117,68 @@ function ItemSelector({ inventario, misOnus, items, onChange }) {
         </div>
       )}
       {items.map((item, idx) => {
-        const prodInfo        = inventario.find(i => String(i.producto_id) === String(item.producto_id));
-        const isMedible       = prodInfo?.es_medible;
-        const esOnu           = prodInfo?.categoria === "onu";
-        const onusDelProducto = misOnus.filter(o => String(o.producto_id) === String(item.producto_id));
-
+        const prod  = inventario.find(i => String(i.producto_id) === String(item.producto_id));
+        const esOnu = prod?.categoria === "onu";
+        const onus  = misOnus.filter(o => String(o.producto_id) === String(item.producto_id));
         return (
           <div key={idx} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
               <div style={{ flex: 2 }}>
                 <select className="form-input" value={item.producto_id}
-                  onChange={e => updateItem(idx, "producto_id", e.target.value)}
-                  style={{ fontSize: 14 }}>
+                  onChange={e => update(idx, "producto_id", e.target.value)} style={{ fontSize: 14 }}>
                   <option value="">Seleccionar ítem...</option>
                   {inventario.map(i => (
                     <option key={i.producto_id} value={i.producto_id}
-                      disabled={
-                        (yaAgregados.includes(String(i.producto_id)) &&
-                          String(i.producto_id) !== String(item.producto_id)) ||
-                        i.disponible <= 0
-                      }>
+                      disabled={(yaAgregados.includes(String(i.producto_id)) && String(i.producto_id) !== String(item.producto_id)) || i.disponible <= 0}>
                       {i.nombre} — disp: {i.disponible} {i.es_medible ? "m" : i.unidad}
                     </option>
                   ))}
                 </select>
               </div>
-
               {!esOnu && (
                 <div style={{ flex: 1 }}>
                   <input className="form-input" type="number" min="0.01"
-                    step={isMedible ? "0.01" : "1"}
-                    placeholder={isMedible ? "Ej: 2.5" : "Cant."}
-                    value={item.cantidad}
-                    max={prodInfo?.disponible}
-                    onChange={e => updateItem(idx, "cantidad", e.target.value)}
-                    style={{ fontSize: 14 }} />
-                  {prodInfo && (
+                    step={prod?.es_medible ? "0.01" : "1"}
+                    placeholder={prod?.es_medible ? "Ej: 2.5" : "Cant."}
+                    value={item.cantidad} max={prod?.disponible}
+                    onChange={e => update(idx, "cantidad", e.target.value)} style={{ fontSize: 14 }} />
+                  {prod && (
                     <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                      {isMedible ? "metros" : prodInfo.unidad} · máx {prodInfo.disponible}
+                      {prod.es_medible ? "metros" : prod.unidad} · máx {prod.disponible}
                     </div>
                   )}
                 </div>
               )}
-
               <button className="btn btn-danger-outline btn-sm btn-icon"
-                onClick={() => quitarItem(idx)} type="button"
-                style={{ marginTop: 2, minWidth: 36, minHeight: 36 }}>
+                onClick={() => remove(idx)} type="button" style={{ marginTop: 2, minWidth: 36, minHeight: 36 }}>
                 <Icon d={IC.trash} size={13} />
               </button>
             </div>
 
             {esOnu && item.producto_id && (
-              <div style={{
-                marginTop: 8, padding: "10px 12px",
-                background: "var(--hover)", borderRadius: 8,
-                border: `1px solid ${item.onu_id ? "var(--primary)" : "var(--border)"}`,
-              }}>
-                <div style={{
-                  fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
-                  textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
-                  display: "flex", alignItems: "center", gap: 6,
-                }}>
-                  <Icon d={IC.tag} size={12} color="var(--text-muted)" />
-                  Seleccioná la ONU a usar
+              <div style={{ marginTop: 8, padding: "10px 12px", background: "var(--hover)", borderRadius: 8, border: `1px solid ${item.onu_id ? "var(--primary)" : "var(--border)"}` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Icon d={IC.tag} size={12} color="var(--text-muted)" /> Seleccioná la ONU a usar
                 </div>
-                {onusDelProducto.length === 0 ? (
-                  <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                    No tenés ONUs de este modelo asignadas
-                  </div>
-                ) : (
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {onusDelProducto.map(onu => {
-                      const sel = item.onu_id === onu.id;
-                      return (
-                        <button key={onu.id} type="button"
-                          onClick={() => updateItem(idx, "onu_id", sel ? null : onu.id)}
-                          style={{
-                            padding: "5px 12px", borderRadius: 6,
-                            fontSize: 12, fontFamily: "monospace",
-                            cursor: "pointer", fontWeight: 600, border: "1px solid",
-                            borderColor: sel ? "var(--primary)" : "var(--border)",
-                            background:  sel ? "var(--primary)" : "white",
-                            color:       sel ? "white" : "var(--text)",
-                            transition: "all .15s",
-                          }}>
-                          {onu.codigo_pon}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                {onus.length === 0
+                  ? <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>No tenés ONUs de este modelo asignadas</div>
+                  : <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {onus.map(onu => {
+                        const sel = item.onu_id === onu.id;
+                        return (
+                          <button key={onu.id} type="button"
+                            onClick={() => update(idx, "onu_id", sel ? null : onu.id)}
+                            style={{ padding: "5px 12px", borderRadius: 6, fontSize: 12, fontFamily: "monospace", cursor: "pointer", fontWeight: 600, border: "1px solid", borderColor: sel ? "var(--primary)" : "var(--border)", background: sel ? "var(--primary)" : "white", color: sel ? "white" : "var(--text)", transition: "all .15s" }}>
+                            {onu.codigo_pon}
+                          </button>
+                        );
+                      })}
+                    </div>
+                }
                 {item.onu_id && (
-                  <div style={{ marginTop: 8, fontSize: 12, color: "var(--primary)",
-                    fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ marginTop: 8, fontSize: 12, color: "var(--primary)", fontWeight: 600, display: "flex", alignItems: "center", gap: 5 }}>
                     <Icon d={IC.check} size={12} color="var(--primary)" />
-                    ONU seleccionada: {onusDelProducto.find(o => o.id === item.onu_id)?.codigo_pon}
+                    ONU: {onus.find(o => o.id === item.onu_id)?.codigo_pon}
                   </div>
                 )}
               </div>
@@ -201,191 +186,86 @@ function ItemSelector({ inventario, misOnus, items, onChange }) {
           </div>
         );
       })}
-
-      <button className="btn btn-outline btn-sm" style={{ marginTop: 4 }}
-        onClick={agregarItem} type="button">
-        <Icon d={IC.plus} size={13} />
-        Agregar material
+      <button className="btn btn-outline btn-sm" style={{ marginTop: 4 }} onClick={add} type="button">
+        <Icon d={IC.plus} size={13} /> Agregar material
       </button>
     </div>
   );
 }
 
-// ── ONU Recogida selector ──────────────────────────────────────────────────
-function OnuRecogidaPanel({ catalogoOnus, onuRecogida, onChange }) {
+/* ─── OrdenCard ─────────────────────────────────────────────────────────────── */
+function OrdenCard({ orden, onSeleccionar }) {
+  const bs    = badgeStyle(orden.servicio);
+  const label = labelServicio(orden.servicio);
   return (
-    <div style={{
-      marginTop: 4, padding: "12px 14px",
-      background: "var(--hover)", borderRadius: 10,
-      border: "1.5px solid var(--border)",
-    }}>
-      <div style={{
-        fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
-        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10,
-        display: "flex", alignItems: "center", gap: 6,
-      }}>
-        <Icon d={IC.swap} size={12} color="var(--text-muted)" />
-        ONU recogida del cliente
+    <div onClick={() => onSeleccionar(orden)}
+      style={{ padding: "14px 16px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--card-bg,white)", cursor: "pointer", transition: "all .15s", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start" }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,.08)"; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)";  e.currentTarget.style.boxShadow = "none"; }}>
+
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: bs.bg, border: `1px solid ${bs.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon d={bs.icon} size={18} color={bs.color} />
       </div>
 
-      <div className="form-group" style={{ marginBottom: 10 }}>
-        <label className="form-label">Modelo de ONU *</label>
-        <select className="form-input"
-          value={onuRecogida.producto_id}
-          onChange={e => onChange({ ...onuRecogida, producto_id: e.target.value, codigo_pon: "" })}
-          style={{ fontSize: 14 }}>
-          <option value="">Seleccionar modelo...</option>
-          {catalogoOnus.map(p => (
-            <option key={p.id} value={p.id}>{p.nombre}</option>
-          ))}
-        </select>
-      </div>
-
-      <div className="form-group" style={{ marginBottom: 0 }}>
-        <label className="form-label">Código PON *</label>
-        <input className="form-input"
-          placeholder="Ej: ZTEG-AB123456"
-          value={onuRecogida.codigo_pon}
-          onChange={e => onChange({ ...onuRecogida, codigo_pon: e.target.value })}
-          style={{ fontSize: 14, fontFamily: "monospace" }}
-        />
-        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
-          Ingresá el código que figura en la etiqueta de la ONU recogida
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>{orden.abonado}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: bs.bg, color: bs.color, border: `1px solid ${bs.border}` }}>
+            {label}
+          </span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>
+            #{orden.nro_orden}
+          </span>
         </div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2, display: "flex", alignItems: "center", gap: 4 }}>
+          <Icon d={IC.mapPin} size={11} color="var(--text-muted)" />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{orden.direccion}</span>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace" }}>
+          {orden.nro_contrato}
+        </div>
+        {orden.observacion && (
+          <div style={{ fontSize: 12, color: "#78350f", padding: "4px 8px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, marginTop: 6 }}>
+            💬 {orden.observacion}
+          </div>
+        )}
       </div>
+
+      <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 12 }}>
+        <path d="M9 18l6-6-6-6" />
+      </svg>
     </div>
   );
 }
 
-// ── Buscador de cliente existente ─────────────────────────────────────────
-function BuscadorCliente({ onSeleccionar }) {
-  const [query,      setQuery]      = useState("")
-  const [resultados, setResultados] = useState([])
-  const [buscando,   setBuscando]   = useState(false)
-  const [abierto,    setAbierto]    = useState(false)
-  const timerRef = useRef(null)
-
-  const buscar = (val) => {
-    setQuery(val)
-    setAbierto(true)
-    clearTimeout(timerRef.current)
-    if (val.trim().length < 2) { setResultados([]); return }
-    timerRef.current = setTimeout(async () => {
-      setBuscando(true)
-      try {
-        const data = await tecnicoService.buscarCliente(val.trim())
-        setResultados(Array.isArray(data) ? data : [])
-      } catch {
-        setResultados([])
-      } finally {
-        setBuscando(false)
-      }
-    }, 350)
-  }
-
-  const seleccionar = (r) => {
-    onSeleccionar(r)
-    setQuery(r.cliente)
-    setAbierto(false)
-    setResultados([])
-  }
-
-  return (
-    <div style={{ position: "relative", marginBottom: 16 }}>
-      <label className="form-label">Buscar cliente registrado</label>
-      <div style={{ position: "relative" }}>
-        <input
-          className="form-input"
-          placeholder="Escribí el nombre del cliente..."
-          value={query}
-          onChange={e => buscar(e.target.value)}
-          onFocus={() => query.trim().length >= 2 && setAbierto(true)}
-          style={{ fontSize: 14, paddingLeft: 36 }}
-        />
-        <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}>
-          <Icon d={IC.search} size={15} color="var(--text-muted)" />
-        </span>
-      </div>
-
-      {abierto && (query.trim().length >= 2) && (
-        <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 40 }}
-            onClick={() => setAbierto(false)} />
-          <div style={{
-            position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50,
-            background: "var(--card-bg, #fff)", border: "1px solid var(--border)",
-            borderRadius: 10, boxShadow: "0 4px 20px rgba(0,0,0,0.14)", overflow: "hidden",
-          }}>
-            {buscando ? (
-              <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-muted)" }}>
-                Buscando...
-              </div>
-            ) : resultados.length === 0 ? (
-              <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-muted)" }}>
-                Sin resultados — completá los datos manualmente
-              </div>
-            ) : resultados.map((r, i) => (
-              <div key={i}
-                onClick={() => seleccionar(r)}
-                style={{
-                  padding: "10px 14px", cursor: "pointer", fontSize: 13,
-                  borderBottom: "1px solid var(--border)",
-                  transition: "background 0.1s",
-                }}
-                onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-              >
-                <div style={{ fontWeight: 600 }}>{r.cliente}</div>
-                <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                  {r.direccion}
-                  {r.codigo_pon && (
-                    <span style={{ marginLeft: 8, fontFamily: "monospace", color: "var(--primary)" }}>
-                      ONU: {r.codigo_pon}
-                    </span>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-// ── Formularios vacíos ─────────────────────────────────────────────────────
-const emptyAveriaForm = { cliente: "", direccion: "", comentario: "", items: [] };
-const emptyActivForm  = { cliente: "", direccion: "", comentario: "", items: [] };
-const emptyOnuRecogida = { producto_id: "", codigo_pon: "" };
-
-// ── Componente principal ───────────────────────────────────────────────────
+/* ─── Componente principal ─────────────────────────────────────────────────── */
 export default function TecRegistrarSalida() {
-  const [tab, setTab] = useState("averia");
-  const online = useOnlineStatus();
+  useOnlineStatus();
 
+  const [inventario,     setInventario]     = useState([]);
+  const [misOnus,        setMisOnus]        = useState([]);
+  const [catalogoOnus,   setCatalogoOnus]   = useState([]);
+  const [ordenes,        setOrdenes]        = useState([]);
+  const [loading,        setLoading]        = useState(true);
+  const [loadingOrdenes, setLoadingOrdenes] = useState(true);
 
-  const [inventario,   setInventario]   = useState([]);
-  const [misOnus,      setMisOnus]      = useState([]);
-  const [catalogoOnus, setCatalogoOnus] = useState([]);
-  const [loading,      setLoading]      = useState(true);
-  const [success,      setSuccess]      = useState(null);
+  const [ordenActual,        setOrdenActual]        = useState(null);
+  const [items,              setItems]              = useState([]);
+  const [fotos,              setFotos]              = useState([]);
+  const [comentario,         setComentario]         = useState("");
+  const [onuRecogidaPon,     setOnuRecogidaPon]     = useState("");
+  const [onuRecogidaProducto,setOnuRecogidaProducto]= useState("");
 
-  // Avería
-  const [tipoAveria,   setTipoAveria]   = useState("comun"); // "comun" | "cambio_onu"
-  const [averiaForm,   setAveriaForm]   = useState(emptyAveriaForm);
-  const [fotosAveria,  setFotosAveria]  = useState([]);
-  const [onuRecogida,  setOnuRecogida]  = useState(emptyOnuRecogida);
-  const [savingAveria, setSavingAveria] = useState(false);
-  const [errorsAveria, setErrorsAveria] = useState({});
+  const [saving,     setSaving]     = useState(false);
+  const [errors,     setErrors]     = useState({});
+  const [success,    setSuccess]    = useState(null);
+  const [busqueda,   setBusqueda]   = useState("");
+  const [filtroTipo, setFiltroTipo] = useState("todos");
+  const [vistaOnu, setVistaOnu] = useState(false);
 
-  // Activación
-  const [activForm,   setActivForm]   = useState(emptyActivForm);
-  const [fotosActiv,  setFotosActiv]  = useState([]);
-  const [savingActiv, setSavingActiv] = useState(false);
-  const [errorsActiv, setErrorsActiv] = useState({});
-
+  /* ── Carga inventario ── */
   useEffect(() => {
-    const cargar = async () => {
+    (async () => {
       try {
         if (navigator.onLine) {
           const [inv, onus, catalogo] = await Promise.all([
@@ -393,530 +273,419 @@ export default function TecRegistrarSalida() {
             onuService.getMisOnus(),
             tecnicoService.getCatalogoOnus(),
           ]);
-          setInventario(inv);
-          setMisOnus(onus);
-          setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
-          await db.inventario.clear();
-          await db.inventario.bulkAdd(inv);
-          await db.mis_onus.clear();
-          await db.mis_onus.bulkAdd(onus);
-          await db.catalogo_onus.clear();
-          await db.catalogo_onus.bulkAdd(Array.isArray(catalogo) ? catalogo : []);
+          setInventario(inv); setMisOnus(onus); setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
+          await db.inventario.clear();    await db.inventario.bulkPut(inv);
+          await db.mis_onus.clear();      await db.mis_onus.bulkPut(onus);
+          await db.catalogo_onus.clear(); await db.catalogo_onus.bulkPut(Array.isArray(catalogo) ? catalogo : []);
         } else {
-          const [inv, onus, catalogo] = await Promise.all([
-            db.inventario.toArray(),
-            db.mis_onus.toArray(),
-            db.catalogo_onus.toArray(),
-          ]);
-          setInventario(inv);
-          setMisOnus(onus);
-          setCatalogoOnus(catalogo);
+          const [inv, onus, cat] = await Promise.all([db.inventario.toArray(), db.mis_onus.toArray(), db.catalogo_onus.toArray()]);
+          setInventario(inv); setMisOnus(onus); setCatalogoOnus(cat);
         }
       } catch {
-        const [inv, onus, catalogo] = await Promise.all([
-          db.inventario.toArray(),
-          db.mis_onus.toArray(),
-          db.catalogo_onus.toArray(),
-        ]);
-        setInventario(inv);
-        setMisOnus(onus);
-        setCatalogoOnus(catalogo);
-      } finally {
-        setLoading(false);
-      }
-    };
-    cargar();
+        const [inv, onus, cat] = await Promise.all([db.inventario.toArray(), db.mis_onus.toArray(), db.catalogo_onus.toArray()]);
+        setInventario(inv); setMisOnus(onus); setCatalogoOnus(cat);
+      } finally { setLoading(false); }
+    })();
   }, []);
 
-  const recargarInventario = async () => {
-    const [inv, onus] = await Promise.all([
-      tecnicoService.getMiInventario(),
-      onuService.getMisOnus(),
-    ]);
-    setInventario(inv);
-    setMisOnus(onus);
-  };
-
-  const tieneOnu = (items) =>
-    items.some(i => {
-      const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-      return prod?.categoria === "onu";
-    });
-
-  const getOnuId = (items) => {
-    const item = items.find(i => {
-      const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-      return prod?.categoria === "onu";
-    });
-    return item?.onu_id ?? null;
-  };
-
-  // ── Validación avería ──────────────────────────────────────────────────
-  const validateAveria = () => {
-    const e = {};
-    if (averiaForm.items.length === 0) {
-      e.items = "Agregá al menos un material";
-    } else {
-      for (const item of averiaForm.items) {
-        if (!item.producto_id) { e.items = "Seleccioná un ítem en todos los materiales"; break; }
-        const prod = inventario.find(i => String(i.producto_id) === String(item.producto_id));
-        if (prod?.categoria === "onu") {
-          if (!item.onu_id) { e.items = "Seleccioná qué ONU usaste"; break; }
-        } else {
-          if (!item.cantidad || item.cantidad <= 0) { e.items = "Ingresá una cantidad válida"; break; }
-        }
-      }
-    }
-      if (!averiaForm.cliente.trim())   e.cliente   = "Ingresá el nombre del cliente";
-      if (!averiaForm.direccion.trim()) e.direccion = "Ingresá la dirección";
-    
-    // Validar ONU recogida si es cambio de ONU
-    if (tipoAveria === "cambio_onu") {
-      if (!onuRecogida.producto_id) e.onu_recogida_producto = "Seleccioná el modelo de la ONU recogida";
-      if (!onuRecogida.codigo_pon.trim()) e.onu_recogida_pon = "Ingresá el código PON de la ONU recogida";
-    }
-    return e;
-  };
-
-  // ── Submit avería ──────────────────────────────────────────────────────
-  const handleRegistrarAveria = async () => {
-    const e = validateAveria();
-    if (Object.keys(e).length > 0) { setErrorsAveria(e); return; }
-    setErrorsAveria({});
-    setSavingAveria(true);
-    // DESPUÉS:
+  /* ── Carga órdenes ── */
+  const cargarOrdenes = async () => {
+    setLoadingOrdenes(true);
     try {
       if (navigator.onLine) {
-        const fd = new FormData();
-        fd.append("comentario", averiaForm.comentario || "");
-        const itemsNormales = averiaForm.items.filter(i => {
-          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-          return prod?.categoria !== "onu";
-        });
-        fd.append("items", JSON.stringify(itemsNormales));
-        const onuId = getOnuId(averiaForm.items);
-        if (onuId) fd.append("onu_id", onuId);
-          fd.append("cliente",   averiaForm.cliente);
-          fd.append("direccion", averiaForm.direccion);
-        if (tipoAveria === "cambio_onu") {
-          fd.append("onu_recogida_producto_id", onuRecogida.producto_id);
-          fd.append("onu_recogida_codigo_pon",  onuRecogida.codigo_pon.trim());
-        }
-        fotosAveria.forEach(f => fd.append("fotos", f.file));
-        const res = await tecnicoService.registrarSalidaMultiple(fd);
-        setSuccess(`averia:${res?.codigo || ""}`);
+        // tecnicoService.getOrdenesPendientes() → GET /tecnico/ordenes-pendientes
+        const data = await tecnicoService.getOrdenesPendientes();
+        setOrdenes(Array.isArray(data) ? data : []);
+        await db.ordenes_pendientes?.clear();
+        await db.ordenes_pendientes?.bulkPut(Array.isArray(data) ? data : []);
       } else {
-        const itemsNormales = averiaForm.items.filter(i => {
-          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-          return prod?.categoria !== "onu";
-        });
-        const onuId = getOnuId(averiaForm.items);
-        const payload = {
-          comentario: averiaForm.comentario || "",
-          items:      JSON.stringify(itemsNormales),
-
-            cliente:   averiaForm.cliente,
-            direccion: averiaForm.direccion,
-          ...(tipoAveria === "cambio_onu" && {
-            onu_recogida_producto_id: onuRecogida.producto_id,
-            onu_recogida_codigo_pon:  onuRecogida.codigo_pon.trim(),
-          }),
-        };
-        const localId = await db.salidas_pendientes.add({
-          tipo: 'averia', payload,
-          syncStatus: 'pending',
-          creadoEn: new Date().toISOString(),
-        });
-        for (const foto of fotosAveria) {
-          const base64 = await fileToBase64(foto.file);
-          await db.fotos_pendientes.add({
-            salidaLocalId: localId,
-            base64, filename: foto.file.name, mime: foto.file.type,
-          });
-        }
-        for (const item of itemsNormales) {
-          const local = await db.inventario
-            .where('producto_id').equals(Number(item.producto_id)).first();
-          if (local) {
-            await db.inventario.update(local.id, {
-              disponible: local.disponible - Number(item.cantidad)
-            });
-          }
-        }
-        setSuccess("averia:OFFLINE-GUARDADO");
+        const data = await db.ordenes_pendientes?.toArray().catch(() => []) ?? [];
+        setOrdenes(data);
       }
-      // Siempre se ejecutan:
-      setAveriaForm(emptyAveriaForm);
-      setFotosAveria([]);
-      setOnuRecogida(emptyOnuRecogida);
-      setTipoAveria("comun");
-      setTimeout(() => setSuccess(null), 5000);
-      if (navigator.onLine) await recargarInventario();
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSavingAveria(false);
-    }
+    } catch {
+      const data = await db.ordenes_pendientes?.toArray().catch(() => []) ?? [];
+      setOrdenes(data);
+    } finally { setLoadingOrdenes(false); }
   };
 
-  // ── Validación activación ──────────────────────────────────────────────
-  const validateActiv = () => {
+  useEffect(() => { cargarOrdenes(); }, []);
+
+  const recargarInventario = async () => {
+    try {
+      const [inv, onus] = await Promise.all([tecnicoService.getMiInventario(), onuService.getMisOnus()]);
+      setInventario(inv); setMisOnus(onus);
+    } catch {}
+  };
+
+  /* ── Seleccionar orden ── */
+  const seleccionar = (orden) => {
+    setOrdenActual(orden);
+    setVistaOnu(false);                                    // ← nuevo
+    setItems([]); setFotos([]); setComentario("");
+    setOnuRecogidaPon(""); setOnuRecogidaProducto("");
+    setErrors({});
+  };
+    const volver = () => { setOrdenActual(null); setErrors({}); };
+
+  const clasificacion = ordenActual ? clasificarServicio(ordenActual.servicio) : null;
+  const esAveria    = clasificacion?.tab === "averia";
+  const esCambioOnu = clasificacion?.tipoAveria === "cambio_onu";
+
+  const getOnuId = (its) =>
+    its.find(i => inventario.find(p => String(p.producto_id) === String(i.producto_id))?.categoria === "onu")?.onu_id ?? null;
+
+  /* ── Validación ── */
+  const validate = () => {
     const e = {};
-    if (!activForm.cliente.trim())   e.cliente   = "Ingresá el nombre del cliente";
-    if (!activForm.direccion.trim()) e.direccion = "Ingresá la dirección";
-    for (const item of activForm.items) {
+    for (const item of items) {
       if (!item.producto_id) { e.items = "Seleccioná un ítem en todos los materiales"; break; }
       const prod = inventario.find(i => String(i.producto_id) === String(item.producto_id));
-      if (prod?.categoria === "onu" && !item.onu_id) {
-        e.items = "Seleccioná qué ONU estás instalando"; break;
-      }
+      if (prod?.categoria === "onu" && !item.onu_id) { e.items = "Seleccioná qué ONU usaste"; break; }
+      if (prod?.categoria !== "onu" && (!item.cantidad || item.cantidad <= 0)) { e.items = "Ingresá una cantidad válida"; break; }
     }
+    if (esCambioOnu && !onuRecogidaPon.trim()) e.onu_pon = "Ingresá el código PON de la ONU recogida";
     return e;
   };
 
-  // ── Submit activación ──────────────────────────────────────────────────
-  const handleRegistrarActivacion = async () => {
-    const e = validateActiv();
-    if (Object.keys(e).length > 0) { setErrorsActiv(e); return; }
-    setErrorsActiv({});
-    setSavingActiv(true);
+  /* ── Submit ── */
+  const handleRegistrar = async () => {
+    const e = validate();
+    if (Object.keys(e).length > 0) { setErrors(e); return; }
+    setErrors({});
+    setSaving(true);
     try {
+      const itemsNormales = items.filter(i =>
+        inventario.find(p => String(p.producto_id) === String(i.producto_id))?.categoria !== "onu"
+      );
+      const onuId = getOnuId(items);
+
       if (navigator.onLine) {
         const fd = new FormData();
-        fd.append("cliente",    activForm.cliente);
-        fd.append("direccion",  activForm.direccion);
-        fd.append("comentario", activForm.comentario || "");
-        const itemsNormales = activForm.items.filter(i => {
-          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-          return prod?.categoria !== "onu";
-        });
-        fd.append("items", JSON.stringify(itemsNormales));
-        const onuId = getOnuId(activForm.items);
+        fd.append("items",      JSON.stringify(itemsNormales));
+        fd.append("comentario", comentario || "");
         if (onuId) fd.append("onu_id", onuId);
-        fotosActiv.forEach(f => fd.append("fotos", f.file));
-        const res = await tecnicoService.registrarActivacion(fd);
-        setSuccess(`activacion:${res?.codigo || ""}`);
+        if (esCambioOnu) {
+          fd.append("onu_recogida_codigo_pon",  onuRecogidaPon.trim());
+          fd.append("onu_recogida_producto_id", onuRecogidaProducto || "");
+        }
+        fotos.forEach(f => fd.append("fotos", f.file));
+
+        // tecnicoService.completarOrden(id, fd) → POST /tecnico/ordenes/:id/completar
+        const res = await tecnicoService.completarOrden(ordenActual.id, fd);
+        setSuccess(res?.codigo || "OK");
       } else {
-        const itemsNormales = activForm.items.filter(i => {
-          const prod = inventario.find(p => String(p.producto_id) === String(i.producto_id));
-          return prod?.categoria !== "onu";
-        });
-        const onuId = getOnuId(activForm.items);
         const payload = {
-          cliente:    activForm.cliente,
-          direccion:  activForm.direccion,
-          comentario: activForm.comentario || "",
-          items:      JSON.stringify(itemsNormales),
+          orden_id: ordenActual.id, items: JSON.stringify(itemsNormales),
+          comentario: comentario || "",
           ...(onuId && { onu_id: onuId }),
+          ...(esCambioOnu && { onu_recogida_codigo_pon: onuRecogidaPon.trim(), onu_recogida_producto_id: onuRecogidaProducto || "" }),
         };
         const localId = await db.salidas_pendientes.add({
-          tipo: 'activacion', payload,
-          syncStatus: 'pending',
-          creadoEn: new Date().toISOString(),
+          tipo: esAveria ? "averia" : "activacion", payload,
+          syncStatus: "pending", creadoEn: new Date().toISOString(),
         });
-        for (const foto of fotosActiv) {
+        for (const foto of fotos) {
           const base64 = await fileToBase64(foto.file);
-          await db.fotos_pendientes.add({
-            salidaLocalId: localId,
-            base64, filename: foto.file.name, mime: foto.file.type,
-          });
+          await db.fotos_pendientes.add({ salidaLocalId: localId, base64, filename: foto.file.name, mime: foto.file.type });
         }
-        setSuccess("activacion:OFFLINE-GUARDADO");
+        for (const item of itemsNormales) {
+          const local = await db.inventario.where("producto_id").equals(Number(item.producto_id)).first();
+          if (local) await db.inventario.update(local.id, { disponible: local.disponible - Number(item.cantidad) });
+        }
+        setSuccess("OFFLINE");
       }
-      // Siempre se ejecutan:
-      setActivForm(emptyActivForm);
-      setFotosActiv([]);
-      setTimeout(() => setSuccess(null), 5000);
+
+      setOrdenes(prev => prev.filter(o => o.id !== ordenActual.id));
+      setOrdenActual(null);
+      setItems([]); setFotos([]); setComentario("");
+      setOnuRecogidaPon(""); setOnuRecogidaProducto("");
+      setTimeout(() => setSuccess(null), 6000);
       if (navigator.onLine) await recargarInventario();
     } catch (err) {
       alert(err.message);
-    } finally {
-      setSavingActiv(false);
-    }
+    } finally { setSaving(false); }
   };
+
+  /* ── Filtros ── */
+  const ordenesFiltradas = ordenes.filter(o => {
+    const q = busqueda.toLowerCase();
+    const matchQ = !q ||
+      o.abonado?.toLowerCase().includes(q) ||
+      o.direccion?.toLowerCase().includes(q) ||
+      o.nro_contrato?.toLowerCase().includes(q) ||
+      String(o.nro_orden).includes(q);
+    const c = clasificarServicio(o.servicio);
+    const matchT =
+      filtroTipo === "todos" ||
+      (filtroTipo === "averia"     && c.tab === "averia"  && c.tipoAveria !== "cambio_onu") ||
+      (filtroTipo === "cambio_onu" && c.tipoAveria === "cambio_onu") ||
+      (filtroTipo === "activacion" && c.tab === "activacion");
+    return matchQ && matchT;
+  });
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando...</div>;
 
-  const successTipo   = success?.split(":")?.[0];
-  const successCodigo = success?.split(":")?.[1];
-
-  return (
+  /* ══════════ LISTADO ══════════ */
+  if (!ordenActual) return (
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
 
       {success && (
         <div className="alert alert-success" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <Icon d={IC.check} size={16} color="var(--success)" />
           <div>
-            <strong>
-              {successTipo === "averia" ? "Avería" : "Activación"}{" "}
-              {successCodigo === "OFFLINE-GUARDADO" ? "guardada offline" : "registrada correctamente"}
-            </strong>
-            {successCodigo === "OFFLINE-GUARDADO" ? (
-              <div style={{ fontSize: 13, marginTop: 2, color: "var(--text-muted)" }}>
-                Se subirá automáticamente cuando haya internet
-              </div>
-            ) : successCodigo ? (
-              <div style={{ fontSize: 13, marginTop: 2 }}>
-                Código: <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{successCodigo}</span>
-              </div>
-            ) : null}
+            <strong>{success === "OFFLINE" ? "Guardado sin conexión" : "Registrado correctamente"}</strong>
+            {success === "OFFLINE"
+              ? <div style={{ fontSize: 13, marginTop: 2, color: "var(--text-muted)" }}>Se subirá cuando haya internet</div>
+              : <div style={{ fontSize: 13, marginTop: 2 }}>Código: <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{success}</span></div>
+            }
           </div>
         </div>
       )}
 
-      {/* Tabs principales */}
-      <div style={ts.tabBar}>
-        {[
-          { key: "averia",     label: "Avería",    icon: IC.wrench },
-          { key: "activacion", label: "Activación", icon: IC.wifi  },
-        ].map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            style={{
-              ...ts.tabBtn,
-              background: tab === t.key ? "white" : "transparent",
-              color:      tab === t.key ? "var(--text)" : "var(--text-muted)",
-              boxShadow:  tab === t.key ? "0 1px 3px rgba(0,0,0,.12)" : "none",
-              flex: 1,
-            }}>
-            <Icon d={t.icon} size={16} color={tab === t.key ? "var(--primary)" : "var(--text-muted)"} />
-            {t.label}
-          </button>
-        ))}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 2 }}>Servicios pendientes</div>
+        <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Seleccioná el servicio que vas a realizar</div>
       </div>
 
-      {/* ══════════ Tab Avería ══════════ */}
-      {tab === "averia" && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-header">
+      <div style={{ position: "relative", marginBottom: 10 }}>
+        <input className="form-input"
+          placeholder="Buscar por cliente, contrato, dirección u orden..."
+          value={busqueda} onChange={e => setBusqueda(e.target.value)}
+          style={{ fontSize: 14, paddingLeft: 36 }} />
+        <span style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)" }}>
+          <Icon d={IC.search} size={15} color="var(--text-muted)" />
+        </span>
+        {busqueda && (
+          <button onClick={() => setBusqueda("")}
+            style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+            <Icon d={IC.x} size={14} color="var(--text-muted)" />
+          </button>
+        )}
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {[
+          { key: "todos",      label: "Todos"         },
+          { key: "averia",     label: "Averías"       },
+          { key: "cambio_onu", label: "Cambio de ONU" },
+          { key: "activacion", label: "Instalaciones" },
+        ].map(f => (
+          <button key={f.key} type="button" onClick={() => setFiltroTipo(f.key)}
+            style={{ padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600, border: "1.5px solid", borderColor: filtroTipo === f.key ? "var(--primary)" : "var(--border)", background: filtroTipo === f.key ? "var(--primary)" : "white", color: filtroTipo === f.key ? "white" : "var(--text-muted)", cursor: "pointer", transition: "all .15s" }}>
+            {f.label}
+          </button>
+        ))}
+        <button type="button" onClick={cargarOrdenes}
+          style={{ marginLeft: "auto", padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600, border: "1.5px solid var(--border)", background: "white", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: 5 }}>
+          <Icon d={IC.refresh} size={12} /> Actualizar
+        </button>
+      </div>
+
+      {loadingOrdenes ? (
+        <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)" }}>Cargando órdenes...</div>
+      ) : ordenesFiltradas.length === 0 ? (
+        <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)" }}>
+          <Icon d={IC.list} size={32} color="var(--border)" />
+          <div style={{ marginTop: 10, fontSize: 14 }}>
+            {ordenes.length === 0
+              ? "No hay órdenes pendientes. El administrador debe cargar el Excel."
+              : "No hay resultados para esa búsqueda."}
+          </div>
+        </div>
+      ) : ordenesFiltradas.map(o => (
+        <OrdenCard key={o.id} orden={o} onSeleccionar={seleccionar} />
+      ))}
+    </div>
+  );
+  /* ══════════ FORMULARIO ══════════ */
+  if (vistaOnu) {
+    return (
+      <TecConfigurarONU
+        ordenActual={ordenActual}
+        onVolver={() => setVistaOnu(false)}
+      />
+    );
+  }
+
+  const bs    = badgeStyle(ordenActual.servicio);
+  const label = labelServicio(ordenActual.servicio);
+
+  return (
+    <>
+    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+      <button type="button" className="btn btn-outline btn-sm"
+        onClick={volver} style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+        <Icon d={IC.arrowLeft} size={14} /> Volver al listado
+      </button>
+
+      <div className="card">
+        {/* Header */}
+        <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", background: bs.bg, borderRadius: "12px 12px 0 0" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ width: 38, height: 38, borderRadius: 9, background: "white", border: `1px solid ${bs.border}`, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Icon d={bs.icon} size={17} color={bs.color} />
+            </div>
             <div>
-              <div className="card-title">Registrar avería</div>
-              <div className="card-subtitle">Materiales utilizados en la reparación</div>
+              <div style={{ fontWeight: 700, fontSize: 15, color: bs.color }}>{label} — Orden #{ordenActual.nro_orden}</div>
+              <div style={{ fontSize: 12, color: bs.color, opacity: 0.8 }}>{ordenActual.tecnologia} · {ordenActual.sector}</div>
             </div>
           </div>
+        </div>
 
-          {/* Sub-tipo avería */}
-          <div className="form-group">
-            <label className="form-label">Tipo de avería *</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              {[
-                { key: "comun",     label: "Avería común" },
-                { key: "cambio_onu", label: "Cambio de ONU" },
-              ].map(t => (
-                <button key={t.key} type="button"
-                  onClick={() => { setTipoAveria(t.key); setOnuRecogida(emptyOnuRecogida); setErrorsAveria({}); }}
-                  style={{
-                    flex: 1, padding: "10px 8px", borderRadius: 8, border: "1.5px solid",
-                    borderColor:  tipoAveria === t.key ? "var(--primary)" : "var(--border)",
-                    background:   tipoAveria === t.key ? "var(--primary)" : "white",
-                    color:        tipoAveria === t.key ? "white" : "var(--text)",
-                    fontWeight:   600, fontSize: 13, cursor: "pointer", transition: "all .15s",
-                  }}>
-                  {t.label}
-                </button>
-              ))}
-            </div>
+        {/* Datos del cliente — SOLO LECTURA */}
+        <div style={{ padding: "12px 16px", background: "var(--hover)", borderBottom: "1px solid var(--border)" }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
+            Datos del cliente
           </div>
-
-          <BuscadorCliente
-            onSeleccionar={(r) => {
-              setAveriaForm(p => ({
-                ...p,
-                cliente:   r.cliente   || p.cliente,
-                direccion: r.direccion || p.direccion,
-              }))
-              // Si es cambio de ONU y el cliente tiene ONU registrada, pre-rellenar
-              if (tipoAveria === "cambio_onu" && r.onu_id) {
-                setOnuRecogida({
-                  producto_id: r.producto_id ? String(r.producto_id) : "",
-                  codigo_pon:  r.codigo_pon  || "",
-                })
-              }
-            }}
-          />
-
-          <div className="form-group">
-            <label className="form-label">Materiales utilizados *</label>
-            <ItemSelector
-              inventario={inventario}
-              misOnus={misOnus}
-              items={averiaForm.items}
-              onChange={items => setAveriaForm(p => ({ ...p, items }))}
-            />
-            {errorsAveria.items && (
-              <div className="form-error" style={{ marginTop: 6 }}>{errorsAveria.items}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 16px" }}>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Abonado</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{ordenActual.abonado}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Doc. Identidad</div>
+              <div style={{ fontSize: 13 }}>{ordenActual.doc_identidad || "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Teléfono</div>
+              <div style={{ fontSize: 13 }}>{ordenActual.telefono || "—"}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Nº Contrato</div>
+              <div style={{ fontSize: 12, fontFamily: "monospace", fontWeight: 600, color: "var(--primary)" }}>
+                {ordenActual.nro_contrato}
+              </div>
+            </div>
+            <div style={{ gridColumn: "1/-1" }}>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Dirección</div>
+              <div style={{ fontSize: 13 }}>{ordenActual.direccion}</div>
+            </div>
+            {ordenActual.referencia && (
+              <div style={{ gridColumn: "1/-1" }}>
+                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Referencia</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{ordenActual.referencia}</div>
+              </div>
             )}
           </div>
+          {ordenActual.observacion && (
+            <div style={{ marginTop: 10, padding: "7px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, fontSize: 12, color: "#78350f" }}>
+              <span style={{ fontWeight: 700 }}>Nota: </span>{ordenActual.observacion}
+            </div>
+          )}
+        </div>
 
-              <div className="form-group">
-                <label className="form-label">Cliente *</label>
-                <input
-                  className={`form-input ${errorsAveria.cliente ? "error" : ""}`}
-                  placeholder="Nombre del cliente"
-                  value={averiaForm.cliente}
-                  onChange={e => {
-                    setAveriaForm(p => ({ ...p, cliente: e.target.value }));
-                    if (errorsAveria.cliente) setErrorsAveria(p => ({ ...p, cliente: null }));
-                  }}
-                  style={{ fontSize: 16 }}
-                />
-                {errorsAveria.cliente && <div className="form-error">{errorsAveria.cliente}</div>}
+        {/* Datos de red — solo activaciones/instalaciones */}
+        {!esAveria && (
+          <div style={{ padding: "12px 16px", background: "#f0fdf4", borderBottom: "1px solid #bbf7d0" }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              <Icon d={IC.server} size={12} color="#166534" /> Datos de red
+            </div>
+            {ordenActual.ip_local ? (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px 16px" }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "#166534" }}>IP local</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "monospace", color: "#14532d" }}>{ordenActual.ip_local}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: "#166534" }}>Máscara</div>
+                  <div style={{ fontSize: 13, fontFamily: "monospace", color: "#14532d" }}>{ordenActual.mascara || "—"}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 11, color: "#166534" }}>Gateway</div>
+                  <div style={{ fontSize: 13, fontFamily: "monospace", color: "#14532d" }}>{ordenActual.gateway || "—"}</div>
+                </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">Dirección *</label>
-                <input
-                  className={`form-input ${errorsAveria.direccion ? "error" : ""}`}
-                  placeholder="Av. Ejemplo 1234"
-                  value={averiaForm.direccion}
-                  onChange={e => {
-                    setAveriaForm(p => ({ ...p, direccion: e.target.value }));
-                    if (errorsAveria.direccion) setErrorsAveria(p => ({ ...p, direccion: null }));
-                  }}
-                  style={{ fontSize: 16 }}
-                />
-                {errorsAveria.direccion && <div className="form-error">{errorsAveria.direccion}</div>}
+            ) : (
+              <div style={{ fontSize: 12, color: "#166534", opacity: 0.7, fontStyle: "italic" }}>
+                Sin IP asignada — el administrador aún no cargó los datos de red.
               </div>
+            )}
+          </div>
+        )}
 
-          {/* ONU recogida — solo si tipo es cambio_onu */}
-          {tipoAveria === "cambio_onu" && (
-            <div className="form-group">
-              <label className="form-label">ONU recogida del cliente *</label>
-              <OnuRecogidaPanel
-                catalogoOnus={catalogoOnus}
-                onuRecogida={onuRecogida}
-                onChange={setOnuRecogida}
-              />
-              {errorsAveria.onu_recogida_producto && (
-                <div className="form-error" style={{ marginTop: 6 }}>{errorsAveria.onu_recogida_producto}</div>
-              )}
-              {errorsAveria.onu_recogida_pon && (
-                <div className="form-error" style={{ marginTop: 4 }}>{errorsAveria.onu_recogida_pon}</div>
-              )}
+
+
+        {/* Formulario */}
+        <div style={{ padding: 16 }}>
+
+          {!esAveria && ordenActual.ip_local && (
+            <div style={{ marginBottom: 16 }}>
+              <button
+                type="button"
+                className="btn btn-outline btn-full"
+                onClick={() => setVistaOnu(true)}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  gap: 8, borderColor: "var(--primary)", color: "var(--primary)",
+                  minHeight: 44,
+                }}
+              >
+                <Icon d={IC.wifi} size={15} />
+                Configurar ONU automáticamente
+              </button>
             </div>
           )}
 
           <div className="form-group">
-            <label className="form-label">Comentario <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span></label>
-            <textarea className="form-input"
-              placeholder="Ej: Puerto WAN dañado, se reemplazó ONU..."
-              rows={3}
-              value={averiaForm.comentario}
-              onChange={e => setAveriaForm(p => ({ ...p, comentario: e.target.value }))}
-            />
+            <label className="form-label">
+              Materiales utilizados{" "}
+              <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span>
+            </label>
+            <ItemSelector inventario={inventario} misOnus={misOnus} items={items} onChange={setItems} />
+            {errors.items && <div className="form-error" style={{ marginTop: 6 }}>{errors.items}</div>}
           </div>
 
-          <div className="form-group">
-            <label className="form-label">Fotos <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(hasta 5)</span></label>
-            <MultiPhotoUploader fotos={fotosAveria} onChange={setFotosAveria} />
-          </div>
-
-          <button className="btn btn-primary btn-lg btn-full"
-            onClick={handleRegistrarAveria} disabled={savingAveria}
-            style={{ marginTop: 8, minHeight: 48 }}>
-            <Icon d={IC.check} size={16} />
-            {savingAveria ? "Registrando..." : "Registrar avería"}
-          </button>
-        </div>
-      )}
-
-      {/* ══════════ Tab Activación ══════════ */}
-      {tab === "activacion" && (
-        <div className="card" style={{ marginTop: 16 }}>
-          <div className="card-header">
-            <div>
-              <div className="card-title">Nueva activación</div>
-              <div className="card-subtitle">Registrá cliente, materiales y fotos</div>
+          {esCambioOnu && (
+            <div className="form-group">
+              <label className="form-label">Código PON de la ONU recogida *</label>
+              <input className={`form-input ${errors.onu_pon ? "error" : ""}`}
+                placeholder="Ej: ZTEG-AB123456"
+                value={onuRecogidaPon}
+                onChange={e => { setOnuRecogidaPon(e.target.value); if (errors.onu_pon) setErrors(p => ({ ...p, onu_pon: null })); }}
+                style={{ fontSize: 14, fontFamily: "monospace" }}
+              />
+              {errors.onu_pon && <div className="form-error">{errors.onu_pon}</div>}
+              <div style={{ marginTop: 8 }}>
+                <label className="form-label" style={{ fontSize: 12 }}>
+                  Modelo <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(si no está registrado)</span>
+                </label>
+                <select className="form-input" value={onuRecogidaProducto}
+                  onChange={e => setOnuRecogidaProducto(e.target.value)} style={{ fontSize: 14 }}>
+                  <option value="">Sin modelo / ya registrada</option>
+                  {catalogoOnus.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+                </select>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                Código que figura en la etiqueta física de la ONU que retirás del cliente
+              </div>
             </div>
-          </div>
+          )}
 
           <div className="form-group">
-            <label className="form-label">Cliente *</label>
-            <input
-              className={`form-input ${errorsActiv.cliente ? "error" : ""}`}
-              placeholder="Nombre del cliente"
-              value={activForm.cliente}
-              onChange={e => {
-                setActivForm(p => ({ ...p, cliente: e.target.value }));
-                if (errorsActiv.cliente) setErrorsActiv(p => ({ ...p, cliente: null }));
-              }}
-              style={{ fontSize: 16 }}
-            />
-            {errorsActiv.cliente && <div className="form-error">{errorsActiv.cliente}</div>}
-          </div>
-
-          <BuscadorCliente
-            onSeleccionar={(r) => {
-              setActivForm(p => ({
-                ...p,
-                cliente:   r.cliente   || p.cliente,
-                direccion: r.direccion || p.direccion,
-              }))
-            }}
-          />
-
-          <div className="form-group">
-            <label className="form-label">Dirección *</label>
-            <input
-              className={`form-input ${errorsActiv.direccion ? "error" : ""}`}
-              placeholder="Av. Ejemplo 1234"
-              value={activForm.direccion}
-              onChange={e => {
-                setActivForm(p => ({ ...p, direccion: e.target.value }));
-                if (errorsActiv.direccion) setErrorsActiv(p => ({ ...p, direccion: null }));
-              }}
-              style={{ fontSize: 16 }}
-            />
-            {errorsActiv.direccion && <div className="form-error">{errorsActiv.direccion}</div>}
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Materiales <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span></label>
-            <ItemSelector
-              inventario={inventario}
-              misOnus={misOnus}
-              items={activForm.items}
-              onChange={items => setActivForm(p => ({ ...p, items }))}
-            />
-            {errorsActiv.items && (
-              <div className="form-error" style={{ marginTop: 6 }}>{errorsActiv.items}</div>
-            )}
-          </div>
-
-          <div className="form-group">
-            <label className="form-label">Comentario <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span></label>
+            <label className="form-label">
+              Comentario <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span>
+            </label>
             <textarea className="form-input"
-              placeholder="Observaciones del trabajo..."
-              rows={3}
-              value={activForm.comentario}
-              onChange={e => setActivForm(p => ({ ...p, comentario: e.target.value }))}
-            />
+              placeholder={esAveria ? "Ej: Puerto WAN dañado, se reemplazó ONU..." : "Observaciones del trabajo..."}
+              rows={3} value={comentario} onChange={e => setComentario(e.target.value)} />
           </div>
 
           <div className="form-group">
-            <label className="form-label">Fotos <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(hasta 5)</span></label>
-            <MultiPhotoUploader fotos={fotosActiv} onChange={setFotosActiv} />
+            <label className="form-label">
+              Fotos <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(hasta 5)</span>
+            </label>
+            <MultiPhotoUploader fotos={fotos} onChange={setFotos} />
           </div>
 
           <button className="btn btn-primary btn-lg btn-full"
-            onClick={handleRegistrarActivacion} disabled={savingActiv}
+            onClick={handleRegistrar} disabled={saving}
             style={{ marginTop: 8, minHeight: 48 }}>
             <Icon d={IC.check} size={16} />
-            {savingActiv ? "Registrando..." : "Registrar activación"}
+            {saving ? "Registrando..." : `Registrar ${label.toLowerCase()}`}
           </button>
         </div>
-      )}
+      </div>
     </div>
+    </>
   );
 }
-
-const ts = {
-  tabBar: {
-    display: "flex", gap: 4, background: "var(--hover)",
-    borderRadius: 12, padding: 4,
-  },
-  tabBtn: {
-    display: "flex", alignItems: "center", justifyContent: "center",
-    gap: 6, padding: "10px 12px", borderRadius: 9,
-    border: "none", cursor: "pointer", fontSize: 14,
-    fontWeight: 500, transition: "all .15s",
-  },
-};

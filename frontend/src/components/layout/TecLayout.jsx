@@ -21,6 +21,7 @@ const IC = {
   recycle:  "M4 2v6h6 M20 22v-6h-6 M20 11A8 8 0 004.93 7.1 M4 13a8 8 0 0015.07 3.9",
   activity: "M22 12h-4l-3 9L9 3l-3 9H2",
   logout:   "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4 M16 17l5-5-5-5 M21 12H9",
+  router: "M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
 }
 
 const pageTitles = {
@@ -28,6 +29,7 @@ const pageTitles = {
   "/tecnico/registrar-salida": "Registrar salida",
   "/tecnico/recojos":          "Recojos",
   "/tecnico/historial":        "Mi Historial",
+  "/tecnico/configurar-onu":   "Configurar ONU",
 }
 
 const tabs = [
@@ -35,6 +37,7 @@ const tabs = [
   { to: "/tecnico/registrar-salida", label: "Registrar",  icon: IC.wrench   },
   { to: "/tecnico/recojos",          label: "Recojos",    icon: IC.recycle  },
   { to: "/tecnico/historial",        label: "Historial",  icon: IC.activity },
+  { to: "/tecnico/configurar-onu",   label: "ONU",        icon: IC.router   },
 ]
 
 export default function TecLayout() {

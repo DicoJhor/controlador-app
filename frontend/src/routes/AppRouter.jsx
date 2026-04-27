@@ -17,6 +17,7 @@ import AdminUsuarios     from "../pages/admin/Usuarios";
 import AdminInventario   from "../pages/admin/Inventario";
 import AdminAuditoria    from "../pages/admin/Auditoria";
 import AdminCatalogo     from "../pages/admin/Catalogo";
+import ActivacionesRed from "../pages/admin/ActivacionesRed";
 
 // Controlador
 import CtrlDashboard   from "../pages/controlador/Dashboard";
@@ -33,6 +34,7 @@ import TecDashboard       from "../pages/tecnico/Dashboard";
 import TecRegistrarSalida from "../pages/tecnico/RegistrarSalida";
 import TecHistorial       from "../pages/tecnico/Historial";
 import TecRecojos   from "../pages/tecnico/Recojos";
+import TecConfigurarONU from "../pages/tecnico/TecConfigurarONU";
 import TecLayout          from "../components/layout/TecLayout";
 
 
@@ -72,6 +74,7 @@ export default function AppRouter() {
             <Route path="/admin/inventario" element={<AdminInventario />} />
             <Route path="/admin/catalogo"   element={<AdminCatalogo />} />
             <Route path="/admin/auditoria"  element={<AdminAuditoria />} />
+            <Route path="/admin/activaciones-red" element={<ActivacionesRed />} />
           </Route>
         </Route>
 
@@ -96,6 +99,8 @@ export default function AppRouter() {
             <Route path="/tecnico/registrar-salida" element={<TecRegistrarSalida />} />
             <Route path="/tecnico/historial"        element={<TecHistorial />} />
             <Route path="/tecnico/recojos"        element={<TecRecojos />} />
+            <Route path="/tecnico/configurar-onu" element={<TecConfigurarONU />} />
+
 
           </Route>
         </Route>

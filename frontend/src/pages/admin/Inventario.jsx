@@ -5,6 +5,7 @@ import { formatNumber } from "../../utils/formatters";
 import productosService from "../../services/productosService";
 import sedesService from "../../services/sedesService";
 import enviosService from "../../services/enviosService";
+import activosService from "../../services/activosService"; // ← AGREGAR
 import { useAuth } from "../../hooks/useAuth";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
@@ -45,6 +46,11 @@ const emptyEnvio = {
   fecha_envio: new Date().toISOString().split("T")[0],
   productos: []
 };
+
+const emptyEnvioActivo = {
+  sede_id: "", area: "NOC", producto: null, unidades: []
+};
+const emptyUnidad = { descripcion: "", nro_serie: "", estado: "operativo" };
 
 const emptyVarianteForm = {
   talla: "S", genero: "masculino",
@@ -130,6 +136,10 @@ export default function AdminInventario() {
   const [envioForm,   setEnvioForm]   = useState(emptyEnvio);
   const [envioSearch, setEnvioSearch] = useState("");
   const [envioError,  setEnvioError]  = useState("");
+
+  const [envioActivoForm,   setEnvioActivoForm]   = useState(emptyEnvioActivo);
+  const [envioActivoError,  setEnvioActivoError]  = useState("");
+  const [envioActivoSearch, setEnvioActivoSearch] = useState("");
 
   const [variantesMap,      setVariantesMap]      = useState({});
   const [expandedProduct,   setExpandedProduct]   = useState(null);
@@ -523,6 +533,37 @@ export default function AdminInventario() {
   };
 
   // ── CRUD helpers ───────────────────────────────────────
+  const handleEnviarActivo = async () => {
+    setEnvioActivoError("")
+    if (!envioActivoForm.sede_id)             return setEnvioActivoError("Seleccioná una sede destino.")
+    if (!envioActivoForm.producto)            return setEnvioActivoError("Seleccioná un producto.")
+    if (envioActivoForm.unidades.length === 0) return setEnvioActivoError("Agregá al menos una unidad.")
+
+    setSaving(true)
+    try {
+      await activosService.enviarDesdeAlmacen({
+        sede_id:     envioActivoForm.sede_id,
+        producto_id: envioActivoForm.producto.id,
+        area:        envioActivoForm.area,
+        unidades:    envioActivoForm.unidades,
+      })
+
+      setProductos(prev => prev.map(p =>
+        p.id === envioActivoForm.producto.id
+          ? { ...p, stock_total: p.stock_total - envioActivoForm.unidades.length }
+          : p
+      ))
+
+      setModal(false)
+      setEnvioActivoForm(emptyEnvioActivo)
+    } catch (err) {
+      setEnvioActivoError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // ── CRUD helpers ───────────────────────────────────────
   const openCrear  = () => {
     setForm(emptyForm);
     setSelected(null);
@@ -561,6 +602,13 @@ export default function AdminInventario() {
     setEnvioSearch("");
     setEnvioError("");
     setModal("envio");
+  };
+
+  const openEnvioActivo = () => {
+    setEnvioActivoForm(emptyEnvioActivo);
+    setEnvioActivoSearch("");
+    setEnvioActivoError("");
+    setModal("envioActivo");
   };
 
   const handleEntrada = async () => {
@@ -784,6 +832,10 @@ export default function AdminInventario() {
             <button className="btn btn-outline" onClick={openEnvio}>
               <Icon d={IC.send} size={15} />
               Enviar productos
+            </button>
+            <button className="btn btn-outline" onClick={openEnvioActivo}>
+              <Icon d={IC.box} size={15} />
+              Enviar a activos
             </button>
             <button className="btn btn-outline" onClick={openEntrada}>
               <Icon d="M5 12h14 M12 5l7 7-7 7" size={15} />
@@ -1550,6 +1602,188 @@ export default function AdminInventario() {
               <input className="form-input" type="number" min="0" placeholder="0" {...varianteField("stock_minimo")} />
             </div>
           </div>
+        </Modal>
+      )}
+
+      {/* Modal Enviar a Activos */}
+      {modal === "envioActivo" && (
+        <Modal title="Enviar productos a activos" onClose={() => setModal(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleEnviarActivo} disabled={saving}>
+                {saving ? "Enviando..." : "Confirmar envío"}
+              </button>
+            </>
+          }
+        >
+          {envioActivoError && (
+            <div className="alert alert-danger" style={{ marginBottom: 12 }}>
+              <Icon d={IC.alert} size={14} color="var(--danger)" /> {envioActivoError}
+            </div>
+          )}
+
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Sede destino *</label>
+              <select className="form-input"
+                value={envioActivoForm.sede_id}
+                onChange={e => setEnvioActivoForm(prev => ({ ...prev, sede_id: e.target.value }))}>
+                <option value="">Seleccionar sede...</option>
+                {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Área *</label>
+              <select className="form-input"
+                value={envioActivoForm.area}
+                onChange={e => setEnvioActivoForm(prev => ({ ...prev, area: e.target.value }))}>
+                <option value="NOC">NOC</option>
+                <option value="ADMINISTRACION">Administración</option>
+              </select>
+            </div>
+          </div>
+
+          {!envioActivoForm.producto ? (
+            <div className="form-group" style={{ position: "relative" }}>
+              <label className="form-label">Producto *</label>
+              <div className="search-box">
+                <Icon d={IC.search} size={15} color="var(--text-muted)" />
+                <input placeholder="Buscar producto del almacén..."
+                  value={envioActivoSearch}
+                  onChange={e => setEnvioActivoSearch(e.target.value)} />
+              </div>
+              {envioActivoSearch.length > 0 && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+                  background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 8,
+                  maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
+                  {productos.filter(p =>
+                    p.nombre.toLowerCase().includes(envioActivoSearch.toLowerCase()) ||
+                    (p.codigo ?? "").toLowerCase().includes(envioActivoSearch.toLowerCase())
+                  ).length === 0
+                    ? <div style={{ padding: "10px 14px", color: "var(--text-muted)", fontSize: 13 }}>Sin resultados</div>
+                    : productos.filter(p =>
+                        p.nombre.toLowerCase().includes(envioActivoSearch.toLowerCase()) ||
+                        (p.codigo ?? "").toLowerCase().includes(envioActivoSearch.toLowerCase())
+                      ).map(p => (
+                        <div key={p.id}
+                          onClick={() => {
+                            setEnvioActivoForm(prev => ({ ...prev, producto: p, unidades: [] }))
+                            setEnvioActivoSearch("")
+                          }}
+                          style={{ padding: "8px 14px", cursor: "pointer", fontSize: 13,
+                            display: "flex", justifyContent: "space-between", alignItems: "center",
+                            borderBottom: "1px solid var(--border)" }}
+                          onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                          <span><strong>{p.codigo ?? "—"}</strong> — {p.nombre}</span>
+                          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Stock: {p.stock_total}</span>
+                        </div>
+                      ))
+                  }
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between",
+              padding: "10px 14px", background: "var(--hover)", borderRadius: 8,
+              border: "1px solid var(--border)", marginBottom: 12 }}>
+              <div style={{ fontSize: 13 }}>
+                <span className="fw-600">{envioActivoForm.producto.codigo ?? "—"}</span>
+                {" — "}{envioActivoForm.producto.nombre}
+                <span style={{ color: "var(--text-muted)", marginLeft: 8, fontSize: 12 }}>
+                  Stock disponible: {envioActivoForm.producto.stock_total}
+                </span>
+              </div>
+              <button className="btn btn-danger-outline btn-sm btn-icon"
+                onClick={() => setEnvioActivoForm(prev => ({ ...prev, producto: null, unidades: [] }))}>
+                <Icon d={IC.remove} size={12} />
+              </button>
+            </div>
+          )}
+
+          {envioActivoForm.producto && (
+            <>
+              <div className="form-group">
+                <label className="form-label">Cantidad de unidades a enviar</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <input type="number" min={1} max={envioActivoForm.producto.stock_total}
+                    className="form-input" style={{ width: 100 }}
+                    value={envioActivoForm.unidades.length || ""}
+                    onChange={e => {
+                      const n = Math.max(0, Math.min(Number(e.target.value), envioActivoForm.producto.stock_total))
+                      setEnvioActivoForm(prev => ({
+                        ...prev,
+                        unidades: Array.from({ length: n }, (_, i) =>
+                          prev.unidades[i] ?? { descripcion: "", nro_serie: "", estado: "operativo" }
+                        )
+                      }))
+                    }} />
+                  <span style={{ fontSize: 13, color: "var(--text-muted)" }}>
+                    máx. {envioActivoForm.producto.stock_total}
+                  </span>
+                </div>
+              </div>
+
+              {envioActivoForm.unidades.length > 0 && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10, marginTop: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)",
+                    textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    Detalle por unidad
+                  </div>
+                  {envioActivoForm.unidades.map((u, i) => (
+                    <div key={i} style={{ background: "var(--hover)", borderRadius: 8,
+                      border: "1px solid var(--border)", padding: "10px 12px" }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)",
+                        marginBottom: 8 }}>
+                        Unidad {i + 1} — {envioActivoForm.producto.nombre}
+                      </div>
+                      <div className="form-row" style={{ marginBottom: 6 }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label">N° de serie</label>
+                          <input className="form-input" placeholder="Opcional"
+                            value={u.nro_serie}
+                            onChange={e => setEnvioActivoForm(prev => ({
+                              ...prev,
+                              unidades: prev.unidades.map((x, j) =>
+                                j === i ? { ...x, nro_serie: e.target.value } : x
+                              )
+                            }))} />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label">Estado</label>
+                          <select className="form-input"
+                            value={u.estado}
+                            onChange={e => setEnvioActivoForm(prev => ({
+                              ...prev,
+                              unidades: prev.unidades.map((x, j) =>
+                                j === i ? { ...x, estado: e.target.value } : x
+                              )
+                            }))}>
+                            <option value="operativo">Operativo</option>
+                            <option value="dañado">Dañado</option>
+                            <option value="en_reparacion">En reparación</option>
+                            <option value="de_baja">De baja</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Descripción</label>
+                        <input className="form-input" placeholder="Ej: Core i5, 8GB RAM — asignado a Juan"
+                          value={u.descripcion}
+                          onChange={e => setEnvioActivoForm(prev => ({
+                            ...prev,
+                            unidades: prev.unidades.map((x, j) =>
+                              j === i ? { ...x, descripcion: e.target.value } : x
+                            )
+                          }))} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </Modal>
       )}
 

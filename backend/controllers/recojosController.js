@@ -367,3 +367,43 @@ exports.getAllAdmin = async (req, res) => {
 // Mantener aliases para compatibilidad con rutas existentes
 exports.getOnusRecicladas = exports.getEquiposReciclados
 exports.revisarOnu        = exports.revisarEquipo
+
+// ── eliminarEntrada ────────────────────────────────────────────────────────
+
+exports.eliminarEntrada = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const { id } = req.params
+
+    // Verificar que existe
+    const [[recojo]] = await conn.query(
+      "SELECT id, grupo_orden FROM recojos WHERE id = ?", [id]
+    )
+    if (!recojo)
+      return res.status(404).json({ message: "Entrada no encontrada" })
+
+    // Eliminar fotos asociadas
+    await conn.query(
+      "DELETE FROM fotos_registro WHERE tipo = 'recojo' AND registro_id = ?", [id]
+    )
+
+    // Eliminar de onus_recicladas si existe
+    await conn.query(
+      "DELETE FROM onus_recicladas WHERE recojo_id = ?", [id]
+    )
+
+    // Eliminar el recojo
+    await conn.query("DELETE FROM recojos WHERE id = ?", [id])
+
+    await conn.commit()
+    res.json({ message: "Entrada eliminada correctamente" })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ Error eliminarEntrada:", err.message)
+    res.status(500).json({ message: "Error al eliminar entrada", error: err.message })
+  } finally {
+    conn.release()
+  }
+}

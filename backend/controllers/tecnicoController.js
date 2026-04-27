@@ -382,3 +382,186 @@ exports.getCatalogoOnus = async (req, res) => {
     res.status(500).json({ message: "Error al obtener catálogo ONUs", error: err.message })
   }
 }
+
+// ── Órdenes pendientes para técnico ───────────────────────────────────────
+
+exports.getOrdenesPendientes = async (req, res) => {
+  try {
+    const sede_id = req.user.sede_id   // ← filtra por sede, no por técnico
+
+    const [rows] = await db.query(`
+      SELECT
+        os.id, os.nro_orden, os.nro_contrato, os.abonado,
+        os.doc_identidad, os.telefono, os.servicio, os.tecnologia,
+        os.sector, os.direccion, os.referencia, os.observacion,
+        os.estado_app,
+        ar.ip_local, ar.mascara, ar.gateway,
+        ar.modelo_onu, ar.perfil_onu, ar.id AS red_id
+      FROM ordenes_servicio os
+      LEFT JOIN activacion_red ar ON ar.orden_id = os.id
+      WHERE os.sede_id = ? AND os.estado_app = 'pendiente'
+      ORDER BY os.created_at ASC
+    `, [sede_id])
+
+    res.json(rows)
+  } catch (err) {
+    console.error("❌ getOrdenesPendientes:", err.message)
+    res.status(500).json({ message: "Error al obtener órdenes", error: err.message })
+  }
+}
+
+// ── Completar orden ────────────────────────────────────────────────────────
+
+exports.completarOrden = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const tecnico_id = req.user.id
+    const orden_id   = req.params.id
+
+    // Verificar que la orden pertenece al técnico
+    const [[orden]] = await conn.query(
+      `SELECT id, nro_orden, nro_contrato, abonado, direccion, servicio
+      FROM ordenes_servicio
+      WHERE id = ? AND estado_app = 'pendiente'`,
+      [orden_id]
+    )
+    if (!orden) {
+      await conn.rollback()
+      return res.status(404).json({ message: "Orden no encontrada o ya completada" })
+    }
+
+    const itemsParsed = typeof req.body.items === "string"
+      ? JSON.parse(req.body.items) : (req.body.items || [])
+    const onuId       = req.body.onu_id ? Number(req.body.onu_id) : null
+    const comentario  = req.body.comentario || null
+
+    // Verificar ONU si viene
+    if (onuId) {
+      const [[onu]] = await conn.query(
+        `SELECT id FROM onus
+         WHERE id = ? AND tecnico_id = ? AND activacion_id IS NULL AND averia_id IS NULL`,
+        [onuId, tecnico_id]
+      )
+      if (!onu) {
+        await conn.rollback()
+        return res.status(400).json({ message: "La ONU seleccionada no está disponible" })
+      }
+    }
+
+    // Verificar y descontar stock de materiales
+    for (const item of itemsParsed) {
+      const [[asig]] = await conn.query(
+        `SELECT a.cantidad, p.es_medible, p.metros_por_unidad
+         FROM asignaciones_tecnicos a
+         JOIN productos p ON p.id = a.producto_id
+         WHERE a.tecnico_id = ? AND a.producto_id = ?`,
+        [tecnico_id, item.producto_id]
+      )
+      if (!asig) {
+        await conn.rollback()
+        return res.status(400).json({ message: `No tenés el ítem ID ${item.producto_id} asignado` })
+      }
+      const [[{ consumido }]] = await conn.query(
+        "SELECT COALESCE(SUM(cantidad), 0) AS consumido FROM consumo_tecnico WHERE tecnico_id = ? AND producto_id = ?",
+        [tecnico_id, item.producto_id]
+      )
+      const mpu        = parseFloat(asig.metros_por_unidad) || 1
+      const asignado   = asig.es_medible
+        ? parseFloat(asig.cantidad) * mpu
+        : parseFloat(asig.cantidad)
+      const disponible = asignado - parseFloat(consumido)
+      if (parseFloat(item.cantidad) > disponible) {
+        await conn.rollback()
+        return res.status(400).json({ message: `Stock insuficiente para ítem ID ${item.producto_id}. Disponible: ${disponible}` })
+      }
+    }
+
+    // Generar código de activación
+    const codigo = await generarCodigo(conn, "ACT", "activaciones")
+
+    // Crear activación
+    const [result] = await conn.query(
+      `INSERT INTO activaciones
+         (codigo, nro_orden, nro_contrato, orden_id, tecnico_id,
+          cliente, direccion, comentario, estado, onu_id, fecha)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'completada', ?, NOW())`,
+      [codigo, orden.nro_orden, orden.nro_contrato, orden_id,
+       tecnico_id, orden.abonado, orden.direccion, comentario, onuId]
+    )
+    const activacion_id = result.insertId
+
+    // Registrar materiales y consumo
+    for (const item of itemsParsed) {
+      await conn.query(
+        "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?, ?, ?)",
+        [activacion_id, item.producto_id, item.cantidad]
+      )
+      await conn.query(
+        `INSERT INTO consumo_tecnico
+           (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+         VALUES (?, ?, ?, 'activacion', ?, NOW())`,
+        [tecnico_id, item.producto_id, item.cantidad, comentario]
+      )
+    }
+
+    // Vincular ONU
+    if (onuId) {
+      await conn.query(
+        `UPDATE onus SET activacion_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?`,
+        [activacion_id, orden.abonado, onuId]
+      )
+      const [[onuProd]] = await conn.query("SELECT producto_id FROM onus WHERE id = ?", [onuId])
+      if (onuProd) {
+        await conn.query(
+          `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1 WHERE tecnico_id = ? AND producto_id = ?`,
+          [tecnico_id, onuProd.producto_id]
+        )
+        await conn.query(
+          `INSERT INTO consumo_tecnico (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+           VALUES (?, ?, 1, 'activacion', ?, NOW())`,
+          [tecnico_id, onuProd.producto_id, `Activación ${codigo} — ${orden.abonado}`]
+        )
+      }
+    }
+
+    // Guardar fotos
+    await moverYGuardarFotos(conn, {
+      tipo:        "activacion",
+      registro_id: activacion_id,
+      sede_id:     req.user.sede_id,
+      cliente:     orden.abonado,
+      archivos:    req.files || [],
+    })
+
+    // ONU recogida (cambio de equipo)
+    const onuRecogidaPon       = req.body.onu_recogida_codigo_pon || null
+    const onuRecogidaProductoId = req.body.onu_recogida_producto_id
+      ? Number(req.body.onu_recogida_producto_id) : null
+    if (onuRecogidaPon && onuRecogidaProductoId) {
+      await conn.query(
+        `INSERT INTO onus_recicladas (tipo_equipo, codigo_pon, producto_id, sede_id, estado)
+         VALUES ('ONU', ?, ?, ?, 'revision')`,
+        [onuRecogidaPon, onuRecogidaProductoId, req.user.sede_id]
+      )
+    }
+
+    // Marcar orden como completada
+    await conn.query(
+      `UPDATE ordenes_servicio
+      SET estado_app = 'completada', tecnico_id = ?, activacion_id = ?, completada_en = NOW()
+      WHERE id = ?`,
+      [tecnico_id, activacion_id, orden_id]
+    )
+
+    await conn.commit()
+    res.json({ message: "Orden completada correctamente", codigo })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ completarOrden:", err.message)
+    res.status(500).json({ message: "Error al completar orden", error: err.message })
+  } finally {
+    conn.release()
+  }
+}

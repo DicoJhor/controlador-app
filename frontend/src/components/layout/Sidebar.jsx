@@ -25,6 +25,7 @@ const IC = {
   logout:    "M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4 M16 17l5-5-5-5 M21 12H9",
   close:     "M18 6L6 18 M6 6l12 12",
   recycle:   "M4 2v6h6 M20 22v-6h-6 M20 11A8 8 0 004.93 7.1 M4 13a8 8 0 0015.07 3.9",
+  wifi: "M5 12.55a11 11 0 0114.08 0 M1.42 9a16 16 0 0121.16 0 M8.53 16.11a6 6 0 016.95 0 M12 20h.01",
 };
 
 const navConfig = {
@@ -35,6 +36,7 @@ const navConfig = {
         { to: "/admin/dashboard",  label: "Dashboard", icon: IC.dashboard },
         { to: "/admin/sedes",      label: "Sedes",     icon: IC.building  },
         { to: "/admin/usuarios",   label: "Usuarios",  icon: IC.users     },
+        { to: "/admin/activaciones-red", label: "Activaciones Red", icon: IC.wifi },
       ],
     },
     {

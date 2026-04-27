@@ -163,6 +163,11 @@ export default function AdminAuditoria() {
   const [editSaving,  setEditSaving]  = useState(false);
   const [editError,   setEditError]   = useState("");
 
+  const [modalEliminar, setModalEliminar] = useState(false);
+  const [itemEliminar,  setItemEliminar]  = useState(null);
+  const [elimSaving,    setElimSaving]    = useState(false);
+  const [elimError,     setElimError]     = useState("");
+
   useEffect(() => {
     Promise.all([auditoriaService.getAll(), sedesService.getAll()])
       .then(([data, sds]) => { setMovimientos(data); setSedes(sds); setLoading(false); })
@@ -226,13 +231,39 @@ export default function AdminAuditoria() {
     }
   };
 
+  // ✅ DESPUÉS — funciones separadas correctamente
+const handleEliminar = async () => {
+    setElimError("");
+    setElimSaving(true);
+    try {
+      const { tipo, items } = itemEliminar;
+      if (tipo === "envio" || tipo === "recepcion") {
+        const guiaReal = itemEliminar.guiaKey.replace(/^Guía:\s*/i, "").trim();
+        const envios   = await auditoriaService.getEnvios();
+        const envio    = envios.find(e => e.guia === guiaReal);
+        if (!envio) throw new Error("No se encontró el envío");
+        await auditoriaService.eliminarEnvio(envio.id);
+      } else if (tipo === "entrada") {
+        await Promise.all(items.map(m => auditoriaService.eliminarEntrada(m.id)));
+      } else {
+        throw new Error(`La eliminación de "${tipo}" aún no está soportada.`);
+      }
+      const data = await auditoriaService.getAll();
+      setMovimientos(data);
+      setModalEliminar(false);
+    } catch (err) {
+      setElimError(err.message);
+    } finally {
+      setElimSaving(false);
+    }
+  };
+
   const handleEditarEnvio = async () => {
     setEditError("");
-    if (!editForm.guia.trim())    return setEditError("Ingresá el número de guía.");
-    if (!editForm.fecha_envio)    return setEditError("Ingresá la fecha.");
-    if (!editForm.sede_id)        return setEditError("Seleccioná una sede destino.");
+    if (!editForm.guia.trim())       return setEditError("Ingresá el número de guía.");
+    if (!editForm.fecha_envio)       return setEditError("Ingresá la fecha.");
+    if (!editForm.sede_id)           return setEditError("Seleccioná una sede destino.");
     if (!editForm.productos?.length) return setEditError("Debe haber al menos un producto.");
-
     for (const p of editForm.productos) {
       if (!p.cantidad || p.cantidad <= 0)
         return setEditError(`Cantidad inválida en "${p.nombre}".`);
@@ -251,8 +282,6 @@ export default function AdminAuditoria() {
           cantidad:    Number(p.cantidad),
         })),
       });
-
-      // Recargar movimientos
       const data = await auditoriaService.getAll();
       setMovimientos(data);
       setModalEditar(false);
@@ -447,46 +476,50 @@ export default function AdminAuditoria() {
       consumo: datos.filter(m => m.tipo === "consumo").length,
     };
 
-    const gruposExp = agruparPorFecha(datos);
+    const gruposExp = agruparPorFechaYGuia(datos);
 
-    const filasPorGrupo = gruposExp.map(([fechaKey, items]) => `
-      <div class="grupo">
-        <div class="grupo-header">
-          <span class="grupo-fecha">${fechaKey === "sin-fecha" ? "Sin fecha" : formatDate(fechaKey)}</span>
-          <span class="grupo-count">${items.length} movimiento${items.length !== 1 ? "s" : ""}</span>
+    // ✅ DESPUÉS — aplanamos guias → items correctamente
+    const filasPorGrupo = gruposExp.map(([fechaKey, guias]) => {
+      const items = guias.flatMap(([, movs]) => movs);
+      return `
+        <div class="grupo">
+          <div class="grupo-header">
+            <span class="grupo-fecha">${fechaKey === "sin-fecha" ? "Sin fecha" : formatDate(fechaKey)}</span>
+            <span class="grupo-count">${items.length} movimiento${items.length !== 1 ? "s" : ""}</span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Tipo</th>
+                <th>Producto / Ítem</th>
+                <th>Cant.</th>
+                <th>Sede</th>
+                <th>Usuario</th>
+                <th>Guía / Motivo</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${items.map(m => {
+                const cfg = TIPO_CONFIG[m.tipo] ?? { label: m.tipo, color: "#666" };
+                const itemText = m.tipo === "envio"
+                  ? `${(m.item ?? "").split(" → ")[0]} <span style="color:${cfg.color}">→ ${(m.item ?? "").split(" → ")[1] ?? ""}</span>`
+                  : (m.item ?? "—");
+                return `
+                  <tr>
+                    <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
+                    <td class="bold">${itemText}</td>
+                    <td class="center">${m.cantidad}</td>
+                    <td>${m.sede ?? "—"}</td>
+                    <td>${m.usuario ?? "—"}</td>
+                    <td class="small">${m.motivo ?? ""}${m.comentario ? `<br><span class="muted">${m.comentario}</span>` : ""}</td>
+                  </tr>
+                `;
+              }).join("")}
+            </tbody>
+          </table>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Tipo</th>
-              <th>Producto / Ítem</th>
-              <th>Cant.</th>
-              <th>Sede</th>
-              <th>Usuario</th>
-              <th>Guía / Motivo</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${items.map(m => {
-              const cfg = TIPO_CONFIG[m.tipo] ?? { label: m.tipo, color: "#666" };
-              const itemText = m.tipo === "envio"
-                ? `${(m.item ?? "").split(" → ")[0]} <span style="color:${cfg.color}">→ ${(m.item ?? "").split(" → ")[1] ?? ""}</span>`
-                : (m.item ?? "—");
-              return `
-                <tr>
-                  <td><span class="badge" style="background:${cfg.color}22;color:${cfg.color}">${cfg.label}</span></td>
-                  <td class="bold">${itemText}</td>
-                  <td class="center">${m.cantidad}</td>
-                  <td>${m.sede ?? "—"}</td>
-                  <td>${m.usuario ?? "—"}</td>
-                  <td class="small">${m.motivo ?? ""}${m.comentario ? `<br><span class="muted">${m.comentario}</span>` : ""}</td>
-                </tr>
-              `;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>
-    `).join("");
+      `;
+    }).join("");
 
     // Bloque extra en filtros aplicados solo si se filtró por producto
     const productoFiltroHTML = exportForm.producto !== "todos" ? `
@@ -721,15 +754,33 @@ export default function AdminAuditoria() {
                     }}>
                       {items.length} producto{items.length !== 1 ? "s" : ""}
                     </span>
-                    {isSuperadmin && primerItem?.tipo === "envio" && guiaKey !== "sin-guia" && (
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={() => openEditarEnvio(guiaKey, items)}
-                        style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}
-                      >
-                        <Icon d={IC.edit} size={12} />
-                        Editar
-                      </button>
+                    {isSuperadmin && (
+                      <>
+                        {primerItem?.tipo === "envio" && guiaKey !== "sin-guia" && (
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={() => openEditarEnvio(guiaKey, items)}
+                            style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}
+                          >
+                            <Icon d={IC.edit} size={12} />
+                            Editar
+                          </button>
+                        )}
+                        {["envio", "recepcion", "entrada"].includes(primerItem?.tipo) && guiaKey !== "sin-guia" && (
+                          <button
+                            className="btn btn-danger-outline btn-sm"
+                            onClick={() => {
+                              setElimError("");
+                              setItemEliminar({ guiaKey, tipo: primerItem?.tipo, items });
+                              setModalEliminar(true);
+                            }}
+                            style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 4 }}
+                          >
+                            <Icon d={IC.remove} size={12} />
+                            Eliminar
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
 
@@ -877,6 +928,67 @@ export default function AdminAuditoria() {
                 </div>
               ))}
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {modalEliminar && itemEliminar && (
+        <Modal
+          title="Eliminar registro"
+          onClose={() => setModalEliminar(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModalEliminar(false)} disabled={elimSaving}>
+                Cancelar
+              </button>
+              <button className="btn btn-danger" onClick={handleEliminar} disabled={elimSaving}>
+                <Icon d={IC.remove} size={14} />
+                {elimSaving ? "Eliminando..." : "Confirmar eliminación"}
+              </button>
+            </>
+          }
+        >
+          <div style={{
+            background: "#FEE2E2", border: "1px solid #FCA5A5",
+            borderRadius: 8, padding: "10px 14px", marginBottom: 16,
+            display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13,
+          }}>
+            <Icon d={IC.alert} size={15} color="#DC2626" />
+            <span style={{ color: "#7F1D1D" }}>
+              <strong>Esta acción es irreversible.</strong> Se eliminarán los registros
+              y se revertirá el stock afectado.
+            </span>
+          </div>
+
+          {elimError && (
+            <div className="alert alert-danger" style={{ marginBottom: 12 }}>
+              <Icon d={IC.alert} size={14} color="var(--danger)" /> {elimError}
+            </div>
+          )}
+
+          <div style={{ fontSize: 13, marginBottom: 8 }}>
+            <span style={{ color: "var(--text-muted)" }}>Tipo: </span>
+            <TipoBadge tipo={itemEliminar.tipo} />
+          </div>
+          <div style={{ fontSize: 13, marginBottom: 12 }}>
+            <span style={{ color: "var(--text-muted)" }}>Guía / motivo: </span>
+            <strong>{itemEliminar.guiaKey === "sin-guia" ? "—" : itemEliminar.guiaKey}</strong>
+          </div>
+
+          <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>
+            Productos afectados:
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {itemEliminar.items.map((m, i) => (
+              <div key={i} style={{
+                padding: "6px 10px", borderRadius: 6,
+                background: "var(--hover)", border: "1px solid var(--border)",
+                fontSize: 12, display: "flex", justifyContent: "space-between",
+              }}>
+                <span className="fw-600">{m.item}</span>
+                <span style={{ color: "var(--text-muted)" }}>× {m.cantidad}</span>
+              </div>
+            ))}
           </div>
         </Modal>
       )}

@@ -1,5 +1,9 @@
 {
   "appId": "com.enetfiber.tecnico",
   "appName": "App Técnico",
-  "webDir": "dist"
+  "webDir": "dist",
+  "server": {
+    "allowNavigation": ["192.168.1.1", "192.168.101.1"],
+    "cleartext": true
+  }
 }

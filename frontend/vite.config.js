@@ -1,14 +1,25 @@
-// vite.config.js
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
-  base: '/', // ← cambiar './' por la ruta real
-
+  base: '/',
+  server: {
+    proxy: {
+      '/proxy': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+      '/reboot-optic': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+      },
+    }
+  },
   plugins: [
     react(),
     VitePWA({
+      disable: true,
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.jpeg', 'masked-icon.svg'],
       manifest: {
@@ -19,9 +30,9 @@ export default defineConfig({
         background_color: '#ffffff',
         display: 'standalone',
         orientation: 'portrait',
-        scope: '/admin/',        // ← actualizar
-        start_url: '/admin/tecnico/dashboard', // ← actualizar
-        icons: [ /* sin cambios */ ],
+        scope: '/admin/',
+        start_url: '/admin/tecnico/dashboard',
+        icons: [],
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
@@ -32,10 +43,7 @@ export default defineConfig({
             options: {
               cacheName: 'api-cache',
               networkTimeoutSeconds: 5,
-              expiration: {
-                maxEntries: 100,
-                maxAgeSeconds: 60 * 60 * 24,
-              },
+              expiration: { maxEntries: 100, maxAgeSeconds: 60 * 60 * 24 },
             },
           },
         ],

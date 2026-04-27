@@ -337,3 +337,70 @@ exports.editarEnvio = async (req, res) => {
     conn.release()
   }
 }
+
+// ELIMINAR ENVÍO (solo superadmin) — revierte stock completo
+exports.eliminarEnvio = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const { id } = req.params
+
+    const [[envio]] = await conn.query("SELECT * FROM envios WHERE id = ?", [id])
+    if (!envio) return res.status(404).json({ message: "Envío no encontrado" })
+
+    const [detalles] = await conn.query(
+      "SELECT * FROM envio_detalles WHERE envio_id = ?", [id]
+    )
+
+    for (const det of detalles) {
+      if (det.variante_id) {
+        await conn.query(
+          "UPDATE stock_sede_variante SET cantidad = cantidad + ? WHERE sede_id = ? AND variante_id = ?",
+          [det.cantidad, envio.sede_origen_id, det.variante_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, envio.sede_origen_id, det.producto_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede_variante SET cantidad = cantidad - ? WHERE sede_id = ? AND variante_id = ?",
+          [det.cantidad, envio.sede_id, det.variante_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, envio.sede_id, det.producto_id]
+        )
+        await conn.query(
+          "UPDATE producto_variantes SET stock_total = stock_total + ? WHERE id = ?",
+          [det.cantidad, det.variante_id]
+        )
+      } else {
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, envio.sede_origen_id, det.producto_id]
+        )
+        await conn.query(
+          "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+          [det.cantidad, envio.sede_id, det.producto_id]
+        )
+      }
+      await conn.query(
+        "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
+        [det.cantidad, det.producto_id]
+      )
+    }
+
+    await conn.query("DELETE FROM envio_detalles WHERE envio_id = ?", [id])
+    await conn.query("DELETE FROM envios WHERE id = ?", [id])
+
+    await conn.commit()
+    res.json({ message: "Envío eliminado y stock revertido correctamente" })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ Error eliminarEnvio:", err.message)
+    res.status(500).json({ message: "Error al eliminar envío", error: err.message })
+  } finally {
+    conn.release()
+  }
+}

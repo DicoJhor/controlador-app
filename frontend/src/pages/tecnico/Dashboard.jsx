@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import StatCard from "../../components/ui/StatCard";
 import { formatNumber } from "../../utils/formatters";
 import tecnicoService from "../../services/tecnicoService";
+import { db } from "../../db/localDB";
 
 function StockRow({ item }) {
   const esRollo = item.es_medible && item.metros_por_unidad;
@@ -51,9 +52,26 @@ export default function TecDashboard() {
   const [error,      setError]      = useState(null);
 
   useEffect(() => {
-    tecnicoService.getMiInventario()
-      .then(data => { setInventario(data); setLoading(false); })
-      .catch(() => { setError("No se pudo cargar el inventario"); setLoading(false); });
+    const cargar = async () => {
+      try {
+        if (navigator.onLine) {
+          const data = await tecnicoService.getMiInventario();
+          setInventario(data);
+          await db.inventario.clear();
+          await db.inventario.bulkPut(data);
+        } else {
+          const data = await db.inventario.toArray();
+          setInventario(data);
+        }
+      } catch {
+        const data = await db.inventario.toArray();
+        setInventario(data);
+        if (data.length === 0) setError("No se pudo cargar el inventario");
+      } finally {
+        setLoading(false);
+      }
+    };
+    cargar();
   }, []);
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
