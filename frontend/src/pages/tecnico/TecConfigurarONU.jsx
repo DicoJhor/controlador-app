@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Http } from '@capacitor-community/http';
 
 /* ─── Iconos ─────────────────────────────────────────────── */
 function Icon({ d, size = 16, color = "currentColor" }) {
@@ -98,7 +99,6 @@ function postTableEncrypt(params) {
   let inputVal = "";
   for (const [name, value] of Object.entries(params)) {
     if (SKIP.has(name)) continue;
-    // Si el valor es array (chkpt múltiple), iterar cada uno
     if (Array.isArray(value)) {
       for (const v of value) {
         inputVal += encodeName(name) + "=" + encodeVal(v) + "&";
@@ -126,7 +126,6 @@ function postTableEncrypt(params) {
     }
   }
 
-  // Forzar unsigned 32-bit antes de reducir
   csum = csum >>> 0;
   csum = (csum & 0xffff) + (csum >>> 16);
   csum = csum & 0xffff;
@@ -191,43 +190,72 @@ class ONUConfigurator {
     this.pass24   = pass24;
     this.ssid5    = ssid5;
     this.pass5    = pass5;
-    this.sk       = "";   // sessionKey (OPTIC)
-    this.csrf     = "";   // csrfToken (LANLY/BENMUNDO)
+    this.sk       = "";
+    this.csrf     = "";
   }
 
   url(ep) { return buildUrl(ep, this.ontIp, this.equipo); }
 
   hdrs(extra = {}) { return devHdrs(this.ontIp, this.equipo, extra); }
 
+  // ── GET usando plugin nativo en prod, fetch en dev ── //
   async getCGI(ep) {
-    const r = await fetch(this.url(ep), {
-      credentials: "include",
-      headers: this.hdrs({ Accept: "text/html,*/*" }),
-    });
-    return r.text();
-  }
-
-  async postCGI(ep, params) {
-    const r = await fetch(this.url(ep), {
-      method: "POST",
-      credentials: "include",
-      headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded", Accept: "text/html,*/*" }),
-      body: enc(params),
-    });
-    return r.text();
-  }
-
-  // ── PSF para BENMUNDO ── //
-  calcPSF(fields) {
     if (IS_DEV) {
-      // En dev podemos llamar al proxy, pero para mantener consistencia
-      // con prod, calculamos en cliente igual
-      return postTableEncrypt(fields);
+      const r = await fetch(this.url(ep), {
+        credentials: "include",
+        headers: this.hdrs({ Accept: "text/html,*/*" }),
+      });
+      return r.text();
     }
+    const r = await Http.get({
+      url: this.url(ep),
+      headers: { Accept: "text/html,*/*" },
+    });
+    return r.data;
+  }
+
+  // ── POST usando plugin nativo en prod, fetch en dev ── //
+  async postCGI(ep, params) {
+    if (IS_DEV) {
+      const r = await fetch(this.url(ep), {
+        method: "POST",
+        credentials: "include",
+        headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded", Accept: "text/html,*/*" }),
+        body: enc(params),
+      });
+      return r.text();
+    }
+    const r = await Http.post({
+      url: this.url(ep),
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      data: enc(params),
+    });
+    return r.data;
+  }
+
+  // ── POST nativo para requests con arrays (chkpt) ── //
+  async postRaw(url, body) {
+    if (IS_DEV) {
+      const r = await fetch(url, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+      return r.text();
+    }
+    const r = await Http.post({
+      url,
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      data: body,
+    });
+    return r.data;
+  }
+
+  calcPSF(fields) {
     return postTableEncrypt(fields);
   }
 
-  // ── Refresh sessionKey OPTIC ── //
   async refreshSK(pages = ["index.cgi", "wanpon_edit.cgi", "dhcpgateway.cgi", "wlantop.cgi"]) {
     for (const p of pages) {
       try {
@@ -239,7 +267,6 @@ class ONUConfigurator {
     return null;
   }
 
-  // ── Refresh CSRF LANLY/BENMUNDO ── //
   async refreshCSRF(page) {
     const h = await this.getCGI(page);
     const t = extractCSRF(h);
@@ -251,7 +278,6 @@ class ONUConfigurator {
   // OPTIC — ZTE CGI
   // ════════════════════════════════════════════════════════
   async runOptic(onProgress) {
-    // 1. LOGIN
     onProgress("login", "running");
     try {
       await this.getCGI("login.cgi");
@@ -269,7 +295,6 @@ class ONUConfigurator {
     }
     await sleep(300);
 
-    // 2. WAN
     onProgress("wan", "running");
     try {
       await this.refreshSK(["wanpon_edit.cgi"]);
@@ -321,7 +346,6 @@ class ONUConfigurator {
     }
     await sleep(800);
 
-    // 3. LAN
     onProgress("lan", "running");
     try {
       await this.refreshSK(["dhcpgateway.cgi"]);
@@ -341,7 +365,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 4. ACL
     onProgress("acl", "running");
     try {
       await this.refreshSK(["acl.cgi"]);
@@ -357,7 +380,6 @@ class ONUConfigurator {
     } catch (_) { onProgress("acl", "done"); }
     await sleep(400);
 
-    // 5. UPnP
     onProgress("upnp", "running");
     try {
       await this.refreshSK(["upnp.cgi"]);
@@ -369,7 +391,6 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
-    // 6. WiFi 5G
     onProgress("wifi5", "running");
     try {
       await this.refreshSK(["wlantop.cgi"]);
@@ -381,7 +402,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 7. WiFi 2.4G
     onProgress("wifi24", "running");
     try {
       await this.refreshSK(["wlantop.cgi"]);
@@ -393,18 +413,9 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 8. REBOOT
     onProgress("reboot", "running");
     try {
-      if (IS_DEV) {
-        fetch("/reboot-optic", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ip: this.ontIp }),
-        }).catch(() => {});
-      } else {
-        this.getCGI("reboot.cgi?onSubmit=1&reboot=1").catch(() => {});
-      }
+      this.getCGI("reboot.cgi?onSubmit=1&reboot=1").catch(() => {});
       await sleep(3000);
       onProgress("reboot", "done");
     } catch (_) { onProgress("reboot", "done"); }
@@ -442,7 +453,6 @@ class ONUConfigurator {
   // LANLY — BOA CGI
   // ════════════════════════════════════════════════════════
   async runLanly(onProgress) {
-    // 1. LOGIN
     onProgress("login", "running");
     try {
       await this.refreshCSRF("admin/login.asp");
@@ -464,11 +474,9 @@ class ONUConfigurator {
     }
     await sleep(300);
 
-    // 2. WAN
     onProgress("wan", "running");
     try {
       const html = await this.refreshCSRF("net_eth_links.asp");
-      // Detectar interfaz existente para borrar
       const lstM = html.match(/new\s+it_nr\s*\(\s*["']([^"']+)["']/);
       const lst = lstM ? lstM[1] : null;
       if (lst) {
@@ -516,7 +524,6 @@ class ONUConfigurator {
     }
     await sleep(800);
 
-    // 3. LAN
     onProgress("lan", "running");
     try {
       await this.refreshCSRF("net_dhcpd.asp");
@@ -535,7 +542,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 4. ACL
     onProgress("acl", "running");
     try {
       await this.refreshCSRF("rmtacc.asp");
@@ -550,7 +556,6 @@ class ONUConfigurator {
     } catch (_) { onProgress("acl", "done"); }
     await sleep(400);
 
-    // 5. UPnP
     onProgress("upnp", "running");
     try {
       const upnpHtml = await this.refreshCSRF("app_upnp.asp");
@@ -564,7 +569,6 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
-    // 6. WiFi 5G
     onProgress("wifi5", "running");
     try {
       await this.refreshCSRF("admin/wlbasic.asp?wlan_idx=0");
@@ -585,7 +589,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 7. WiFi 2.4G
     onProgress("wifi24", "running");
     try {
       await this.refreshCSRF("admin/wlbasic.asp?wlan_idx=1");
@@ -605,7 +608,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 8. REBOOT
     onProgress("reboot", "running");
     try {
       await this.refreshCSRF("mgm_dev_reboot.asp");
@@ -623,20 +625,13 @@ class ONUConfigurator {
     const params = new URLSearchParams();
     for (const [k, v] of Object.entries(rest)) params.append(k, v ?? "");
     for (const v of chkpt) params.append("chkpt", v);
-    const r = await fetch(this.url("boaform/admin/formEthernet"), {
-      method: "POST",
-      credentials: "include",
-      headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded" }),
-      body: params.toString(),
-    });
-    return r.text();
+    return this.postRaw(this.url("boaform/admin/formEthernet"), params.toString());
   }
 
   // ════════════════════════════════════════════════════════
   // BENMUNDO — BOA CGI + postSecurityFlag
   // ════════════════════════════════════════════════════════
   async runBenmundo(onProgress) {
-    // 1. LOGIN
     onProgress("login", "running");
     try {
       const loginHtml = await this.getCGI("admin/login.asp");
@@ -653,7 +648,6 @@ class ONUConfigurator {
         postSecurityFlag: psfM ? psfM[1] : "",
       };
       await this.postCGI("boaform/admin/formLogin", loginParams);
-      // Verificar sesión
       let ok = false;
       for (const page of ["multi_wan_generic.asp", "status_device_basic_info.asp"]) {
         try {
@@ -671,7 +665,6 @@ class ONUConfigurator {
     }
     await sleep(300);
 
-    // 2. WAN
     onProgress("wan", "running");
     try {
       const wanPageHtml = await this.getCGI("multi_wan_generic.asp");
@@ -689,11 +682,7 @@ class ONUConfigurator {
         const delParams = new URLSearchParams();
         for (const [k, v] of Object.entries(delFields)) delParams.append(k, v ?? "");
         for (const v of ["on","on","","","on","","","","on","","",""]) delParams.append("chkpt", v);
-        await fetch(this.url("boaform/admin/formWanEth"), {
-          method: "POST", credentials: "include",
-          headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded" }),
-          body: delParams.toString(),
-        });
+        await this.postRaw(this.url("boaform/admin/formWanEth"), delParams.toString());
         await sleep(1500);
       }
 
@@ -718,11 +707,7 @@ class ONUConfigurator {
       const wanParams = new URLSearchParams();
       for (const [k, v] of Object.entries(wanFields)) wanParams.append(k, v ?? "");
       for (const v of ["on","on","","","on","","","","on","","",""]) wanParams.append("chkpt", v);
-      await fetch(this.url("boaform/admin/formWanEth"), {
-        method: "POST", credentials: "include",
-        headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded" }),
-        body: wanParams.toString(),
-      });
+      await this.postRaw(this.url("boaform/admin/formWanEth"), wanParams.toString());
       onProgress("wan", "done");
     } catch (e) {
       onProgress("wan", "error");
@@ -730,7 +715,6 @@ class ONUConfigurator {
     }
     await sleep(2000);
 
-    // 3. LAN
     onProgress("lan", "running");
     try {
       const lanFields = {
@@ -751,7 +735,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 4. ACL
     onProgress("acl", "running");
     try {
       const aclFields = {
@@ -771,7 +754,6 @@ class ONUConfigurator {
     } catch (_) { onProgress("acl", "done"); }
     await sleep(400);
 
-    // 5. UPnP
     onProgress("upnp", "running");
     try {
       const upnpPage = await this.getCGI("upnp.asp").catch(() => "");
@@ -788,7 +770,6 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
-    // 6. WiFi 5G
     onProgress("wifi5", "running");
     try {
       await this._wifiBenmundo(this.ssid5, this.pass5, "5");
@@ -799,7 +780,6 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 7. WiFi 2.4G
     onProgress("wifi24", "running");
     try {
       await this._wifiBenmundo(this.ssid24, this.pass24, "24");
@@ -810,18 +790,13 @@ class ONUConfigurator {
     }
     await sleep(600);
 
-    // 8. REBOOT
     onProgress("reboot", "running");
     try {
       const rebootFields = {
         "submit-url": "/mgm_dev_reboot.asp", postSecurityFlag: "",
       };
       rebootFields.postSecurityFlag = String(this.calcPSF(rebootFields));
-      fetch(this.url("boaform/admin/formReboot"), {
-        method: "POST", credentials: "include",
-        headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded" }),
-        body: enc(rebootFields),
-      }).catch(() => {});
+      this.postRaw(this.url("boaform/admin/formReboot"), enc(rebootFields)).catch(() => {});
       await sleep(2000);
       onProgress("reboot", "done");
     } catch (_) { onProgress("reboot", "done"); }
@@ -851,14 +826,9 @@ class ONUConfigurator {
     } else {
       params.postSecurityFlag = psf;
     }
-    await fetch(this.url("boaform/admin/formCdtWlanSetup"), {
-      method: "POST", credentials: "include",
-      headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded" }),
-      body: enc(params),
-    });
+    await this.postRaw(this.url("boaform/admin/formCdtWlanSetup"), enc(params));
   }
 
-  // ── Dispatch ── //
   async run(onProgress) {
     if (this.equipo === "optic")    return this.runOptic(onProgress);
     if (this.equipo === "lanly")    return this.runLanly(onProgress);
@@ -881,7 +851,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
   const [wifiPass,  setWifiPass] = useState("");
   const [showWifi,  setShowWifi] = useState(false);
   const [errors,    setErrors]  = useState({});
-  const [estado,    setEstado]  = useState("idle"); // idle | running | done | error
+  const [estado,    setEstado]  = useState("idle");
   const [pasos,     setPasos]   = useState(() =>
     Object.fromEntries(PASOS.map(p => [p.id, "pending"]))
   );
@@ -900,7 +870,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
 
   const validate = () => {
     const e = {};
-    if (!modeloId)                  e.modelo   = "Seleccioná el modelo de ONU";
+    if (!modeloId)                   e.modelo   = "Seleccioná el modelo de ONU";
     if (!ip || !mascara || !gateway) e.red      = "Faltan datos de red (IP, máscara o gateway)";
     if (!ssid.trim())                e.ssid     = "Ingresá el nombre de la red WiFi";
     if (!wifiPass.trim())            e.wifiPass = "Ingresá la contraseña WiFi";
@@ -979,7 +949,6 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       </div>
 
-      {/* ── Selector de modelo ── */}
       {estado === "idle" && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "var(--hover)", borderRadius: "12px 12px 0 0" }}>
@@ -1020,7 +989,6 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       )}
 
-      {/* ── Datos de red ── */}
       {modoManual && estado === "idle" && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "#f0fdf4", borderRadius: "12px 12px 0 0" }}>
@@ -1070,7 +1038,6 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       )}
 
-      {/* ── WiFi ── */}
       {estado === "idle" && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "var(--hover)", borderRadius: "12px 12px 0 0" }}>
@@ -1119,7 +1086,6 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       )}
 
-      {/* ── Progreso ── */}
       {(estado === "running" || estado === "done" || estado === "error") && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{
