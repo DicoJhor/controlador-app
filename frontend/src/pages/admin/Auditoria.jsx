@@ -125,8 +125,15 @@ function agruparPorFechaYGuia(movimientos) {
     porFecha[fechaKey][guiaKey].push(m);
   }
   return Object.entries(porFecha)
-    .sort((a, b) => b[0].localeCompare(a[0]))
-    .map(([fecha, guias]) => [fecha, Object.entries(guias)]);
+  .sort((a, b) => b[0].localeCompare(a[0]))
+  .map(([fecha, guias]) => [
+    fecha,
+    Object.entries(guias).sort((a, b) => {
+      const fechaA = a[1][0]?.fecha ?? "";
+      const fechaB = b[1][0]?.fecha ?? "";
+      return fechaB.localeCompare(fechaA);
+    })
+  ]);
 }
 
 // Extrae nombres únicos de productos/ítems de los movimientos
@@ -741,7 +748,7 @@ const handleEliminar = async () => {
                   }}>
                     <TipoBadge tipo={primerItem?.tipo} />
                     <span style={{ fontSize: 12, fontWeight: 700, color: "var(--text)" }}>
-                      Guía: {guiaKey === "sin-guia" ? "—" : guiaKey}
+                      {guiaKey === "sin-guia" ? "—" : guiaKey}
                     </span>
                     {primerItem?.sede && (
                       <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
