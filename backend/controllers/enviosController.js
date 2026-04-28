@@ -172,13 +172,13 @@ exports.obtenerEnvios = async (req, res) => {
 
     for (const envio of rows) {
       const [detalles] = await db.query(
-        `SELECT ed.cantidad, ed.variante_id,
+        `SELECT ed.producto_id, ed.cantidad, ed.variante_id,
                 p.nombre, p.codigo, p.unidad,
                 pv.talla, pv.genero
-         FROM envio_detalles ed
-         JOIN productos p ON p.id = ed.producto_id
-         LEFT JOIN producto_variantes pv ON pv.id = ed.variante_id
-         WHERE ed.envio_id = ?`,
+        FROM envio_detalles ed
+        JOIN productos p ON p.id = ed.producto_id
+        LEFT JOIN producto_variantes pv ON pv.id = ed.variante_id
+        WHERE ed.envio_id = ?`,
         [envio.id]
       )
       envio.productos = detalles
