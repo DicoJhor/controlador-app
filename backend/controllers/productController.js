@@ -301,3 +301,41 @@ exports.eliminarEntrada = async (req, res) => {
     conn.release()
   }
 }
+
+exports.eliminarEntrada = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const { id } = req.params
+
+    const [[entrada]] = await conn.query(
+      "SELECT * FROM entradas_stock WHERE id = ?", [id]
+    )
+    if (!entrada)
+      return res.status(404).json({ message: "Entrada no encontrada" })
+
+    // Revertir stock global del producto
+    await conn.query(
+      "UPDATE productos SET stock_total = stock_total - ? WHERE id = ?",
+      [entrada.cantidad, entrada.producto_id]
+    )
+
+    // Revertir stock en la sede
+    await conn.query(
+      "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+      [entrada.cantidad, entrada.sede_id, entrada.producto_id]
+    )
+
+    await conn.query("DELETE FROM entradas_stock WHERE id = ?", [id])
+
+    await conn.commit()
+    res.json({ message: "Entrada eliminada y stock revertido correctamente" })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ Error eliminarEntrada:", err.message)
+    res.status(500).json({ message: "Error al eliminar entrada", error: err.message })
+  } finally {
+    conn.release()
+  }
+}
