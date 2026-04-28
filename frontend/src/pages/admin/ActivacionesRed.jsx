@@ -52,6 +52,15 @@ export default function ActivacionesRed() {
   const [errors,        setErrors]        = useState({});
   const [sedes,   setSedes]   = useState([]);
   const [sedeId,  setSedeId]  = useState("");
+  const [copied,  setCopied]  = useState(false);
+
+  const handleCopiar = () => {
+    const texto = `${ordenSel.abonado} - ${ordenSel.nro_contrato}`;
+    navigator.clipboard.writeText(texto).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
 
   const cargar = async () => {
     setLoading(true);
@@ -60,6 +69,7 @@ export default function ActivacionesRed() {
       if (filtro !== "todas") params.append("estado", filtro);
       if (sedeId)             params.append("sede_id", sedeId);
       const data = await activacionRedService.getAll(filtro, sedeId);
+      console.log("DATA RECIBIDA:", data);
       setOrdenes(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error(err);
@@ -171,6 +181,34 @@ export default function ActivacionesRed() {
               <DetRow label="Sede"      value={ordenSel.sede_nombre} />
               <DetRow label="Tecnología" value={ordenSel.tecnologia} />
               <DetRow label="Contrato"  value={ordenSel.nro_contrato} mono />
+            </div>
+
+            {/* Texto copiable */}
+            <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--hover, #f8f9fa)" }}>
+              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6, fontWeight: 600 }}>
+                Texto para copiar
+              </div>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 8,
+                background: "white", border: "1px solid var(--border)",
+                borderRadius: 6, padding: "7px 10px",
+              }}>
+                <span style={{ flex: 1, fontFamily: "monospace", fontSize: 13, userSelect: "all" }}>
+                  {ordenSel.abonado} - {ordenSel.nro_contrato}
+                </span>
+                <button
+                  onClick={handleCopiar}
+                  style={{
+                    background: copied ? "var(--success, #16a34a)" : "var(--primary)",
+                    color: "white", border: "none", borderRadius: 5,
+                    padding: "4px 10px", fontSize: 12, cursor: "pointer",
+                    display: "flex", alignItems: "center", gap: 4,
+                    transition: "background 0.3s",
+                  }}>
+                  <Icon d={copied ? IC.check : IC.save} size={12} />
+                  {copied ? "¡Copiado!" : "Copiar"}
+                </button>
+              </div>
             </div>
 
             {/* Formulario */}

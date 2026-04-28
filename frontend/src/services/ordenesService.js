@@ -1,9 +1,10 @@
 import api from "./api";
 
 const ordenesService = {
-  getAll: (estado = "pendiente") => {
+  getAll: (estado = "pendiente", sedeId = "") => {
     const params = new URLSearchParams();
     if (estado !== "todas") params.append("estado", estado);
+    if (sedeId) params.append("sede_id", sedeId);
     return api.get(`/admin/ordenes?${params}`);
   },
 

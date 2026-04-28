@@ -15,9 +15,17 @@ const storage = multer.diskStorage({
 })
 
 const fileFilter = (req, file, cb) => {
-  ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype)
+  const allowed = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+    "application/vnd.ms-excel",                                           // .xls
+    "text/csv",                                                            // .csv
+  ]
+  allowed.includes(file.mimetype)
     ? cb(null, true)
-    : cb(new Error("Solo se permiten imágenes JPG, PNG o WEBP"))
+    : cb(new Error("Formato no permitido. Se aceptan imágenes JPG/PNG/WEBP y archivos Excel/CSV"))
 }
 
-module.exports = multer({ storage, fileFilter, limits: { fileSize: 5 * 1024 * 1024 } })
+module.exports = multer({ storage, fileFilter, limits: { fileSize: 10 * 1024 * 1024 } })

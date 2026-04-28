@@ -66,14 +66,14 @@ router.post(
 
     let filas;
     try {
-      filas = parsearExcel(req.file.buffer);
+      const buffer = require("fs").readFileSync(req.file.path);
+      filas = parsearExcel(buffer);
     } catch (e) {
       return res.status(422).json({ error: e.message });
     }
 
     const sedeId = req.user.sede_id;
     const conn   = await db.getConnection();
-
     const resumen = { insertadas: 0, actualizadas: 0, duplicadas: [] };
 
     try {
@@ -109,45 +109,22 @@ router.post(
         }
 
         const [dup] = await conn.execute(
-          `SELECT id, estado_app, fecha_crea
+          `SELECT id, estado_app
            FROM ordenes_servicio
-           WHERE nro_contrato = ? AND sede_id = ?`,
-          [nro_contrato, sedeId]
+           WHERE nro_contrato = ? AND nro_orden = ? AND fecha_crea = ? AND sede_id = ?`,
+          [nro_contrato, nro_orden, fecha_crea, sedeId]
         );
 
         if (dup.length > 0) {
-          const ordenExistente = dup[0];
-
-          if (ordenExistente.fecha_crea === fecha_crea) {
-            resumen.duplicadas.push({
-              nro_contrato, nro_orden, abonado, fecha_crea,
-              estado_app: ordenExistente.estado_app,
-              orden_id:   ordenExistente.id,
-            });
-            continue;
-          }
-
-          await conn.execute(
-            `UPDATE ordenes_servicio SET
-               nro_orden=?, servicio=?, tecnologia=?, estado_orden=?,
-               sector=?, via=?, direccion=?, referencia=?,
-               abonado=?, doc_identidad=?, telefono=?,
-               observacion=?, tecnico_jefe=?, tecnico_asistente=?,
-               fecha_crea=?, cliente_id=?,
-               estado_app='pendiente',
-               averia_id=NULL, activacion_id=NULL,
-               tecnico_id=NULL, completada_en=NULL
-             WHERE id=?`,
-            [
-              nro_orden, servicio, tecnologia || null, estado_orden,
-              sector || null, via || null, direccion || null, referencia || null,
-              abonado, doc_identidad || null, telefono || null,
-              observacion || null, tecnico_jefe || null, tecnico_asistente || null,
-              fecha_crea || null, clienteId,
-              ordenExistente.id,
-            ]
-          );
-          resumen.actualizadas++;
+          resumen.duplicadas.push({
+            orden_id:   dup[0].id,
+            estado_app: dup[0].estado_app,
+            nro_contrato, nro_orden, abonado, fecha_crea,
+            servicio, tecnologia, estado_orden,
+            sector, via, direccion, referencia,
+            doc_identidad, telefono, observacion,
+            tecnico_jefe, tecnico_asistente,
+          });
           continue;
         }
 
@@ -223,21 +200,38 @@ router.get(
   authMiddleware,
   requireRol(["admin", "superadmin", "controlador"]),
   async (req, res) => {
-    const { estado } = req.query;
-    const sedeId = req.user.sede_id;
+    const { estado, sede_id } = req.query;
+    const rol    = req.user.rol;
+    const miSede = req.user.sede_id;
 
-    let where = "WHERE o.sede_id = ?";
-    const params = [sedeId];
-    if (estado && estado !== "todas") { where += " AND o.estado_app = ?"; params.push(estado); }
+    // superadmin y admin pueden filtrar por sede o ver todas
+    // controlador siempre ve solo su sede
+    const where  = ["1=1"];
+    const params = [];
+
+    if (rol === "controlador") {
+      where.push("o.sede_id = ?");
+      params.push(miSede);
+    } else if (sede_id) {
+      where.push("o.sede_id = ?");
+      params.push(sede_id);
+    }
+
+    if (estado && estado !== "todas") {
+      where.push("o.estado_app = ?");
+      params.push(estado);
+    }
 
     const [rows] = await db.execute(
       `SELECT o.*,
+              s.nombre AS sede_nombre,
               c.nombre AS cliente_nombre,
               u.nombre AS tecnico_nombre
        FROM ordenes_servicio o
+       LEFT JOIN sedes s    ON o.sede_id    = s.id
        LEFT JOIN clientes c ON o.cliente_id = c.id
        LEFT JOIN usuarios u ON o.tecnico_id = u.id
-       ${where}
+       WHERE ${where.join(" AND ")}
        ORDER BY o.created_at DESC`,
       params
     );
@@ -252,19 +246,25 @@ router.get(
   requireRol(["admin", "superadmin", "controlador"]),
   async (req, res) => {
     const { id } = req.params;
-    const sedeId = req.user.sede_id;
+    const rol    = req.user.rol;
+    const miSede = req.user.sede_id;
+
+    // controlador solo puede ver órdenes de su sede
+    const sedeWhere = rol === "controlador" ? "AND o.sede_id = ?" : "";
+    const params    = rol === "controlador" ? [id, miSede] : [id];
 
     const [[orden]] = await db.execute(
-      `SELECT o.*, u.nombre AS tecnico_nombre
+      `SELECT o.*, s.nombre AS sede_nombre, u.nombre AS tecnico_nombre
        FROM ordenes_servicio o
+       LEFT JOIN sedes s    ON o.sede_id    = s.id
        LEFT JOIN usuarios u ON o.tecnico_id = u.id
-       WHERE o.id = ? AND o.sede_id = ?`,
-      [id, sedeId]
+       WHERE o.id = ? ${sedeWhere}`,
+      params
     );
     if (!orden) return res.status(404).json({ error: "Orden no encontrada." });
 
     let materiales = [];
-    let fotos = [];
+    let fotos      = [];
 
     if (orden.activacion_id) {
       const [mats] = await db.execute(
@@ -280,8 +280,7 @@ router.get(
         [orden.activacion_id]
       );
       materiales = mats;
-      fotos = fts;
-
+      fotos      = fts;
     } else if (orden.averia_id) {
       const [mats] = await db.execute(
         `SELECT p.nombre, p.unidad, am.cantidad
@@ -296,7 +295,7 @@ router.get(
         [orden.averia_id]
       );
       materiales = mats;
-      fotos = fts;
+      fotos      = fts;
     }
 
     res.json({ ...orden, materiales, fotos });
@@ -323,12 +322,7 @@ router.get(
   }
 );
 
-/* ── POST /tecnico/ordenes/:id/completar ────────────────────────────────── */
-/* ── POST /tecnico/ordenes/:id/completar ────────────────────────────────────
-   Reemplaza el endpoint incompleto que tenías.
-   Maneja: activaciones, averías comunes y cambio de ONU.
-   Sube fotos, registra materiales, recicla ONU si aplica.
-─────────────────────────────────────────────────────────────────────────── */
+/* ── POST /tecnico/ordenes/:id/completar ─────────────────────────────────── */
 router.post(
   "/tecnico/ordenes/:id/completar",
   authMiddleware,
@@ -339,7 +333,6 @@ router.post(
     const sedeId    = req.user.sede_id;
     const body      = req.body || {};
 
-    // ── 1. Verificar que la orden existe y está pendiente ──────────────────
     const [[orden]] = await db.execute(
       "SELECT * FROM ordenes_servicio WHERE id = ? AND estado_app = 'pendiente'",
       [ordenId]
@@ -347,51 +340,28 @@ router.post(
     if (!orden)
       return res.status(404).json({ error: "Orden no encontrada o ya completada." });
 
-    // ── 2. Clasificar el tipo de servicio ──────────────────────────────────
     const u = (orden.servicio ?? "").toUpperCase();
-    const esCambioOnu  = u.includes("CAMBIO DE EQUIPO");
-    const esAveria     = u.includes("AVERIA") || esCambioOnu;
-    // todo lo demás (INSTALACION, RECONEXION, etc.) = activación
+    const esCambioOnu = u.includes("CAMBIO DE EQUIPO");
+    const esAveria    = u.includes("AVERIA") || esCambioOnu;
 
-    // ── 3. Parsear items ───────────────────────────────────────────────────
     let items = [];
     try {
       if (body.items) items = typeof body.items === "string" ? JSON.parse(body.items) : body.items;
     } catch (e) { console.error("Error parseando items:", e); }
 
-    const comentario = body.comentario || null;
-    const onuId      = body.onu_id     ? Number(body.onu_id) : null;
-
-    // Datos de ONU recogida (solo cambio de equipo)
-    const onuRecogidaPon       = body.onu_recogida_codigo_pon  || null;
-    const onuRecogidaProductoId= body.onu_recogida_producto_id ? Number(body.onu_recogida_producto_id) : null;
+    const comentario          = body.comentario || null;
+    const onuId               = body.onu_id ? Number(body.onu_id) : null;
+    const onuRecogidaPon      = body.onu_recogida_codigo_pon || null;
+    const onuRecogidaProductoId = body.onu_recogida_producto_id ? Number(body.onu_recogida_producto_id) : null;
 
     const conn = await db.getConnection();
 
     try {
       await conn.beginTransaction();
 
-      let registroId = null; // id de activacion o averia creada
+      let registroId = null;
       let codigo     = null;
 
-      // DEBUG - quitar después
-      console.log("DEBUG vars:", {
-        tecnicoId,
-        ordenId,
-        sedeId,
-        comentario,
-        onuId,
-        onuRecogidaPon,
-        onuRecogidaProductoId,
-        esAveria,
-        esCambioOnu,
-        nro_orden: orden.nro_orden,
-        cliente_id: orden.cliente_id,
-        abonado: orden.abonado,
-        direccion: orden.direccion,
-      });
-
-      // ── 4A. AVERÍA o CAMBIO DE ONU ─────────────────────────────────────
       if (esAveria) {
         codigo = `AV-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
 
@@ -400,88 +370,49 @@ router.post(
              (codigo, nro_orden, nro_contrato, cliente_id, orden_id, tecnico_id,
               cliente, direccion, comentario, onu_id)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [
-            codigo,
-            orden.nro_orden,
-            orden.nro_contrato,
-            orden.cliente_id  || null,
-            Number(ordenId),          // ← agregado
-            tecnicoId,
-            orden.abonado     || null,
-            orden.direccion   || null,
-            comentario,
-            onuId,
-          ]
+          [codigo, orden.nro_orden, orden.nro_contrato, orden.cliente_id || null,
+           Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
         );
         registroId = ins.insertId;
 
-        // Materiales de avería
         for (const item of items) {
           if (!item.producto_id || !item.cantidad) continue;
           await conn.execute(
             "INSERT INTO averia_materiales (averia_id, producto_id, cantidad) VALUES (?,?,?)",
             [registroId, Number(item.producto_id), Number(item.cantidad)]
           );
-          // Descontar del inventario del técnico
           await conn.execute(
-            `UPDATE asignaciones_tecnicos
-             SET cantidad = cantidad - ?
+            `UPDATE asignaciones_tecnicos SET cantidad = cantidad - ?
              WHERE tecnico_id = ? AND producto_id = ?`,
             [Number(item.cantidad), tecnicoId, Number(item.producto_id)]
           );
         }
 
-        // ONU recogida → tabla onus_recicladas
-        // ✅ DESPUÉS
         if (esCambioOnu && onuRecogidaPon) {
-          // 1. Crear el recojo primero
           const codigoRecojo = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
-          console.log("DEBUG recojos params:", [
-            codigoRecojo, tecnicoId, orden.abonado || null,
-            orden.direccion || null, onuRecogidaPon,
-            onuRecogidaProductoId || null, tecnicoId
-          ]);
           const [recojoIns] = await conn.execute(
             `INSERT INTO recojos
-              (codigo, tecnico_id, cliente, direccion,
-                tipo_equipo, codigo_pon, producto_id,
-                estado, registrado_por)
-            VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'pendiente', ?)`,
-            [
-              codigoRecojo,
-              tecnicoId,
-              orden.abonado   || null,
-              orden.direccion || null,
-              onuRecogidaPon,
-              onuRecogidaProductoId || null,
-              tecnicoId,                      // registrado_por = el mismo técnico
-            ]
+               (codigo, tecnico_id, cliente, direccion, tipo_equipo, codigo_pon,
+                producto_id, estado, registrado_por)
+             VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'pendiente', ?)`,
+            [codigoRecojo, tecnicoId, orden.abonado || null, orden.direccion || null,
+             onuRecogidaPon, onuRecogidaProductoId || null, tecnicoId]
           );
           const recojoId = recojoIns.insertId;
-          console.log("DEBUG recojoId:", recojoId);
-
-          // 2. Registrar la ONU reciclada con el recojo_id ya creado
           await conn.execute(
             `INSERT INTO onus_recicladas
-              (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, onu_id)
-            VALUES (?, 'ONU', ?, ?, ?, 'revision', ?)`,
-            [
-              recojoId           || null,
-              onuRecogidaPon     || null,
-              onuRecogidaProductoId || null,
-              sedeId             || null,
-              onuId              || null,   // ← onu_id que ya tienes disponible
-            ]
+               (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, onu_id)
+             VALUES (?, 'ONU', ?, ?, ?, 'revision', ?)`,
+            [recojoId || null, onuRecogidaPon || null, onuRecogidaProductoId || null,
+             sedeId || null, onuId || null]
           );
         }
 
-        // Vincular averia a la orden
         await conn.execute(
           "UPDATE ordenes_servicio SET averia_id = ? WHERE id = ?",
           [registroId, ordenId]
         );
 
-      // ── 4B. ACTIVACIÓN / INSTALACIÓN ───────────────────────────────────
       } else {
         codigo = `ACT-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
 
@@ -490,22 +421,11 @@ router.post(
              (codigo, nro_orden, nro_contrato, cliente_id, orden_id, tecnico_id,
               cliente, direccion, comentario, onu_id)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
-          [
-            codigo,
-            orden.nro_orden,
-            orden.nro_contrato,
-            orden.cliente_id  || null,
-            Number(ordenId),          // ← agregado
-            tecnicoId,
-            orden.abonado     || null,
-            orden.direccion   || null,
-            comentario,
-            onuId,
-          ]
+          [codigo, orden.nro_orden, orden.nro_contrato, orden.cliente_id || null,
+           Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
         );
         registroId = ins.insertId;
 
-        // Materiales de activación
         for (const item of items) {
           if (!item.producto_id || !item.cantidad) continue;
           await conn.execute(
@@ -513,14 +433,12 @@ router.post(
             [registroId, Number(item.producto_id), Number(item.cantidad)]
           );
           await conn.execute(
-            `UPDATE asignaciones_tecnicos
-             SET cantidad = cantidad - ?
+            `UPDATE asignaciones_tecnicos SET cantidad = cantidad - ?
              WHERE tecnico_id = ? AND producto_id = ?`,
             [Number(item.cantidad), tecnicoId, Number(item.producto_id)]
           );
         }
 
-        // Registrar ONU como material si viene
         if (onuId) {
           const [[onuProd]] = await conn.execute(
             "SELECT producto_id FROM onus WHERE id = ?", [onuId]
@@ -530,20 +448,15 @@ router.post(
               "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?,?,1)",
               [registroId, onuProd.producto_id]
             );
-            // Vincular ONU a la activación y sacarla del técnico
             await conn.execute(
               "UPDATE onus SET activacion_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?",
               [registroId, orden.abonado || null, onuId]
             );
-            // Descontar 1 unidad del stock asignado al técnico
             await conn.execute(
-              `UPDATE asignaciones_tecnicos
-               SET cantidad = cantidad - 1
+              `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
                WHERE tecnico_id = ? AND producto_id = ?`,
               [tecnicoId, onuProd.producto_id]
             );
-
-            // Registrar consumo para que getMiInventario lo calcule bien
             await conn.execute(
               `INSERT INTO consumo_tecnico
                  (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
@@ -553,30 +466,21 @@ router.post(
           }
         }
 
-        // Vincular activacion a la orden
         await conn.execute(
           "UPDATE ordenes_servicio SET activacion_id = ? WHERE id = ?",
           [registroId, ordenId]
         );
       }
 
-      // ── 5. Fotos ───────────────────────────────────────────────────────
       const tipo = esAveria ? "averia" : "activacion";
       await moverYGuardarFotos(conn, {
-        tipo,
-        registro_id: registroId,
-        sede_id:     sedeId,
-        cliente:     orden.abonado || null,
-        archivos:    req.files || [],
+        tipo, registro_id: registroId, sede_id: sedeId,
+        cliente: orden.abonado || null, archivos: req.files || [],
       });
 
-      // ── 6. Marcar orden como completada ───────────────────────────────
-      console.log("DEBUG completar:", { tecnicoId, ordenId }); // ← agrega esto
       await conn.execute(
         `UPDATE ordenes_servicio
-         SET estado_app    = 'completada',
-             tecnico_id    = ?,
-             completada_en = NOW()
+         SET estado_app = 'completada', tecnico_id = ?, completada_en = NOW()
          WHERE id = ?`,
         [tecnicoId, ordenId]
       );
