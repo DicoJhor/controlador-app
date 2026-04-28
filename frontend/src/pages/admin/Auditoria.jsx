@@ -129,8 +129,8 @@ function agruparPorFechaYGuia(movimientos) {
   .map(([fecha, guias]) => [
     fecha,
     Object.entries(guias).sort((a, b) => {
-      const fechaA = a[1][0]?.fecha ?? "";
-      const fechaB = b[1][0]?.fecha ?? "";
+      const fechaA = a[1].reduce((max, m) => m.fecha > max ? m.fecha : max, "");
+      const fechaB = b[1].reduce((max, m) => m.fecha > max ? m.fecha : max, "");
       return fechaB.localeCompare(fechaA);
     })
   ]);
