@@ -6,7 +6,7 @@ const auditoriaService = {
   getEnvio:            (id) => api.get(`/envios/${id}`),
   editarEnvio:         (id, data) => api.put(`/envios/${id}`, data),
   eliminarEnvio:       (id) => api.delete(`/envios/${id}`),
-  eliminarEntrada:     (id) => api.delete(`/productos/entradas/${id}`),
+  eliminarEntrada:     (id) => api.delete(`/productos/entrada/${id}`),
 }
 
 export default auditoriaService
