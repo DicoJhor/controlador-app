@@ -3,17 +3,6 @@ import Dexie from 'dexie';
 
 const DB_NAME = 'TecnicoOfflineDB';
 
-// Borra la DB vieja si existe con versión antigua
-async function resetDBIfNeeded() {
-  try {
-    await Dexie.delete(DB_NAME);
-  } catch (e) {
-    console.warn('No se pudo borrar la DB anterior:', e);
-  }
-}
-
-await resetDBIfNeeded();
-
 export const db = new Dexie(DB_NAME);
 
 db.version(1).stores({

@@ -88,7 +88,7 @@ export default function TecLayout() {
       {/* Header */}
       <header className="tec-header">
         <div className="tec-header-left">
-          <span className="tec-header-sede">Enet Fiber Perú</span>
+          <span className="tec-header-sede">VERSION NUEVA 123</span>
           <span className="tec-header-title">{title}</span>
         </div>
         <div className="tec-header-right">

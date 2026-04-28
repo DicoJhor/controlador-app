@@ -1140,7 +1140,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
               <div style={{ fontSize: 11, marginTop: 3, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 }}>
                 <span style={{ fontWeight: 700, color: modeloActual.color }}>{modeloActual.nombre}</span>
                 <span>·</span>
-                <span style={{ fontFamily: "monospace" }}>{ontIp}</span>
+                <span style={{ fontFamily: "monospace" }}>{modeloActual?.ip}</span>
               </div>
             )}
             {estado === "done"  && <div style={{ fontSize: 12, color: "#166534", marginTop: 2 }}>El equipo se está reiniciando. Esperá 2 minutos y probá el servicio.</div>}
