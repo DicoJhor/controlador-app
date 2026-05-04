@@ -175,6 +175,9 @@ export default function AdminAuditoria() {
   const [elimSaving,    setElimSaving]    = useState(false);
   const [elimError,     setElimError]     = useState("");
 
+  const [modalEditarEntrada, setModalEditarEntrada] = useState(false);
+  const [entradaEditar, setEntradaEditar] = useState(null);
+
   useEffect(() => {
     Promise.all([auditoriaService.getAll(), sedesService.getAll()])
       .then(([data, sds]) => { setMovimientos(data); setSedes(sds); setLoading(false); })
@@ -206,36 +209,52 @@ export default function AdminAuditoria() {
 
   const toggleTipo = (tipo) => setFilterTipo(t => t === tipo ? "todos" : tipo);
 
-  const openEditarEnvio = async (guiaKey, items) => {
+    const openEditarEnvio = async (guiaKey, items) => {
     setEditError("");
     try {
       // Buscar el envío completo desde obtenerEnvios
       const envios = await auditoriaService.getEnvios();
-      const guiaReal = guiaKey.replace(/^Guía:\s*/i, "").trim();
-      const envio  = envios.find(e => e.guia === guiaReal);
-      if (!envio) return alert("No se encontró el envío");
+      // Limpiar prefijos de guía (tanto para envíos como recepciones)
+      let guiaReal = guiaKey.replace(/^Guía:\s*/i, "").trim();
+      // Si es recepción, también limpiar "Recibido de: X · Guía: "
+      guiaReal = guiaReal.replace(/^Recibido de: .+ · Guía:\s*/i, "");
+      
+      const envio = envios.find(e => e.guia === guiaReal);
+      if (!envio) return alert("No se encontró el envío/recepción");
 
       setEnvioEditar(envio);
       setEditForm({
-        guia:        envio.guia,
+        guia: envio.guia,
         fecha_envio: envio.fecha_envio
           ? new Date(envio.fecha_envio).toISOString().split("T")[0]
           : "",
-        comentario:  envio.comentario ?? "",
-        sede_id:     String(envio.sede_id ?? ""),
-        productos:   envio.productos.map(p => ({
+        comentario: envio.comentario ?? "",
+        sede_id: String(envio.sede_id ?? ""),
+        productos: envio.productos.map(p => ({
           producto_id: p.producto_id ?? p.id,
           variante_id: p.variante_id ?? null,
-          nombre:      p.nombre,
-          talla:       p.talla ?? null,
-          genero:      p.genero ?? null,
-          cantidad:    p.cantidad,
+          nombre: p.nombre,
+          talla: p.talla ?? null,
+          genero: p.genero ?? null,
+          cantidad: p.cantidad,
         })),
       });
       setModalEditar(true);
     } catch (err) {
-      alert("Error al cargar el envío: " + err.message);
+      alert("Error al cargar el envío/recepción: " + err.message);
     }
+  };
+
+  const openEditarEntrada = (entrada) => {
+    setEditError("");
+    setEntradaEditar(entrada);
+    setEditForm({
+      id: entrada.id,
+      cantidad: entrada.cantidad,
+      comentario: entrada.comentario || "",
+      motivo: entrada.motivo || "",
+    });
+    setModalEditarEntrada(true);
   };
 
   // ✅ DESPUÉS — funciones separadas correctamente
@@ -292,6 +311,31 @@ const handleEliminar = async () => {
       const data = await auditoriaService.getAll();
       setMovimientos(data);
       setModalEditar(false);
+    } catch (err) {
+      setEditError(err.message);
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
+
+
+  const handleEditarEntrada = async () => {
+    setEditError("");
+    if (!editForm.cantidad || editForm.cantidad <= 0) {
+      return setEditError("La cantidad debe ser mayor a 0");
+    }
+
+    setEditSaving(true);
+    try {
+      await auditoriaService.editarEntrada(entradaEditar.id, {
+        cantidad: editForm.cantidad,
+        comentario: editForm.comentario,
+        motivo: editForm.motivo,
+      });
+      const data = await auditoriaService.getAll();
+      setMovimientos(data);
+      setModalEditarEntrada(false);
     } catch (err) {
       setEditError(err.message);
     } finally {
@@ -763,10 +807,20 @@ const handleEliminar = async () => {
                     </span>
                     {isSuperadmin && (
                       <>
-                        {primerItem?.tipo === "envio" && guiaKey !== "sin-guia" && (
+                        {["envio", "recepcion"].includes(primerItem?.tipo) && guiaKey !== "sin-guia" && (
                           <button
                             className="btn btn-outline btn-sm"
                             onClick={() => openEditarEnvio(guiaKey, items)}
+                            style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}
+                          >
+                            <Icon d={IC.edit} size={12} />
+                            Editar
+                          </button>
+                        )}
+                        {primerItem?.tipo === "entrada" && items.length === 1 && (
+                          <button
+                            className="btn btn-outline btn-sm"
+                            onClick={() => openEditarEntrada(items[0])}
                             style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: 8 }}
                           >
                             <Icon d={IC.edit} size={12} />
@@ -996,6 +1050,77 @@ const handleEliminar = async () => {
                 <span style={{ color: "var(--text-muted)" }}>× {m.cantidad}</span>
               </div>
             ))}
+          </div>
+        </Modal>
+      )}
+
+            {/* Modal editar entrada */}
+      {modalEditarEntrada && editForm && (
+        <Modal
+          title="Editar entrada de stock"
+          onClose={() => setModalEditarEntrada(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModalEditarEntrada(false)} disabled={editSaving}>
+                Cancelar
+              </button>
+              <button className="btn btn-primary" onClick={handleEditarEntrada} disabled={editSaving}>
+                {editSaving ? "Guardando..." : "Guardar cambios"}
+              </button>
+            </>
+          }
+        >
+          <div style={{
+            background: "#FEF3C7", border: "1px solid #F59E0B",
+            borderRadius: 8, padding: "10px 14px", marginBottom: 16,
+            display: "flex", gap: 8, alignItems: "flex-start", fontSize: 13,
+          }}>
+            <Icon d={IC.alert} size={15} color="#D97706" />
+            <span style={{ color: "#92400E" }}>
+              <strong>Atención:</strong> Esta acción modifica el stock del producto.
+              Usala solo para corregir errores.
+            </span>
+          </div>
+
+          {editError && (
+            <div className="alert alert-danger" style={{ marginBottom: 12 }}>
+              <Icon d={IC.alert} size={14} color="var(--danger)" /> {editError}
+            </div>
+          )}
+
+          <div className="form-group">
+            <label className="form-label">Producto</label>
+            <input className="form-input" value={entradaEditar?.item} disabled />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Cantidad *</label>
+            <input 
+              className="form-input" 
+              type="number" 
+              min={1}
+              value={editForm.cantidad}
+              onChange={e => setEditForm(prev => ({ ...prev, cantidad: Number(e.target.value) }))}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Motivo</label>
+            <input 
+              className="form-input" 
+              value={editForm.motivo || ""}
+              onChange={e => setEditForm(prev => ({ ...prev, motivo: e.target.value }))}
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Comentario</label>
+            <textarea 
+              className="form-input" 
+              rows={3}
+              value={editForm.comentario || ""}
+              onChange={e => setEditForm(prev => ({ ...prev, comentario: e.target.value }))}
+            />
           </div>
         </Modal>
       )}

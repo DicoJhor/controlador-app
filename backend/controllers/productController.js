@@ -339,3 +339,70 @@ exports.eliminarEntrada = async (req, res) => {
     conn.release()
   }
 }
+
+ // EDITAR ENTRADA DE STOCK
+exports.editarEntrada = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const { id } = req.params;
+    const { cantidad, comentario, motivo } = req.body;
+
+    // Obtener entrada original
+    const [[entradaOriginal]] = await conn.query(
+      `SELECT * FROM entradas_stock WHERE id = ?`, 
+      [id]
+    );
+    
+    if (!entradaOriginal) {
+      return res.status(404).json({ message: "Entrada no encontrada" });
+    }
+
+    const diferenciaCantidad = cantidad - entradaOriginal.cantidad;
+
+    // Actualizar stock del producto
+    await conn.query(
+      "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
+      [diferenciaCantidad, entradaOriginal.producto_id]
+    );
+
+    // Si tiene sede, actualizar stock_sede
+    if (entradaOriginal.sede_id) {
+      const [[stockExiste]] = await conn.query(
+        "SELECT id FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
+        [entradaOriginal.sede_id, entradaOriginal.producto_id]
+      );
+      
+      if (stockExiste) {
+        await conn.query(
+          `UPDATE stock_sede SET cantidad = cantidad + ? 
+           WHERE sede_id = ? AND producto_id = ?`,
+          [diferenciaCantidad, entradaOriginal.sede_id, entradaOriginal.producto_id]
+        );
+      } else if (diferenciaCantidad > 0) {
+        await conn.query(
+          `INSERT INTO stock_sede (sede_id, producto_id, cantidad) VALUES (?, ?, ?)`,
+          [entradaOriginal.sede_id, entradaOriginal.producto_id, cantidad]
+        );
+      }
+    }
+
+    // Actualizar la entrada
+    await conn.query(
+      `UPDATE entradas_stock 
+       SET cantidad = ?, comentario = ?, motivo = ? 
+       WHERE id = ?`,
+      [cantidad, comentario || null, motivo || null, id]
+    );
+
+    await conn.commit();
+    res.json({ message: "Entrada actualizada correctamente" });
+  } catch (err) {
+    await conn.rollback();
+    console.error("❌ Error editarEntrada:", err.message);
+    res.status(500).json({ message: "Error al editar entrada", error: err.message });
+  } finally {
+    conn.release();
+  }
+};

@@ -19,6 +19,7 @@ const activacionesRouter = require("./routes/activacionesRoutes")
 const onuRoutes   = require("./routes/onuRoutes")
 const ordenesRoutes   = require("./routes/ordenesServicioRoutes")
 const activacionRedRoutes = require("./routes/activacionRedRoutes")
+const clientesRoutes      = require("./routes/clientesRoutes")
 
 const path = require('path')
 
@@ -67,6 +68,7 @@ app.use("/api/activaciones", activacionesRouter)
 app.use("/api/onus",  onuRoutes)
 app.use("/api",       ordenesRoutes)
 app.use("/api", activacionRedRoutes)
+app.use("/api/clientes", clientesRoutes)
 
 
 

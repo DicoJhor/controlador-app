@@ -9,7 +9,8 @@ const {
   entradaStockAdmin,
   eliminarEntrada,
   obtenerStockPorSede,
-} = require("../controllers/productController")
+  editarEntrada,        // ✅ NUEVA FUNCIÓN - IMPORTAR
+} = require("../controllers/productController")  // ← OJO: está en productController, no en enviosController
 
 const {
   obtenerVariantes,
@@ -28,6 +29,7 @@ router.get("/stock-sede/:id", verificarToken, verificarRol("admin", "superadmin"
 router.post("/",              verificarToken, verificarRol("admin", "superadmin"), crearProducto)
 router.post("/entrada",       verificarToken, verificarRol("admin", "superadmin"), entradaStockAdmin)
 router.delete("/entrada/:id", verificarToken, verificarRol("superadmin"), eliminarEntrada)
+router.put("/entrada/:id",    verificarToken, verificarRol("superadmin"), editarEntrada)  // ✅ NUEVA RUTA
 router.put("/:id",            verificarToken, verificarRol("admin", "superadmin"), actualizarProducto)
 router.delete("/:id",         verificarToken, verificarRol("superadmin"), eliminarProducto)
 

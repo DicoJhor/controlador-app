@@ -1,14 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import Modal from "../../components/ui/Modal";
-import recojosService from "../../services/recojosService";
-import stockService from "../../services/stockService";
-import api from "../../services/api";
 import ordenesService from "../../services/ordenesService";
 
 const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
-const TIPOS_EQUIPO = ["ONU", "Triplexor", "Roseta", "Patchcord", "Otro"];
-const SIN_SERIE = ["Roseta", "Patchcord", "Triplexor"];
-
 function formatFecha(fecha) {
   if (!fecha) return "—";
   const d = new Date(fecha);
@@ -40,32 +33,6 @@ const IC = {
   refresh: "M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0114.85-3.36L23 10 M1 14l4.64 4.36A9 9 0 0020.49 15",
 };
 
-function MaterialesBadge({ materiales }) {
-  if (!materiales || materiales.length === 0)
-    return <span className="text-muted text-sm">—</span>;
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-      {materiales.map((m, i) => (
-        <span key={i} style={{
-          background: "#F1F5F9", color: "#475569",
-          fontSize: 11, fontWeight: 600,
-          padding: "2px 8px", borderRadius: 20,
-          border: "1px solid #E2E8F0",
-          whiteSpace: "nowrap",
-        }}>
-          {m.nombre}: {m.cantidad} {m.unidad ?? ""}
-        </span>
-      ))}
-    </div>
-  );
-}
-
-// Estado inicial de selección de equipos: cada tipo tiene checked + serie/codigo_pon
-const emptyEquiposCheck = () => TIPOS_EQUIPO.reduce((acc, t) => ({
-  ...acc,
-  [t]: { checked: false, serie: "", codigo_pon: "" }
-}), {});
-
 // DESPUÉS (agrega justo ANTES de esa línea)
 function labelServicio(s = "") {
   const u = s.toUpperCase();
@@ -73,6 +40,7 @@ function labelServicio(s = "") {
   if (u.includes("INSTALACION"))      return "Instalación";
   if (u.includes("AVERIA"))           return "Avería";
   if (u.includes("RECONEXION"))       return "Reconexión";
+  if (u.includes("RECOJO"))           return "Recojo";
   return s;
 }
 function badgeServicio(s = "") {
@@ -80,6 +48,8 @@ function badgeServicio(s = "") {
   if (u.includes("CAMBIO DE EQUIPO")) return "badge-warning";
   if (u.includes("INSTALACION"))      return "badge-active";
   if (u.includes("AVERIA"))           return "badge-danger";
+  if (u.includes("RECONEXION"))       return "badge-blue";
+  if (u.includes("RECOJO"))           return "badge-purple";
   return "badge-blue";
 }
 
@@ -93,18 +63,6 @@ function DetRow({ label, value }) {
 }
 
 export default function CtrlRecojos() {
-  const [tecnicos,      setTecnicos]      = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [error,         setError]         = useState(null);
-
-  // Recojos
-  const [recojos,      setRecojos]      = useState([]);
-  const [searchRecojo, setSearchRecojo] = useState("");
-  const [recojoModal,  setRecojoModal]  = useState(false);
-  const [recojoForm,   setRecojoForm]   = useState({ tecnico_id: "", cliente: "", direccion: "" });
-  const [equiposCheck, setEquiposCheck] = useState(emptyEquiposCheck());
-  const [equiposDrop,  setEquiposDrop]  = useState(false);
-  const [saving,       setSaving]       = useState(false);
 
   // AGREGAR ESTAS LÍNEAS
   const [ordenes,        setOrdenes]        = useState([]);
@@ -116,18 +74,9 @@ export default function CtrlRecojos() {
   const [duplicados,     setDuplicados]     = useState([]);
   const [ordenDetalle,   setOrdenDetalle]   = useState(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
+  const [filtroTipo,     setFiltroTipo]     = useState("todas")
   const fileInputRef = useRef();
 
-  useEffect(() => {
-    Promise.all([
-      recojosService.getAll(),
-      stockService.getStats(),
-    ]).then(([dataRecojos, dataStats]) => {
-      setRecojos(dataRecojos);;
-      setTecnicos(dataStats.misTecnicos);
-      setLoading(false);
-    }).catch(() => { setError("No se pudieron cargar los datos"); setLoading(false); });
-  }, []);
   
   // AGREGAR ESTAS LÍNEAS
   const cargarOrdenes = async () => {
@@ -184,70 +133,14 @@ export default function CtrlRecojos() {
     }
   };
 
-  const filteredOrdenes = ordenes.filter(o =>
-    !searchOrdenes ||
+  const filteredOrdenes = ordenes.filter(o => {
+  const matchSearch = !searchOrdenes ||
     (o.abonado ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
     (o.nro_contrato ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
-    String(o.nro_orden).includes(searchOrdenes)
-  );
-
-
-
-  // ── Recojos ────────────────────────────────────────────
-  const filteredRecojos = recojos.filter(o =>
-    (o.cliente ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
-    (o.serie ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
-    (o.tecnico ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
-    (o.tipo_equipo ?? "").toLowerCase().includes(searchRecojo.toLowerCase())
-  );
-
-  const equiposSeleccionados = TIPOS_EQUIPO.filter(t => equiposCheck[t].checked);
-  const equiposValidos = equiposSeleccionados.length > 0;
-  const recojoFormValido = recojoForm.tecnico_id && equiposValidos;
-
-  const handleCrearRecojo = async () => {
-    setSaving(true);
-    try {
-      const nueva = await recojosService.create({
-        tecnico_id: Number(recojoForm.tecnico_id),
-        cliente:    recojoForm.cliente || null,
-        direccion:  recojoForm.direccion || null,
-        equipos:    equiposSeleccionados.map(t => ({
-          tipo_equipo: t,
-          serie:       null,
-          codigo_pon:  t === "ONU" ? equiposCheck[t].codigo_pon || null : null,
-        })),
-      });
-      const tecnico = tecnicos.find(t => t.id === Number(recojoForm.tecnico_id));
-      const nuevasFilas = nueva.equipos.map(eq => ({
-        ...eq, id: eq.id, grupo_orden: nueva.grupo_orden,
-        tecnico: tecnico?.nombre ?? "—",
-        cliente: recojoForm.cliente, direccion: recojoForm.direccion,
-        estado: "pendiente", created_at: new Date().toISOString(),
-      }));
-      setRecojos(prev => [...nuevasFilas, ...prev]);
-      setRecojoModal(false);
-      setRecojoForm({ tecnico_id: "", cliente: "", direccion: "" });
-      setEquiposCheck(emptyEquiposCheck());
-      setEquiposDrop(false);
-    } catch (err) {
-      alert(err.message);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleMarcarRecogido = async (id) => {
-    try {
-      await api.patchForm(`/recojos/${id}`, new FormData());
-      setRecojos(prev => prev.map(o => o.id === id ? { ...o, estado: "recogido" } : o));
-    } catch (err) {
-      alert(err.message);
-    }
-  };
-
-  if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando datos...</div>;
-  if (error)   return <div className="alert alert-danger">{error}</div>;
+    String(o.nro_orden).includes(searchOrdenes);
+  const matchTipo = filtroTipo === "todas" || labelServicio(o.servicio ?? "") === filtroTipo;
+  return matchSearch && matchTipo;
+});
 
   return (<>
     {/* Modal duplicados */}
@@ -323,6 +216,17 @@ export default function CtrlRecojos() {
               {f.label}
             </button>
           ))}
+          <div style={{ display:"flex", gap:6, flexWrap:"wrap", width:"100%", marginTop:4 }}>
+            {["todas","Instalación","Avería","Reconexión","Cambio ONU","Recojo"].map(t => (
+              <button key={t} type="button" onClick={() => setFiltroTipo(t)}
+                style={{ padding:"4px 14px", borderRadius:20, fontSize:12, fontWeight:600, border:"1.5px solid", cursor:"pointer",
+                  borderColor: filtroTipo===t ? "var(--primary)" : "var(--border)",
+                  background:  filtroTipo===t ? "var(--primary)" : "white",
+                  color:       filtroTipo===t ? "white" : "var(--text-muted)" }}>
+                {t === "todas" ? "Todos los tipos" : t}
+              </button>
+            ))}
+          </div>
           <div className="search-box" style={{ marginLeft:"auto" }}>
             <Icon d={IC.search} size={15} color="var(--text-muted)" />
             <input placeholder="Buscar cliente, contrato u orden..." value={searchOrdenes} onChange={e => setSearchOrdenes(e.target.value)} />
@@ -357,81 +261,6 @@ export default function CtrlRecojos() {
                     <td><span className={`badge ${o.estado_app==="completada" ? "badge-active" : "badge-warning"}`}>
                       {o.estado_app==="completada" ? "Completada" : "Pendiente"}
                     </span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {/* ── SECCIÓN RECOJOS ── */}
-      <div>
-        <div style={styles.sectionHeader}>
-          <div>
-            <div style={styles.sectionTitle}>
-              <Icon d={IC.box} size={18} color="var(--primary)" />
-              Recojos de equipos
-            </div>
-            <div style={styles.sectionSubtitle}>Órdenes de recojo asignadas a técnicos</div>
-          </div>
-          <button className="btn btn-primary" onClick={() => setRecojoModal(true)}>
-            <Icon d={IC.plus} size={15} />
-            Nueva orden
-          </button>
-        </div>
-
-        <div className="toolbar" style={{ marginBottom: 12 }}>
-          <div className="search-box">
-            <Icon d={IC.search} size={16} color="var(--text-muted)" />
-            <input placeholder="Buscar por cliente, serie, equipo o técnico..."
-              value={searchRecojo} onChange={e => setSearchRecojo(e.target.value)} />
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Técnico</th><th>Cliente</th><th>Dirección</th>
-                  <th>Equipo</th><th>Serie</th><th>Fecha</th><th>Estado</th><th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRecojos.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
-                      Sin órdenes de recojo
-                    </td>
-                  </tr>
-                ) : filteredRecojos.map(o => (
-                  <tr key={o.id}>
-                    <td className="fw-600">{o.tecnico}</td>
-                    <td>{o.cliente ?? "—"}</td>
-                    <td className="text-sm">{o.direccion ?? "—"}</td>
-                    <td><span className="badge badge-blue">{o.tipo_equipo ?? "—"}</span></td>
-                    <td><span className="mono">{o.serie ?? "—"}</span></td>
-                    <td className="text-sm text-muted">{formatFecha(o.created_at)}</td>
-                    <td>
-                      <span className={`badge badge-${o.estado === "pendiente" ? "warning" : "active"}`}>
-                        {o.estado === "pendiente" ? "Pendiente" : "Recogido"}
-                      </span>
-                    </td>
-                    <td>
-                      {o.estado === "pendiente" ? (
-                        <button className="btn btn-outline btn-sm" onClick={() => handleMarcarRecogido(o.id)}>
-                          <Icon d={IC.check} size={13} />
-                          Marcar recogido
-                        </button>
-                      ) : o.foto ? (
-                        <a href={`${BASE_URL}/uploads/${o.foto}`} target="_blank" rel="noreferrer"
-                          className="btn btn-outline btn-sm">
-                          <Icon d={IC.image} size={13} />
-                          Ver foto
-                        </a>
-                      ) : null}
-                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -514,106 +343,9 @@ export default function CtrlRecojos() {
           </div>
         </div>
       )}
-
-      {/* ── Modal nueva orden de recojo ── */}
-      {recojoModal && (
-        <Modal title="Nueva orden de recojo"
-          onClose={() => { setRecojoModal(false); setEquiposCheck(emptyEquiposCheck()); setEquiposDrop(false); }}
-          footer={
-            <>
-              <button className="btn btn-outline" onClick={() => setRecojoModal(false)} disabled={saving}>Cancelar</button>
-              <button className="btn btn-primary" onClick={handleCrearRecojo} disabled={saving || !recojoFormValido}>
-                {saving ? "Creando..." : "Crear orden"}
-              </button>
-            </>
-          }
-        >
-          <div className="form-group">
-            <label className="form-label">Técnico *</label>
-            <select className="form-input" value={recojoForm.tecnico_id}
-              onChange={e => setRecojoForm(p => ({ ...p, tecnico_id: e.target.value }))}>
-              <option value="">Seleccionar técnico</option>
-              {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
-            </select>
-          </div>
-          <div className="form-group">
-            <label className="form-label">Cliente</label>
-            <input className="form-input" placeholder="Nombre del cliente"
-              value={recojoForm.cliente} onChange={e => setRecojoForm(p => ({ ...p, cliente: e.target.value }))} />
-          </div>
-          <div className="form-group">
-            <label className="form-label">Dirección</label>
-            <input className="form-input" placeholder="Dirección del recojo"
-              value={recojoForm.direccion} onChange={e => setRecojoForm(p => ({ ...p, direccion: e.target.value }))} />
-          </div>
-
-          {/* Equipos — dropdown con checkboxes */}
-          <div className="form-group" style={{ position: "relative" }}>
-            <label className="form-label">Equipos a recoger *</label>
-
-            {/* Trigger del dropdown */}
-            <button type="button" className="form-input"
-              style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", textAlign: "left", background: "var(--input-bg, #fff)" }}
-              onClick={() => setEquiposDrop(p => !p)}>
-              <span style={{ color: equiposSeleccionados.length ? "var(--text)" : "var(--text-muted)", fontSize: 14 }}>
-                {equiposSeleccionados.length
-                  ? equiposSeleccionados.join(", ")
-                  : "Seleccionar equipos..."}
-              </span>
-              <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}
-                style={{ transform: equiposDrop ? "rotate(180deg)" : "rotate(0deg)", transition: "transform 0.15s", flexShrink: 0 }}>
-                <path d="M6 9l6 6 6-6" />
-              </svg>
-            </button>
-
-            {/* Panel desplegable */}
-            {equiposDrop && (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
-                background: "var(--card-bg, #fff)", border: "1px solid var(--border)",
-                borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.12)", padding: 4, marginTop: 2,
-              }}>
-                {TIPOS_EQUIPO.map(tipo => (
-                  <label key={tipo} style={{
-                    display: "flex", alignItems: "center", gap: 10,
-                    padding: "8px 12px", borderRadius: 6, cursor: "pointer",
-                    transition: "background 0.1s",
-                  }}
-                    onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
-                    <input type="checkbox" checked={equiposCheck[tipo].checked}
-                      onChange={e => setEquiposCheck(p => ({
-                        ...p,
-                        [tipo]: { ...p[tipo], checked: e.target.checked, serie: "", codigo_pon: "" }
-                      }))}
-                      style={{ width: 15, height: 15, accentColor: "var(--primary)", cursor: "pointer" }} />
-                    <span style={{ fontSize: 14, fontWeight: 500 }}>{tipo}</span>
-                  </label>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Campos extra para ONU si está seleccionada */}
-          {equiposCheck["ONU"]?.checked && (
-            <div style={{ background: "var(--hover)", borderRadius: 8, padding: 12, marginTop: -8, marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", marginBottom: 8 }}>ONU</div>
-              <div className="form-group" style={{ margin: 0 }}>
-                <label className="form-label" style={{ fontSize: 11 }}>
-                  Código PON-SN{" "}
-                  <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>(opcional)</span>
-                </label>
-                <input className="form-input" placeholder="Ej: ZTEGC1234567"
-                  value={equiposCheck["ONU"].codigo_pon}
-                  onChange={e => setEquiposCheck(p => ({ ...p, ONU: { ...p.ONU, codigo_pon: e.target.value } }))} />
-              </div>
-            </div>
-          )}
-        </Modal>
-      )}
     </div>
   </>);
+
 }
 
 const styles = {

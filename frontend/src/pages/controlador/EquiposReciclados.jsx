@@ -53,7 +53,7 @@ export default function CtrlEquiposReciclados() {
   const handleRevisar = async (id, estado) => {
     setSaving(id);
     try {
-      await recojosService.revisarEquipo(id, { estado });
+      await recojosService.revisarOnu(id, { estado });
       setEquipos(prev => prev.map(e => e.id === id ? { ...e, estado } : e));
     } catch (err) {
       alert(err.message);

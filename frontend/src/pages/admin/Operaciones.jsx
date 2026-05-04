@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef } from "react";
 import ordenesService from "../../services/ordenesService";
-import recojosService from "../../services/recojosService";
 import sedesService   from "../../services/sedesService";
 
 const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
@@ -37,13 +36,17 @@ function labelServicio(s = "") {
   if (u.includes("INSTALACION"))      return "Instalación";
   if (u.includes("AVERIA"))           return "Avería";
   if (u.includes("RECONEXION"))       return "Reconexión";
+  if (u.includes("RECOJO"))           return "Recojo";   // ← AGREGAR
   return s;
 }
+
 function badgeServicio(s = "") {
   const u = s.toUpperCase();
   if (u.includes("CAMBIO DE EQUIPO")) return "badge-warning";
   if (u.includes("INSTALACION"))      return "badge-active";
   if (u.includes("AVERIA"))           return "badge-danger";
+  if (u.includes("RECONEXION"))       return "badge-blue";  // ← AGREGAR
+  if (u.includes("RECOJO"))           return "badge-purple"; // ← AGREGAR
   return "badge-blue";
 }
 
@@ -62,12 +65,10 @@ export default function AdminOperaciones() {
   const [ordenes,        setOrdenes]        = useState([]);
   const [loadingOrdenes, setLoadingOrdenes] = useState(true);
   const [filtroEstado,   setFiltroEstado]   = useState("todas");
+  const [filtroTipo,     setFiltroTipo]     = useState("todas"); 
   const [searchOrdenes,  setSearchOrdenes]  = useState("");
   const [ordenDetalle,   setOrdenDetalle]   = useState(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
-  const [recojos,        setRecojos]        = useState([]);
-  const [loadingRecojos, setLoadingRecojos] = useState(true);
-  const [searchRecojo,   setSearchRecojo]   = useState("");
   const [error,          setError]          = useState(null);
 
   useEffect(() => {
@@ -85,16 +86,7 @@ export default function AdminOperaciones() {
     finally { setLoadingOrdenes(false); }
   };
 
-  const cargarRecojos = async () => {
-    setLoadingRecojos(true);
-    try {
-      const data = await recojosService.getAllAdmin(sedeFilter || "todas");
-      setRecojos(Array.isArray(data) ? data : []);
-    } catch { setRecojos([]); }
-    finally { setLoadingRecojos(false); }
-  };
-
-  useEffect(() => { cargarOrdenes(); cargarRecojos(); }, [filtroEstado, sedeFilter]);
+  useEffect(() => { cargarOrdenes(); }, [filtroEstado, sedeFilter]);
 
   const abrirDetalle = async (orden) => {
     setOrdenDetalle({ ...orden, materiales: null, fotos: null });
@@ -106,20 +98,16 @@ export default function AdminOperaciones() {
     finally { setLoadingDetalle(false); }
   };
 
-  const filteredOrdenes = ordenes.filter(o =>
-    !searchOrdenes ||
-    (o.abonado      ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
-    (o.nro_contrato ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
-    (o.sede_nombre  ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
-    String(o.nro_orden).includes(searchOrdenes)
-  );
-
-  const filteredRecojos = recojos.filter(o =>
-    !searchRecojo ||
-    (o.cliente    ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
-    (o.tecnico    ?? "").toLowerCase().includes(searchRecojo.toLowerCase()) ||
-    (o.sede_nombre ?? "").toLowerCase().includes(searchRecojo.toLowerCase())
-  );
+  const filteredOrdenes = ordenes.filter(o => {
+    const matchSearch =
+      !searchOrdenes ||
+      (o.abonado      ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
+      (o.nro_contrato ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
+      (o.sede_nombre  ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
+      String(o.nro_orden).includes(searchOrdenes);
+    const matchTipo = filtroTipo === "todas" || labelServicio(o.servicio ?? "") === filtroTipo;
+    return matchSearch && matchTipo;
+  });
 
   if (error) return <div className="alert alert-danger">{error}</div>;
 
@@ -241,6 +229,24 @@ export default function AdminOperaciones() {
                 {f.label}
               </button>
             ))}
+
+            {/* ← AGREGAR ESTE BLOQUE */}
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", width: "100%", marginTop: 4 }}>
+              {["todas", "Instalación", "Avería", "Reconexión", "Cambio ONU", "Recojo"].map(t => (
+                <button key={t} type="button" onClick={() => setFiltroTipo(t)}
+                  style={{
+                    padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                    border: "1.5px solid", cursor: "pointer",
+                    borderColor: filtroTipo === t ? "var(--primary)" : "var(--border)",
+                    background:  filtroTipo === t ? "var(--primary)" : "white",
+                    color:       filtroTipo === t ? "white" : "var(--text-muted)",
+                  }}>
+                  {t === "todas" ? "Todos los tipos" : t}
+                </button>
+              ))}
+            </div>
+            {/* ← FIN BLOQUE */}
+
             <div className="search-box" style={{ marginLeft: "auto" }}>
               <Icon d={IC.search} size={15} color="var(--text-muted)" />
               <input placeholder="Buscar abonado, contrato, sede..." value={searchOrdenes} onChange={e => setSearchOrdenes(e.target.value)} />
@@ -277,64 +283,6 @@ export default function AdminOperaciones() {
             </div>
           </div>
         </div>
-
-        {/* ── RECOJOS ── */}
-        <div>
-          <div style={styles.sectionHeader}>
-            <div>
-              <div style={styles.sectionTitle}>
-                <Icon d={IC.box} size={18} color="var(--primary)" />
-                Recojos de equipos
-              </div>
-              <div style={styles.sectionSubtitle}>Equipos pendientes de recojo por técnico</div>
-            </div>
-            <button onClick={cargarRecojos} style={{ padding: "5px 10px", borderRadius: 20, fontSize: 12, border: "1.5px solid var(--border)", background: "white", cursor: "pointer", display: "flex", alignItems: "center", gap: 4 }}>
-              <Icon d={IC.refresh} size={12} />
-            </button>
-          </div>
-
-          <div style={{ marginBottom: 12 }}>
-            <div className="search-box">
-              <Icon d={IC.search} size={15} color="var(--text-muted)" />
-              <input placeholder="Buscar por cliente, técnico o sede..." value={searchRecojo} onChange={e => setSearchRecojo(e.target.value)} />
-            </div>
-          </div>
-
-          <div className="card">
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr><th>Sede</th><th>Técnico</th><th>Cliente</th><th>Equipo</th><th>Código PON</th><th>Fecha</th><th>Estado</th><th>Foto</th></tr>
-                </thead>
-                <tbody>
-                  {loadingRecojos ? (
-                    <tr><td colSpan={8} style={{ textAlign: "center", padding: 24, color: "var(--text-muted)" }}>Cargando...</td></tr>
-                  ) : filteredRecojos.length === 0 ? (
-                    <tr><td colSpan={8} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>Sin recojos registrados.</td></tr>
-                  ) : filteredRecojos.map(o => (
-                    <tr key={o.id}>
-                      <td className="text-sm">{o.sede_nombre ?? "—"}</td>
-                      <td className="fw-600">{o.tecnico}</td>
-                      <td>{o.cliente ?? "—"}</td>
-                      <td><span className="badge badge-blue">{o.tipo_equipo ?? "—"}</span></td>
-                      <td><span className="mono text-sm">{o.codigo_pon ?? "—"}</span></td>
-                      <td className="text-sm text-muted">{formatFecha(o.created_at)}</td>
-                      <td><span className={`badge badge-${o.estado === "pendiente" ? "warning" : "active"}`}>
-                        {o.estado === "pendiente" ? "Pendiente" : "Recogido"}
-                      </span></td>
-                      <td>
-                        {o.foto
-                          ? <a href={`${BASE_URL}/uploads/${o.foto}`} target="_blank" rel="noreferrer" className="btn btn-outline btn-sm"><Icon d={IC.image} size={13} /> Ver foto</a>
-                          : <span className="text-muted text-sm">—</span>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
       </div>
     </>
   );

@@ -404,3 +404,105 @@ exports.eliminarEnvio = async (req, res) => {
     conn.release()
   }
 }
+
+// EDITAR ENTRADA DE STOCK
+exports.editarEntrada = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const { id } = req.params;
+    const { cantidad, comentario, motivo } = req.body;
+
+    // Obtener entrada original
+    const [[entradaOriginal]] = await conn.query(
+      `SELECT e.*, p.nombre as producto_nombre 
+       FROM entradas_stock e 
+       JOIN productos p ON p.id = e.producto_id 
+       WHERE e.id = ?`, 
+      [id]
+    );
+    
+    if (!entradaOriginal) {
+      return res.status(404).json({ message: "Entrada no encontrada" });
+    }
+
+    const diferenciaCantidad = cantidad - entradaOriginal.cantidad;
+
+    // Actualizar stock del producto
+    await conn.query(
+      "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
+      [diferenciaCantidad, entradaOriginal.producto_id]
+    );
+
+    // Si tiene sede, actualizar stock_sede
+    if (entradaOriginal.sede_id) {
+      await conn.query(
+        `UPDATE stock_sede SET cantidad = cantidad + ? 
+         WHERE sede_id = ? AND producto_id = ?`,
+        [diferenciaCantidad, entradaOriginal.sede_id, entradaOriginal.producto_id]
+      );
+    }
+
+    // Actualizar la entrada
+    await conn.query(
+      `UPDATE entradas_stock 
+       SET cantidad = ?, comentario = ?, motivo = ? 
+       WHERE id = ?`,
+      [cantidad, comentario || null, motivo || null, id]
+    );
+
+    await conn.commit();
+    res.json({ message: "Entrada actualizada correctamente" });
+  } catch (err) {
+    await conn.rollback();
+    console.error("❌ Error editarEntrada:", err.message);
+    res.status(500).json({ message: "Error al editar entrada", error: err.message });
+  } finally {
+    conn.release();
+  }
+};
+
+// ELIMINAR ENTRADA DE STOCK
+exports.eliminarEntrada = async (req, res) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.beginTransaction();
+
+    const { id } = req.params;
+
+    const [[entrada]] = await conn.query(
+      "SELECT * FROM entradas_stock WHERE id = ?", 
+      [id]
+    );
+    
+    if (!entrada) {
+      return res.status(404).json({ message: "Entrada no encontrada" });
+    }
+
+    // Revertir stock
+    await conn.query(
+      "UPDATE productos SET stock_total = stock_total - ? WHERE id = ?",
+      [entrada.cantidad, entrada.producto_id]
+    );
+
+    if (entrada.sede_id) {
+      await conn.query(
+        "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+        [entrada.cantidad, entrada.sede_id, entrada.producto_id]
+      );
+    }
+
+    // Eliminar la entrada
+    await conn.query("DELETE FROM entradas_stock WHERE id = ?", [id]);
+
+    await conn.commit();
+    res.json({ message: "Entrada eliminada correctamente" });
+  } catch (err) {
+    await conn.rollback();
+    console.error("❌ Error eliminarEntrada:", err.message);
+    res.status(500).json({ message: "Error al eliminar entrada", error: err.message });
+  } finally {
+    conn.release();
+  }
+};

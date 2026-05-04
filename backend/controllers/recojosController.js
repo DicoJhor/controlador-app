@@ -201,8 +201,8 @@ exports.confirmarTecnico = async (req, res) => {
 
       await conn.query(
         `INSERT INTO onus_recicladas
-           (recojo_id, tipo_equipo, onu_id, codigo_pon, producto_id, sede_id, estado)
-         VALUES (?, ?, ?, ?, ?, ?, 'revision')`,
+          (recojo_id, tipo_equipo, onu_id, codigo_pon, producto_id, sede_id, estado, estado_tecnico)
+        VALUES (?, ?, ?, ?, ?, ?, 'revision', 'en_mano')`,
         [item.id, item.tipo_equipo, onu_id, codigoPonFinal, producto_id, sede_id]
       )
     }
@@ -244,7 +244,7 @@ exports.getEquiposReciclados = async (req, res) => {
       JOIN recojos r    ON er.recojo_id  = r.id
       JOIN usuarios u   ON r.tecnico_id  = u.id
       LEFT JOIN productos p ON er.producto_id = p.id
-      WHERE er.sede_id = ?
+      WHERE er.sede_id = ? AND er.estado_tecnico = 'enviado_sede'
       ORDER BY er.created_at DESC
     `, [sede_id])
     res.json(rows)
@@ -405,5 +405,83 @@ exports.eliminarEntrada = async (req, res) => {
     res.status(500).json({ message: "Error al eliminar entrada", error: err.message })
   } finally {
     conn.release()
+  }
+}
+
+// ── getMisRecuperados (técnico ve sus materiales en mano) ─────────────────
+exports.getMisRecuperados = async (req, res) => {
+  try {
+    const tecnico_id = req.user.id
+    const [rows] = await db.query(`
+      SELECT
+        er.id, er.tipo_equipo, er.codigo_pon, er.estado_tecnico,
+        er.created_at, er.producto_id,
+        r.cliente, r.direccion, r.codigo AS recojo_codigo,
+        p.nombre AS producto_nombre
+      FROM onus_recicladas er
+      JOIN recojos r        ON er.recojo_id  = r.id
+      LEFT JOIN productos p ON er.producto_id = p.id
+      WHERE r.tecnico_id = ? AND er.estado_tecnico = 'en_mano'
+      ORDER BY er.created_at DESC
+    `, [tecnico_id])
+    res.json(rows)
+  } catch (err) {
+    console.error('❌ Error getMisRecuperados:', err.message)
+    res.status(500).json({ message: 'Error al obtener materiales recuperados' })
+  }
+}
+
+// ── enviarASede (técnico envía material recuperado a la sede) ─────────────
+exports.enviarASede = async (req, res) => {
+  try {
+    const tecnico_id = req.user.id
+    const { id }     = req.params
+
+    // Verificar que el equipo pertenece al técnico y está en mano
+    const [[equipo]] = await db.query(`
+      SELECT er.id FROM onus_recicladas er
+      JOIN recojos r ON er.recojo_id = r.id
+      WHERE er.id = ? AND r.tecnico_id = ? AND er.estado_tecnico = 'en_mano'
+    `, [id, tecnico_id])
+
+    if (!equipo)
+      return res.status(404).json({ message: 'Material no encontrado o ya enviado' })
+
+    await db.query(
+      `UPDATE onus_recicladas SET estado_tecnico = 'enviado_sede' WHERE id = ?`,
+      [id]
+    )
+
+    res.json({ message: 'Material enviado a sede para revisión' })
+  } catch (err) {
+    console.error('❌ Error enviarASede:', err.message)
+    res.status(500).json({ message: 'Error al enviar material a sede' })
+  }
+}
+
+// ── marcarUsado (cuando el técnico usa el material en una orden) ──────────
+exports.marcarRecuperadoUsado = async (req, res) => {
+  try {
+    const tecnico_id = req.user.id
+    const { id }     = req.params
+
+    const [[equipo]] = await db.query(`
+      SELECT er.id FROM onus_recicladas er
+      JOIN recojos r ON er.recojo_id = r.id
+      WHERE er.id = ? AND r.tecnico_id = ? AND er.estado_tecnico = 'en_mano'
+    `, [id, tecnico_id])
+
+    if (!equipo)
+      return res.status(404).json({ message: 'Material no encontrado' })
+
+    await db.query(
+      `UPDATE onus_recicladas SET estado_tecnico = 'usado' WHERE id = ?`,
+      [id]
+    )
+
+    res.json({ message: 'Material marcado como usado' })
+  } catch (err) {
+    console.error('❌ Error marcarRecuperadoUsado:', err.message)
+    res.status(500).json({ message: 'Error al marcar material como usado' })
   }
 }

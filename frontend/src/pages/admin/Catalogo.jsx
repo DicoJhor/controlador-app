@@ -25,7 +25,7 @@ const IC = {
   ruler:   "M2 12h20 M12 2v20",
 };
 
-const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros", "ropa", "rollo", "onu", "infraestructura"];
+const CATEGORIAS = ["cables", "equipos", "accesorios", "herramientas", "otros", "ropa", "rollo", "onu", "infraestructura", "Herramientas"];
 const TALLAS     = ["XS", "S", "M", "L", "XL", "XXL"];
 const GENEROS    = ["masculino", "femenino", "unisex"];
 

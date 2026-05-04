@@ -18,6 +18,7 @@ import AdminInventario   from "../pages/admin/Inventario";
 import AdminAuditoria    from "../pages/admin/Auditoria";
 import AdminCatalogo     from "../pages/admin/Catalogo";
 import ActivacionesRed from "../pages/admin/ActivacionesRed";
+import AdminClientes from "../pages/admin/Clientes";
 
 // Controlador
 import CtrlDashboard   from "../pages/controlador/Dashboard";
@@ -26,6 +27,7 @@ import CtrlInventario  from "../pages/controlador/Inventario";
 import CtrlAuditoria   from "../pages/controlador/Auditoria";
 import CtrlRecojos   from "../pages/controlador/Recojos";
 import CtrlOnusRecicladas  from "../pages/controlador/EquiposReciclados";
+import CtrlClientes  from "../pages/controlador/Clientes";
 
 
 
@@ -36,6 +38,7 @@ import TecHistorial       from "../pages/tecnico/Historial";
 import TecRecojos   from "../pages/tecnico/Recojos";
 import TecConfigurarONU from "../pages/tecnico/TecConfigurarONU";
 import TecLayout          from "../components/layout/TecLayout";
+import Clientes from "../pages/controlador/Clientes";
 
 
 /**
@@ -75,6 +78,7 @@ export default function AppRouter() {
             <Route path="/admin/catalogo"   element={<AdminCatalogo />} />
             <Route path="/admin/auditoria"  element={<AdminAuditoria />} />
             <Route path="/admin/activaciones-red" element={<ActivacionesRed />} />
+            <Route path="/admin/clientes" element={<AdminClientes />} />
           </Route>
         </Route>
 
@@ -87,6 +91,7 @@ export default function AppRouter() {
             <Route path="/controlador/auditoria"  element={<CtrlAuditoria />} />
             <Route path="/controlador/recojos"  element={<CtrlRecojos />} />
             <Route path="/controlador/onus-recicladas"  element={<CtrlOnusRecicladas />} />
+            <Route path="/controlador/clientes"  element={<Clientes />} />
 
 
           </Route>

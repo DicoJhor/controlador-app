@@ -46,6 +46,7 @@ const navConfig = {
         { to: "/admin/catalogo",     label: "Catálogo",      icon: IC.package  },
         { to: "/admin/auditoria",    label: "Auditoría",    icon: IC.audit     },
         { to: "/admin/operaciones",  label: "Operaciones",  icon: IC.package   },
+        { to: "/admin/clientes",     label: "Clientes",     icon: IC.users     },
       ],
     },
   ],
@@ -66,6 +67,7 @@ const navConfig = {
         { to: "/admin/catalogo",     label: "Catálogo",     icon: IC.package   },
         { to: "/admin/auditoria",    label: "Auditoría",    icon: IC.audit     },
         { to: "/admin/operaciones",  label: "Operaciones",  icon: IC.package   },
+        { to: "/admin/clientes",     label: "Clientes",     icon: IC.users     }
       ],
     },
   ],
@@ -77,6 +79,7 @@ const navConfig = {
         { to: "/controlador/dashboard",   label: "Dashboard",    icon: IC.dashboard },
         { to: "/controlador/tecnicos",    label: "Mis Técnicos", icon: IC.users     },
         { to: "/controlador/recojos",     label: "Operaciones",  icon: IC.package   },
+        { to: "/controlador/clientes",     label: "Clientes",  icon: IC.package   },
       ],
     },
     {

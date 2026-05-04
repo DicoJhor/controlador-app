@@ -222,20 +222,25 @@ router.get(
       params.push(estado);
     }
 
-    const [rows] = await db.execute(
-      `SELECT o.*,
-              s.nombre AS sede_nombre,
-              c.nombre AS cliente_nombre,
-              u.nombre AS tecnico_nombre
-       FROM ordenes_servicio o
-       LEFT JOIN sedes s    ON o.sede_id    = s.id
-       LEFT JOIN clientes c ON o.cliente_id = c.id
-       LEFT JOIN usuarios u ON o.tecnico_id = u.id
-       WHERE ${where.join(" AND ")}
-       ORDER BY o.created_at DESC`,
-      params
-    );
-    res.json(rows);
+    try {
+      const [rows] = await db.execute(
+        `SELECT o.*,
+                s.nombre AS sede_nombre,
+                c.nombre AS cliente_nombre,
+                u.nombre AS tecnico_nombre
+         FROM ordenes_servicio o
+         LEFT JOIN sedes s    ON o.sede_id    = s.id
+         LEFT JOIN clientes c ON o.cliente_id = c.id
+         LEFT JOIN usuarios u ON o.tecnico_id = u.id
+         WHERE ${where.join(" AND ")}
+         ORDER BY o.created_at DESC`,
+        params
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error("Error GET /admin/ordenes:", err);
+      res.status(500).json({ error: err.message });
+    }
   }
 );
 

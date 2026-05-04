@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import tecnicoService   from "../../services/tecnicoService";
 import onuService       from "../../services/onuService";
+import recojosService   from "../../services/recojosService";
 import { db }           from "../../db/localDB";
 import { fileToBase64 } from "../../services/syncService";
 import { useOnlineStatus } from "../../hooks/useOnlineStatus";
 import TecConfigurarONU from "./TecConfigurarONU";
 
-/* ─── Iconos ──────────────────────────────────────────────────────────────── */
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
@@ -15,6 +15,7 @@ function Icon({ d, size = 16, color = "currentColor" }) {
     </svg>
   );
 }
+
 const IC = {
   wifi:      "M5 12.55a11 11 0 0114.08 0 M1.42 9a16 16 0 0121.16 0 M8.53 16.11a6 6 0 016.95 0 M12 20h.01",
   wrench:    "M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z",
@@ -32,9 +33,55 @@ const IC = {
   repeat:    "M17 1l4 4-4 4 M3 11V9a4 4 0 014-4h14 M7 23l-4-4 4-4 M21 13v2a4 4 0 01-4 4H3",
   list:      "M8 6h13 M8 12h13 M8 18h13 M3 6h.01 M3 12h.01 M3 18h.01",
   server:    "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-.99l7-3 7 3c.6.27 1 .86 1 1.5v6z",
+  recycle:   "M4 2v6h6 M20 22v-6h-6 M20 11A8 8 0 004.93 7.1 M4 13a8 8 0 0015.07 3.9",
 };
 
-/* ─── Helpers tipo de servicio ─────────────────────────────────────────────── */
+function limpiarTelefono(raw = "") {
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, "");
+  if (digits.length < 7) return null;
+  if (digits.startsWith("51") && digits.length === 11) return digits;
+  if (digits.length === 9) return `51${digits}`;
+  return `51${digits.slice(-9)}`;
+}
+
+function mensajeWhatsApp(servicio = "", abonado = "") {
+  const u = servicio.toUpperCase();
+  const nombre = abonado.split(" ")[0];
+  if (u.includes("INSTALACION"))      return `Hola ${nombre}, soy el técnico de la empresa. Me encuentro en camino para realizar su instalación de internet. ¿Se encuentra disponible?`;
+  if (u.includes("CAMBIO DE EQUIPO")) return `Hola ${nombre}, soy el técnico de la empresa. Vengo a realizar el cambio de equipo (ONU) en su domicilio. ¿Se encuentra disponible?`;
+  if (u.includes("AVERIA"))           return `Hola ${nombre}, soy el técnico de la empresa. Estoy yendo a su domicilio para revisar y solucionar la avería reportada. ¿Se encuentra disponible?`;
+  if (u.includes("RECONEXION"))       return `Hola ${nombre}, soy el técnico de la empresa. Voy a su domicilio para realizar la reconexión del servicio. ¿Se encuentra disponible?`;
+  if (u.includes("RECOJO"))           return `Hola ${nombre}, soy el técnico de la empresa. Paso a retirar los equipos de su domicilio. ¿Se encuentra disponible?`;
+  return `Hola ${nombre}, soy el técnico de la empresa. Me dirijo a su domicilio. ¿Se encuentra disponible?`;
+}
+
+function BtnWhatsApp({ telefono, servicio, abonado }) {
+  const numero = limpiarTelefono(telefono);
+  if (!numero) return null;
+  const msg  = mensajeWhatsApp(servicio, abonado);
+  const href = `https://wa.me/${numero}?text=${encodeURIComponent(msg)}`;
+  return (
+    <a href={href} target="_blank" rel="noreferrer"
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 7,
+        padding: "7px 14px", borderRadius: 8,
+        background: "#25D366", color: "white",
+        fontWeight: 700, fontSize: 13,
+        textDecoration: "none", border: "none",
+        boxShadow: "0 1px 4px rgba(37,211,102,.35)",
+        transition: "opacity .15s",
+      }}
+      onMouseEnter={e => e.currentTarget.style.opacity = "0.85"}
+      onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
+      <svg width={15} height={15} viewBox="0 0 24 24" fill="white">
+        <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+      </svg>
+      Avisar al cliente
+    </a>
+  );
+}
+
 function clasificarServicio(s = "") {
   const u = s.toUpperCase();
   if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia", tipoAveria: "cambio_onu" };
@@ -60,7 +107,6 @@ function badgeStyle(s = "") {
   return { bg: "var(--hover)", color: "var(--text)", border: "var(--border)", icon: IC.list };
 }
 
-/* ─── MultiPhotoUploader ───────────────────────────────────────────────────── */
 function MultiPhotoUploader({ fotos, onChange, maxFotos = 5 }) {
   const handleAdd = (e) => {
     const files  = Array.from(e.target.files);
@@ -97,29 +143,125 @@ function MultiPhotoUploader({ fotos, onChange, maxFotos = 5 }) {
   );
 }
 
-/* ─── ItemSelector ─────────────────────────────────────────────────────────── */
-function ItemSelector({ inventario, misOnus, items, onChange }) {
-  const yaAgregados = items.map(i => String(i.producto_id));
-  const add    = () => onChange([...items, { producto_id: "", cantidad: "", onu_id: null }]);
+// ── ItemSelector con soporte de materiales recuperados ───────────────────────
+function ItemSelector({ inventario, misOnus, recuperados = [], items, onChange }) {
+  const yaAgregados       = items.map(i => String(i.producto_id));
+  const yaAgregadosRecIds = items.map(i => i.recuperado_id).filter(Boolean);
+
+  const add    = () => onChange([...items, { producto_id: "", cantidad: "", onu_id: null, recuperado_id: null }]);
   const remove = (idx) => onChange(items.filter((_, i) => i !== idx));
   const update = (idx, key, value) =>
     onChange(items.map((item, i) => {
       if (i !== idx) return item;
-      if (key === "producto_id") return { ...item, [key]: value, onu_id: null, cantidad: "" };
+      if (key === "producto_id") return { ...item, [key]: value, onu_id: null, cantidad: "", recuperado_id: null };
       return { ...item, [key]: value };
     }));
 
+  const addRecuperado = (rec) => {
+    if (yaAgregadosRecIds.includes(rec.id)) return;
+    onChange([...items, {
+      producto_id:   String(rec.producto_id),
+      cantidad:      "1",
+      onu_id:        null,
+      recuperado_id: rec.id,
+      _nombre:       rec.producto_nombre,
+      _esRecuperado: true,
+    }]);
+  };
+
   return (
     <div>
+      {/* ── Materiales recuperados disponibles ── */}
+      {recuperados.length > 0 && (
+        <div style={{
+          marginBottom: 14, padding: "10px 12px",
+          background: "#faf5ff", borderRadius: 8,
+          border: "1px solid #e9d5ff",
+        }}>
+          <div style={{
+            fontSize: 11, fontWeight: 700, color: "#7c3aed",
+            textTransform: "uppercase", letterSpacing: 0.5,
+            marginBottom: 8, display: "flex", alignItems: "center", gap: 6,
+          }}>
+            <Icon d={IC.recycle} size={12} color="#7c3aed" />
+            Materiales recuperados en tu poder
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {recuperados.map(rec => {
+              const yaAgregado = yaAgregadosRecIds.includes(rec.id);
+              return (
+                <button
+                  key={rec.id}
+                  type="button"
+                  onClick={() => addRecuperado(rec)}
+                  disabled={yaAgregado}
+                  style={{
+                    padding: "5px 12px", borderRadius: 7, fontSize: 12,
+                    fontWeight: 600, cursor: yaAgregado ? "default" : "pointer",
+                    border: "1px solid",
+                    borderColor: yaAgregado ? "#d8b4fe" : "#a855f7",
+                    background:  yaAgregado ? "#ede9fe" : "white",
+                    color:       yaAgregado ? "#9ca3af" : "#7c3aed",
+                    display: "flex", alignItems: "center", gap: 5,
+                    transition: "all .15s",
+                  }}>
+                  {yaAgregado
+                    ? <Icon d={IC.check} size={11} color="#9ca3af" />
+                    : <Icon d={IC.plus}  size={11} color="#7c3aed" />
+                  }
+                  {rec.producto_nombre || rec.tipo_equipo}
+                  {rec.codigo_pon && (
+                    <span style={{ fontFamily: "monospace", fontSize: 11, color: "#9ca3af" }}>
+                      · {rec.codigo_pon}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 6 }}>
+            Tocá para agregar como material usado en esta orden
+          </div>
+        </div>
+      )}
+
+      {/* ── Items seleccionados ── */}
       {items.length === 0 && (
         <div style={{ fontSize: 13, color: "var(--text-muted)", padding: "6px 0 10px" }}>
           Agregá los materiales utilizados.
         </div>
       )}
+
       {items.map((item, idx) => {
+        // Si es material recuperado, mostrar fila simplificada
+        if (item._esRecuperado) {
+          return (
+            <div key={idx} style={{
+              marginBottom: 10, padding: "8px 12px",
+              background: "#faf5ff", borderRadius: 8,
+              border: "1px solid #e9d5ff",
+              display: "flex", alignItems: "center", gap: 10,
+            }}>
+              <Icon d={IC.recycle} size={14} color="#7c3aed" />
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "#7c3aed" }}>
+                  {item._nombre || "Material recuperado"}
+                </div>
+                <div style={{ fontSize: 11, color: "#9ca3af" }}>Material recuperado · cantidad: 1</div>
+              </div>
+              <button className="btn btn-danger-outline btn-sm btn-icon"
+                onClick={() => remove(idx)} type="button"
+                style={{ minWidth: 32, minHeight: 32 }}>
+                <Icon d={IC.trash} size={13} />
+              </button>
+            </div>
+          );
+        }
+
         const prod  = inventario.find(i => String(i.producto_id) === String(item.producto_id));
         const esOnu = prod?.categoria === "onu";
         const onus  = misOnus.filter(o => String(o.producto_id) === String(item.producto_id));
+
         return (
           <div key={idx} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
@@ -129,7 +271,11 @@ function ItemSelector({ inventario, misOnus, items, onChange }) {
                   <option value="">Seleccionar ítem...</option>
                   {inventario.map(i => (
                     <option key={i.producto_id} value={i.producto_id}
-                      disabled={(yaAgregados.includes(String(i.producto_id)) && String(i.producto_id) !== String(item.producto_id)) || i.disponible <= 0}>
+                      disabled={
+                        (yaAgregados.includes(String(i.producto_id)) &&
+                         String(i.producto_id) !== String(item.producto_id)) ||
+                        i.disponible <= 0
+                      }>
                       {i.nombre} — disp: {i.disponible} {i.es_medible ? "m" : i.unidad}
                     </option>
                   ))}
@@ -141,7 +287,8 @@ function ItemSelector({ inventario, misOnus, items, onChange }) {
                     step={prod?.es_medible ? "0.01" : "1"}
                     placeholder={prod?.es_medible ? "Ej: 2.5" : "Cant."}
                     value={item.cantidad} max={prod?.disponible}
-                    onChange={e => update(idx, "cantidad", e.target.value)} style={{ fontSize: 14 }} />
+                    onChange={e => update(idx, "cantidad", e.target.value)}
+                    style={{ fontSize: 14 }} />
                   {prod && (
                     <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                       {prod.es_medible ? "metros" : prod.unidad} · máx {prod.disponible}
@@ -150,7 +297,8 @@ function ItemSelector({ inventario, misOnus, items, onChange }) {
                 </div>
               )}
               <button className="btn btn-danger-outline btn-sm btn-icon"
-                onClick={() => remove(idx)} type="button" style={{ marginTop: 2, minWidth: 36, minHeight: 36 }}>
+                onClick={() => remove(idx)} type="button"
+                style={{ marginTop: 2, minWidth: 36, minHeight: 36 }}>
                 <Icon d={IC.trash} size={13} />
               </button>
             </div>
@@ -186,14 +334,14 @@ function ItemSelector({ inventario, misOnus, items, onChange }) {
           </div>
         );
       })}
+
       <button className="btn btn-outline btn-sm" style={{ marginTop: 4 }} onClick={add} type="button">
-        <Icon d={IC.plus} size={13} /> Agregar material
+        <Icon d={IC.plus} size={13} /> Agregar material del inventario
       </button>
     </div>
   );
 }
 
-/* ─── OrdenCard ─────────────────────────────────────────────────────────────── */
 function OrdenCard({ orden, onSeleccionar }) {
   const bs    = badgeStyle(orden.servicio);
   const label = labelServicio(orden.servicio);
@@ -202,35 +350,28 @@ function OrdenCard({ orden, onSeleccionar }) {
       style={{ padding: "14px 16px", borderRadius: 12, border: "1.5px solid var(--border)", background: "var(--card-bg,white)", cursor: "pointer", transition: "all .15s", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start" }}
       onMouseEnter={e => { e.currentTarget.style.borderColor = "var(--primary)"; e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,.08)"; }}
       onMouseLeave={e => { e.currentTarget.style.borderColor = "var(--border)";  e.currentTarget.style.boxShadow = "none"; }}>
-
       <div style={{ width: 40, height: 40, borderRadius: 10, background: bs.bg, border: `1px solid ${bs.border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <Icon d={bs.icon} size={18} color={bs.color} />
       </div>
-
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
           <span style={{ fontWeight: 700, fontSize: 14 }}>{orden.abonado}</span>
           <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: bs.bg, color: bs.color, border: `1px solid ${bs.border}` }}>
             {label}
           </span>
-          <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>
-            #{orden.nro_orden}
-          </span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>#{orden.nro_orden}</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2, display: "flex", alignItems: "center", gap: 4 }}>
           <Icon d={IC.mapPin} size={11} color="var(--text-muted)" />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{orden.direccion}</span>
         </div>
-        <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace" }}>
-          {orden.nro_contrato}
-        </div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace" }}>{orden.nro_contrato}</div>
         {orden.observacion && (
           <div style={{ fontSize: 12, color: "#78350f", padding: "4px 8px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 6, marginTop: 6 }}>
             💬 {orden.observacion}
           </div>
         )}
       </div>
-
       <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 12 }}>
         <path d="M9 18l6-6-6-6" />
       </svg>
@@ -238,62 +379,73 @@ function OrdenCard({ orden, onSeleccionar }) {
   );
 }
 
-/* ─── Componente principal ─────────────────────────────────────────────────── */
 export default function TecRegistrarSalida() {
   useOnlineStatus();
 
-  const [inventario,     setInventario]     = useState([]);
-  const [misOnus,        setMisOnus]        = useState([]);
-  const [catalogoOnus,   setCatalogoOnus]   = useState([]);
-  const [ordenes,        setOrdenes]        = useState([]);
-  const [loading,        setLoading]        = useState(true);
-  const [loadingOrdenes, setLoadingOrdenes] = useState(true);
+  const [inventario,      setInventario]      = useState([]);
+  const [misOnus,         setMisOnus]         = useState([]);
+  const [catalogoOnus,    setCatalogoOnus]    = useState([]);
+  const [recuperados,     setRecuperados]     = useState([]);
+  const [ordenes,         setOrdenes]         = useState([]);
+  const [loading,         setLoading]         = useState(true);
+  const [loadingOrdenes,  setLoadingOrdenes]  = useState(true);
 
-  const [ordenActual,        setOrdenActual]        = useState(null);
-  const [items,              setItems]              = useState([]);
-  const [fotos,              setFotos]              = useState([]);
-  const [comentario,         setComentario]         = useState("");
-  const [onuRecogidaPon,     setOnuRecogidaPon]     = useState("");
-  const [onuRecogidaProducto,setOnuRecogidaProducto]= useState("");
+  const [ordenActual,         setOrdenActual]         = useState(null);
+  const [items,               setItems]               = useState([]);
+  const [fotos,               setFotos]               = useState([]);
+  const [comentario,          setComentario]          = useState("");
+  const [onuRecogidaPon,      setOnuRecogidaPon]      = useState("");
+  const [onuRecogidaProducto, setOnuRecogidaProducto] = useState("");
 
   const [saving,     setSaving]     = useState(false);
   const [errors,     setErrors]     = useState({});
   const [success,    setSuccess]    = useState(null);
   const [busqueda,   setBusqueda]   = useState("");
   const [filtroTipo, setFiltroTipo] = useState("todos");
-  const [vistaOnu, setVistaOnu] = useState(false);
+  const [vistaOnu,   setVistaOnu]   = useState(false);
 
-  /* ── Carga inventario ── */
+  // ── Carga inventario + recuperados ──────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
         if (navigator.onLine) {
-          const [inv, onus, catalogo] = await Promise.all([
+          const [inv, onus, catalogo, rec] = await Promise.all([
             tecnicoService.getMiInventario(),
             onuService.getMisOnus(),
             tecnicoService.getCatalogoOnus(),
+            recojosService.getMisRecuperados(),
           ]);
-          setInventario(inv); setMisOnus(onus); setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
+          setInventario(inv);
+          setMisOnus(onus);
+          setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
+          setRecuperados(Array.isArray(rec) ? rec : []);
           await db.inventario.clear();    await db.inventario.bulkPut(inv);
           await db.mis_onus.clear();      await db.mis_onus.bulkPut(onus);
           await db.catalogo_onus.clear(); await db.catalogo_onus.bulkPut(Array.isArray(catalogo) ? catalogo : []);
         } else {
-          const [inv, onus, cat] = await Promise.all([db.inventario.toArray(), db.mis_onus.toArray(), db.catalogo_onus.toArray()]);
+          const [inv, onus, cat] = await Promise.all([
+            db.inventario.toArray(),
+            db.mis_onus.toArray(),
+            db.catalogo_onus.toArray(),
+          ]);
           setInventario(inv); setMisOnus(onus); setCatalogoOnus(cat);
         }
       } catch {
-        const [inv, onus, cat] = await Promise.all([db.inventario.toArray(), db.mis_onus.toArray(), db.catalogo_onus.toArray()]);
+        const [inv, onus, cat] = await Promise.all([
+          db.inventario.toArray(),
+          db.mis_onus.toArray(),
+          db.catalogo_onus.toArray(),
+        ]);
         setInventario(inv); setMisOnus(onus); setCatalogoOnus(cat);
       } finally { setLoading(false); }
     })();
   }, []);
 
-  /* ── Carga órdenes ── */
+  // ── Carga órdenes ────────────────────────────────────────────────────────────
   const cargarOrdenes = async () => {
     setLoadingOrdenes(true);
     try {
       if (navigator.onLine) {
-        // tecnicoService.getOrdenesPendientes() → GET /tecnico/ordenes-pendientes
         const data = await tecnicoService.getOrdenesPendientes();
         setOrdenes(Array.isArray(data) ? data : []);
         await db.ordenes_pendientes?.clear();
@@ -312,20 +464,25 @@ export default function TecRegistrarSalida() {
 
   const recargarInventario = async () => {
     try {
-      const [inv, onus] = await Promise.all([tecnicoService.getMiInventario(), onuService.getMisOnus()]);
-      setInventario(inv); setMisOnus(onus);
+      const [inv, onus, rec] = await Promise.all([
+        tecnicoService.getMiInventario(),
+        onuService.getMisOnus(),
+        recojosService.getMisRecuperados(),
+      ]);
+      setInventario(inv);
+      setMisOnus(onus);
+      setRecuperados(Array.isArray(rec) ? rec : []);
     } catch {}
   };
 
-  /* ── Seleccionar orden ── */
   const seleccionar = (orden) => {
     setOrdenActual(orden);
-    setVistaOnu(false);                                    // ← nuevo
+    setVistaOnu(false);
     setItems([]); setFotos([]); setComentario("");
     setOnuRecogidaPon(""); setOnuRecogidaProducto("");
     setErrors({});
   };
-    const volver = () => { setOrdenActual(null); setErrors({}); };
+  const volver = () => { setOrdenActual(null); setErrors({}); };
 
   const clasificacion = ordenActual ? clasificarServicio(ordenActual.servicio) : null;
   const esAveria    = clasificacion?.tab === "averia";
@@ -334,10 +491,10 @@ export default function TecRegistrarSalida() {
   const getOnuId = (its) =>
     its.find(i => inventario.find(p => String(p.producto_id) === String(i.producto_id))?.categoria === "onu")?.onu_id ?? null;
 
-  /* ── Validación ── */
   const validate = () => {
     const e = {};
     for (const item of items) {
+      if (item._esRecuperado) continue; // recuperados no necesitan validación adicional
       if (!item.producto_id) { e.items = "Seleccioná un ítem en todos los materiales"; break; }
       const prod = inventario.find(i => String(i.producto_id) === String(item.producto_id));
       if (prod?.categoria === "onu" && !item.onu_id) { e.items = "Seleccioná qué ONU usaste"; break; }
@@ -347,16 +504,17 @@ export default function TecRegistrarSalida() {
     return e;
   };
 
-  /* ── Submit ── */
   const handleRegistrar = async () => {
     const e = validate();
     if (Object.keys(e).length > 0) { setErrors(e); return; }
     setErrors({});
     setSaving(true);
     try {
-      const itemsNormales = items.filter(i =>
+      // Separar items normales de recuperados
+      const itemsNormales   = items.filter(i => !i._esRecuperado &&
         inventario.find(p => String(p.producto_id) === String(i.producto_id))?.categoria !== "onu"
       );
+      const itemsRecuperados = items.filter(i => i._esRecuperado);
       const onuId = getOnuId(items);
 
       if (navigator.onLine) {
@@ -370,15 +528,24 @@ export default function TecRegistrarSalida() {
         }
         fotos.forEach(f => fd.append("fotos", f.file));
 
-        // tecnicoService.completarOrden(id, fd) → POST /tecnico/ordenes/:id/completar
         const res = await tecnicoService.completarOrden(ordenActual.id, fd);
+
+        // Marcar materiales recuperados como usados
+        await Promise.allSettled(
+          itemsRecuperados.map(i => recojosService.marcarUsado(i.recuperado_id))
+        );
+
         setSuccess(res?.codigo || "OK");
       } else {
         const payload = {
-          orden_id: ordenActual.id, items: JSON.stringify(itemsNormales),
+          orden_id:   ordenActual.id,
+          items:      JSON.stringify(itemsNormales),
           comentario: comentario || "",
           ...(onuId && { onu_id: onuId }),
-          ...(esCambioOnu && { onu_recogida_codigo_pon: onuRecogidaPon.trim(), onu_recogida_producto_id: onuRecogidaProducto || "" }),
+          ...(esCambioOnu && {
+            onu_recogida_codigo_pon:  onuRecogidaPon.trim(),
+            onu_recogida_producto_id: onuRecogidaProducto || "",
+          }),
         };
         const localId = await db.salidas_pendientes.add({
           tipo: esAveria ? "averia" : "activacion", payload,
@@ -386,7 +553,10 @@ export default function TecRegistrarSalida() {
         });
         for (const foto of fotos) {
           const base64 = await fileToBase64(foto.file);
-          await db.fotos_pendientes.add({ salidaLocalId: localId, base64, filename: foto.file.name, mime: foto.file.type });
+          await db.fotos_pendientes.add({
+            salidaLocalId: localId, base64,
+            filename: foto.file.name, mime: foto.file.type,
+          });
         }
         for (const item of itemsNormales) {
           const local = await db.inventario.where("producto_id").equals(Number(item.producto_id)).first();
@@ -406,7 +576,6 @@ export default function TecRegistrarSalida() {
     } finally { setSaving(false); }
   };
 
-  /* ── Filtros ── */
   const ordenesFiltradas = ordenes.filter(o => {
     const q = busqueda.toLowerCase();
     const matchQ = !q ||
@@ -425,10 +594,9 @@ export default function TecRegistrarSalida() {
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando...</div>;
 
-  /* ══════════ LISTADO ══════════ */
+  // ══ LISTADO ══
   if (!ordenActual) return (
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
-
       {success && (
         <div className="alert alert-success" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
           <Icon d={IC.check} size={16} color="var(--success)" />
@@ -446,6 +614,22 @@ export default function TecRegistrarSalida() {
         <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 2 }}>Servicios pendientes</div>
         <div style={{ fontSize: 13, color: "var(--text-muted)" }}>Seleccioná el servicio que vas a realizar</div>
       </div>
+
+      {/* Badge materiales recuperados en mano */}
+      {recuperados.length > 0 && (
+        <div style={{
+          marginBottom: 14, padding: "8px 12px",
+          background: "#faf5ff", borderRadius: 8,
+          border: "1px solid #e9d5ff",
+          display: "flex", alignItems: "center", gap: 8, fontSize: 13,
+        }}>
+          <Icon d={IC.recycle} size={14} color="#7c3aed" />
+          <span style={{ color: "#7c3aed", fontWeight: 600 }}>
+            {recuperados.length} material{recuperados.length !== 1 ? "es" : ""} recuperado{recuperados.length !== 1 ? "s" : ""} en tu poder
+          </span>
+          <span style={{ color: "#9ca3af", fontSize: 12 }}>— disponibles para usar en tus órdenes</span>
+        </div>
+      )}
 
       <div style={{ position: "relative", marginBottom: 10 }}>
         <input className="form-input"
@@ -497,21 +681,17 @@ export default function TecRegistrarSalida() {
       ))}
     </div>
   );
-  /* ══════════ FORMULARIO ══════════ */
+
+  // ══ VISTA ONU ══
   if (vistaOnu) {
-    return (
-      <TecConfigurarONU
-        ordenActual={ordenActual}
-        onVolver={() => setVistaOnu(false)}
-      />
-    );
+    return <TecConfigurarONU ordenActual={ordenActual} onVolver={() => setVistaOnu(false)} />;
   }
 
   const bs    = badgeStyle(ordenActual.servicio);
   const label = labelServicio(ordenActual.servicio);
 
+  // ══ FORMULARIO ══
   return (
-    <>
     <div style={{ maxWidth: 600, margin: "0 auto" }}>
       <button type="button" className="btn btn-outline btn-sm"
         onClick={volver} style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
@@ -532,7 +712,7 @@ export default function TecRegistrarSalida() {
           </div>
         </div>
 
-        {/* Datos del cliente — SOLO LECTURA */}
+        {/* Datos del cliente */}
         <div style={{ padding: "12px 16px", background: "var(--hover)", borderBottom: "1px solid var(--border)" }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10 }}>
             Datos del cliente
@@ -567,6 +747,15 @@ export default function TecRegistrarSalida() {
               </div>
             )}
           </div>
+          {limpiarTelefono(ordenActual.telefono) && (
+            <div style={{ marginTop: 12, padding: "10px 14px", background: "white", borderRadius: 8, border: "1px solid var(--border)", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>¿Vas en camino?</div>
+                <div style={{ fontSize: 12, color: "var(--text-muted)" }}>Avisá al cliente antes de llegar</div>
+              </div>
+              <BtnWhatsApp telefono={ordenActual.telefono} servicio={ordenActual.servicio} abonado={ordenActual.abonado} />
+            </div>
+          )}
           {ordenActual.observacion && (
             <div style={{ marginTop: 10, padding: "7px 10px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 7, fontSize: 12, color: "#78350f" }}>
               <span style={{ fontWeight: 700 }}>Nota: </span>{ordenActual.observacion}
@@ -574,7 +763,7 @@ export default function TecRegistrarSalida() {
           )}
         </div>
 
-        {/* Datos de red — solo activaciones/instalaciones */}
+        {/* Datos de red */}
         {!esAveria && (
           <div style={{ padding: "12px 16px", background: "#f0fdf4", borderBottom: "1px solid #bbf7d0" }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
@@ -603,23 +792,13 @@ export default function TecRegistrarSalida() {
           </div>
         )}
 
-
-
         {/* Formulario */}
         <div style={{ padding: 16 }}>
-
           {!esAveria && ordenActual.ip_local && (
             <div style={{ marginBottom: 16 }}>
-              <button
-                type="button"
-                className="btn btn-outline btn-full"
+              <button type="button" className="btn btn-outline btn-full"
                 onClick={() => setVistaOnu(true)}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  gap: 8, borderColor: "var(--primary)", color: "var(--primary)",
-                  minHeight: 44,
-                }}
-              >
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, borderColor: "var(--primary)", color: "var(--primary)", minHeight: 44 }}>
                 <Icon d={IC.wifi} size={15} />
                 Configurar ONU automáticamente
               </button>
@@ -631,7 +810,13 @@ export default function TecRegistrarSalida() {
               Materiales utilizados{" "}
               <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span>
             </label>
-            <ItemSelector inventario={inventario} misOnus={misOnus} items={items} onChange={setItems} />
+            <ItemSelector
+              inventario={inventario}
+              misOnus={misOnus}
+              recuperados={recuperados}
+              items={items}
+              onChange={setItems}
+            />
             {errors.items && <div className="form-error" style={{ marginTop: 6 }}>{errors.items}</div>}
           </div>
 
@@ -642,8 +827,7 @@ export default function TecRegistrarSalida() {
                 placeholder="Ej: ZTEG-AB123456"
                 value={onuRecogidaPon}
                 onChange={e => { setOnuRecogidaPon(e.target.value); if (errors.onu_pon) setErrors(p => ({ ...p, onu_pon: null })); }}
-                style={{ fontSize: 14, fontFamily: "monospace" }}
-              />
+                style={{ fontSize: 14, fontFamily: "monospace" }} />
               {errors.onu_pon && <div className="form-error">{errors.onu_pon}</div>}
               <div style={{ marginTop: 8 }}>
                 <label className="form-label" style={{ fontSize: 12 }}>
@@ -686,6 +870,5 @@ export default function TecRegistrarSalida() {
         </div>
       </div>
     </div>
-    </>
   );
 }

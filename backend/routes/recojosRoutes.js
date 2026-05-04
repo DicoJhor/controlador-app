@@ -5,7 +5,7 @@ const verificarRol   = require("../middleware/roleMiddleware")
 const upload         = require("../middleware/uploadMiddleware")
 const { getAll, create, getAllAdmin,
   getMisRecojos, confirmarTecnico,
-  getEquiposReciclados, revisarOnu, eliminarEntrada } = require("../controllers/recojosController")
+  getEquiposReciclados, revisarOnu, eliminarEntrada, getMisRecuperados, enviarASede, marcarRecuperadoUsado } = require("../controllers/recojosController")
 
 // ── Rutas estáticas primero ──────────────────────────────────────────────
 router.get("/admin",                  verificarToken, verificarRol("admin", "superadmin"), getAllAdmin)
@@ -18,6 +18,9 @@ router.delete(
   verificarRol("superadmin"),
   eliminarEntrada
 )
+router.get("/mis-recuperados",              verificarToken, verificarRol("tecnico"), getMisRecuperados)
+router.patch("/recuperados/:id/enviar-sede",verificarToken, verificarRol("tecnico"), enviarASede)
+router.patch("/recuperados/:id/usar",       verificarToken, verificarRol("tecnico"), marcarRecuperadoUsado)
 
 // ── Rutas dinámicas después ──────────────────────────────────────────────
 router.get("/",                       verificarToken, verificarRol("controlador", "admin"), getAll)

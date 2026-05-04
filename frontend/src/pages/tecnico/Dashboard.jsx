@@ -2,7 +2,17 @@ import { useState, useEffect } from "react";
 import StatCard from "../../components/ui/StatCard";
 import { formatNumber } from "../../utils/formatters";
 import tecnicoService from "../../services/tecnicoService";
+import recojosService from "../../services/recojosService";
 import { db } from "../../db/localDB";
+
+function Icon({ d, size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none"
+      stroke={color} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+      <path d={d} />
+    </svg>
+  );
+}
 
 function StockRow({ item }) {
   const esRollo = item.es_medible && item.metros_por_unidad;
@@ -15,7 +25,7 @@ function StockRow({ item }) {
         <div className="fw-600">{item.nombre}</div>
         {esRollo ? (
           <div className="text-sm text-muted">
-            {item.asignado_unidades} rollo{item.asignado_unidades !==1 ? "s" : ""}
+            {item.asignado_unidades} rollo{item.asignado_unidades !== 1 ? "s" : ""}
             &nbsp;·&nbsp;{item.metros_por_unidad} m/rollo
           </div>
         ) : (
@@ -25,7 +35,7 @@ function StockRow({ item }) {
       <td className="mono">
         {formatNumber(item.asignado)}
         {esRollo && <span className="text-sm text-muted"> m</span>}
-        </td>
+      </td>
       <td className="mono" style={{ color: "var(--warning)", fontWeight: 600 }}>
         {formatNumber(item.usado)}
         {esRollo && <span className="text-sm text-muted"> m</span>}
@@ -47,9 +57,12 @@ function StockRow({ item }) {
 }
 
 export default function TecDashboard() {
-  const [inventario, setInventario] = useState([]);
-  const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState(null);
+  const [inventario,    setInventario]    = useState([]);
+  const [recuperados,   setRecuperados]   = useState([]);
+  const [loading,       setLoading]       = useState(true);
+  const [loadingRec,    setLoadingRec]    = useState(true);
+  const [error,         setError]         = useState(null);
+  const [enviando,      setEnviando]      = useState(null);
 
   useEffect(() => {
     const cargar = async () => {
@@ -73,6 +86,27 @@ export default function TecDashboard() {
     };
     cargar();
   }, []);
+
+  useEffect(() => {
+    if (!navigator.onLine) { setLoadingRec(false); return; }
+    recojosService.getMisRecuperados()
+      .then(data => setRecuperados(Array.isArray(data) ? data : []))
+      .catch(() => setRecuperados([]))
+      .finally(() => setLoadingRec(false));
+  }, []);
+
+  const handleEnviarASede = async (id) => {
+    if (!confirm("¿Enviar este material a la sede para revisión?")) return;
+    setEnviando(id);
+    try {
+      await recojosService.enviarASede(id);
+      setRecuperados(prev => prev.filter(r => r.id !== id));
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setEnviando(null);
+    }
+  };
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
@@ -116,7 +150,8 @@ export default function TecDashboard() {
         </div>
       )}
 
-      <div className="card">
+      {/* ── Inventario asignado ── */}
+      <div className="card" style={{ marginBottom: 24 }}>
         <div className="card-header">
           <div>
             <div className="card-title">Mi inventario asignado</div>
@@ -142,6 +177,115 @@ export default function TecDashboard() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      {/* ── Materiales recuperados ── */}
+      <div className="card">
+        <div className="card-header">
+          <div>
+            <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <Icon d="M4 2v6h6 M20 22v-6h-6 M20 11A8 8 0 004.93 7.1 M4 13a8 8 0 0015.07 3.9"
+                size={16} color="#7c3aed" />
+              Materiales recuperados
+            </div>
+            <div className="card-subtitle">
+              Equipos que recogiste y aún tenés en tu poder — podés usarlos o enviarlos a la sede
+            </div>
+          </div>
+          {recuperados.length > 0 && (
+            <span style={{
+              background: "#ede9fe", color: "#6d28d9",
+              padding: "3px 10px", borderRadius: 20,
+              fontSize: 12, fontWeight: 700,
+            }}>
+              {recuperados.length} en mano
+            </span>
+          )}
+        </div>
+
+        {loadingRec ? (
+          <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            Cargando materiales recuperados...
+          </div>
+        ) : recuperados.length === 0 ? (
+          <div style={{ padding: 32, textAlign: "center", color: "var(--text-muted)", fontSize: 13 }}>
+            No tenés materiales recuperados en tu poder
+          </div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Tipo</th>
+                  <th>Producto</th>
+                  <th>PON / Serie</th>
+                  <th>Cliente origen</th>
+                  <th>Recojo</th>
+                  <th>Fecha</th>
+                  <th>Acción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recuperados.map(r => (
+                  <tr key={r.id}>
+                    <td>
+                      <span className="badge badge-purple">{r.tipo_equipo || "—"}</span>
+                    </td>
+                    <td>
+                      <span style={{ fontWeight: 600, fontSize: 13 }}>
+                        {r.producto_nombre || <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>Sin identificar</span>}
+                      </span>
+                    </td>
+                    <td>
+                      {r.codigo_pon
+                        ? <span className="mono" style={{ fontSize: 12, fontWeight: 700 }}>{r.codigo_pon}</span>
+                        : <span className="text-muted">—</span>}
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 13 }}>{r.cliente || "—"}</span>
+                      {r.direccion && (
+                        <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{r.direccion}</div>
+                      )}
+                    </td>
+                    <td>
+                      <span className="mono" style={{ fontSize: 12, color: "var(--primary)" }}>
+                        {r.recojo_codigo || "—"}
+                      </span>
+                    </td>
+                    <td>
+                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                        {r.created_at ? new Date(r.created_at).toLocaleDateString("es-PE", {
+                          day: "2-digit", month: "short", year: "numeric"
+                        }) : "—"}
+                      </span>
+                    </td>
+                    <td>
+                      <button
+                        onClick={() => handleEnviarASede(r.id)}
+                        disabled={enviando === r.id}
+                        style={{
+                          padding: "5px 12px", borderRadius: 7, fontSize: 12,
+                          fontWeight: 600, cursor: "pointer", border: "1px solid #d8b4fe",
+                          background: enviando === r.id ? "#f3f4f6" : "#ede9fe",
+                          color: "#6d28d9",
+                          opacity: enviando === r.id ? 0.6 : 1,
+                          display: "flex", alignItems: "center", gap: 5,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <Icon
+                          d="M4 2v6h6 M20 22v-6h-6 M20 11A8 8 0 004.93 7.1 M4 13a8 8 0 0015.07 3.9"
+                          size={12} color="#6d28d9"
+                        />
+                        {enviando === r.id ? "Enviando..." : "Enviar a sede"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );
