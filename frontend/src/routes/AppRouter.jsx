@@ -18,7 +18,7 @@ import AdminInventario   from "../pages/admin/Inventario";
 import AdminAuditoria    from "../pages/admin/Auditoria";
 import AdminCatalogo     from "../pages/admin/Catalogo";
 import ActivacionesRed from "../pages/admin/ActivacionesRed";
-import AdminClientes from "../pages/admin/Clientes";
+import AdminClientes from "../pages/admin/clientes";  // ← minúscula
 
 // Controlador
 import CtrlDashboard   from "../pages/controlador/Dashboard";
@@ -38,7 +38,6 @@ import TecHistorial       from "../pages/tecnico/Historial";
 import TecRecojos   from "../pages/tecnico/Recojos";
 import TecConfigurarONU from "../pages/tecnico/TecConfigurarONU";
 import TecLayout          from "../components/layout/TecLayout";
-import Clientes from "../pages/controlador/Clientes";
 
 
 /**
@@ -91,7 +90,7 @@ export default function AppRouter() {
             <Route path="/controlador/auditoria"  element={<CtrlAuditoria />} />
             <Route path="/controlador/recojos"  element={<CtrlRecojos />} />
             <Route path="/controlador/onus-recicladas"  element={<CtrlOnusRecicladas />} />
-            <Route path="/controlador/clientes"  element={<Clientes />} />
+            <Route path="/controlador/clientes"  element={<CtrlClientes />} />
 
 
           </Route>
