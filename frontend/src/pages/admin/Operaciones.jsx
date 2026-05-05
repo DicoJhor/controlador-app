@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import ordenesService from "../../services/ordenesService";
 import sedesService   from "../../services/sedesService";
 
-const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
+const BASE_URL = import.meta.env.VITE_API_URL.replace(/\/api$/, "");
 
 function formatFecha(fecha) {
   if (!fecha) return "—";

@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import ordenesService from "../../services/ordenesService";
 
-const BASE_URL = import.meta.env.VITE_API_URL.replace("/api", "");
+const BASE_URL = import.meta.env.VITE_BASE_URL;
 function formatFecha(fecha) {
   if (!fecha) return "—";
   const d = new Date(fecha);
