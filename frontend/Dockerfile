@@ -5,7 +5,7 @@ ENV VITE_API_URL=https://api.38.224.68.30.nip.io/api
 COPY package*.json ./
 RUN npm install
 COPY . .
-ARG CACHEBUST=1
+ARG CACHEBUST=2
 RUN npm run build
 
 # Etapa 2: serve
