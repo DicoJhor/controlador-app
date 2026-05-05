@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { CapacitorHttp } from '@capacitor/core';
+import html2canvas from 'html2canvas';
 
 /* ─── Iconos ─────────────────────────────────────────────── */
 function Icon({ d, size = 16, color = "currentColor" }) {
@@ -90,6 +91,7 @@ const PASOS = [
   { id: "lan",    label: "LAN / DHCP", desc: "Configurando red local" },
   { id: "acl",    label: "Acceso",     desc: "Habilitando acceso remoto" },
   { id: "upnp",   label: "UPnP",       desc: "Habilitando UPnP" },
+  { id: "info",   label: "Info ONU",   desc: "Obteniendo datos del dispositivo" },
   { id: "wifi5",  label: "WiFi 5G",    desc: "Configurando red 5GHz" },
   { id: "wifi24", label: "WiFi 2.4G",  desc: "Configurando red 2.4GHz" },
   { id: "reboot", label: "Reinicio",   desc: "Reiniciando equipo" },
@@ -100,18 +102,14 @@ const IS_DEV = import.meta.env.DEV;
 
 function buildUrl(ep, ontIp, equipo) {
   if (IS_DEV) return `/proxy/${ep}`;
-  // MCT y ZTE F6201B usan raíz directa sin /cgi-bin/
   if (equipo === "mct" || equipo === "zte") return `http://${ontIp}/${ep}`;
-  // OPTIC usa /cgi-bin/
   if (equipo === "optic") return `http://${ontIp}/cgi-bin/${ep}`;
-  // LANLY y BENMUNDO usan raíz
   return `http://${ontIp}/${ep}`;
 }
 
-/* ─── postTableEncrypt (port de Python→JS para BENMUNDO) ─── */
+/* ─── postTableEncrypt ─── */
 function postTableEncrypt(params) {
   const SKIP = new Set(["postSecurityFlag", "csrftoken"]);
-
   function encodeVal(v) {
     let s = encodeURIComponent(v == null ? "" : String(v));
     s = s.replace(/%20/g, "+");
@@ -120,19 +118,15 @@ function postTableEncrypt(params) {
   function encodeName(n) {
     return n.replace(/\[/g, "%5B").replace(/\]/g, "%5D");
   }
-
   let inputVal = "";
   for (const [name, value] of Object.entries(params)) {
     if (SKIP.has(name)) continue;
     if (Array.isArray(value)) {
-      for (const v of value) {
-        inputVal += encodeName(name) + "=" + encodeVal(v) + "&";
-      }
+      for (const v of value) inputVal += encodeName(name) + "=" + encodeVal(v) + "&";
     } else {
       inputVal += encodeName(name) + "=" + encodeVal(value) + "&";
     }
   }
-
   let csum = 0;
   let i = 0;
   const L = inputVal.length;
@@ -150,7 +144,6 @@ function postTableEncrypt(params) {
       i += 4;
     }
   }
-
   csum = csum >>> 0;
   csum = (csum & 0xffff) + (csum >>> 16);
   csum = csum & 0xffff;
@@ -160,9 +153,7 @@ function postTableEncrypt(params) {
 
 /* ─── Helpers HTTP ───────────────────────────────────────── */
 function devHdrs(ontIp, equipo, extra = {}) {
-  return IS_DEV
-    ? { "X-ONT-IP": ontIp, "X-EQUIPO": equipo, ...extra }
-    : extra;
+  return IS_DEV ? { "X-ONT-IP": ontIp, "X-EQUIPO": equipo, ...extra } : extra;
 }
 
 function enc(obj) {
@@ -178,21 +169,21 @@ function enc(obj) {
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 async function sha256hex(str) {
   const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
 }
-function b64(str)   { return btoa(unescape(encodeURIComponent(str))); }
+
+function b64(str) { return btoa(unescape(encodeURIComponent(str))); }
 
 async function getGatewayONU() {
   if (IS_DEV) return null;
-  return new Promise((resolve) => {
+  const webrtcGateway = await new Promise((resolve) => {
     try {
       const pc = new RTCPeerConnection({ iceServers: [] });
       pc.createDataChannel("");
-      pc.createOffer()
-        .then(o => pc.setLocalDescription(o))
-        .catch(() => resolve(null));
+      pc.createOffer().then(o => pc.setLocalDescription(o)).catch(() => resolve(null));
       pc.onicecandidate = (e) => {
         if (!e?.candidate?.candidate) return;
         const m = e.candidate.candidate.match(/(\d+\.\d+\.\d+)\.\d+/);
@@ -201,6 +192,17 @@ async function getGatewayONU() {
       setTimeout(() => { pc.close(); resolve(null); }, 2000);
     } catch (_) { resolve(null); }
   });
+  if (webrtcGateway) {
+    try {
+      await CapacitorHttp.get({ url: `http://${webrtcGateway}/`, connectTimeout: 1500, readTimeout: 1500 });
+      return webrtcGateway;
+    } catch (_) {}
+  }
+  const commonIPs = ["192.168.1.1","192.168.0.1","192.168.2.1","192.168.100.1","192.168.101.1","192.168.10.1","192.168.8.1","192.168.18.1","192.168.3.1"];
+  const results = await Promise.all(commonIPs.map(ip =>
+    CapacitorHttp.get({ url: `http://${ip}/`, connectTimeout: 1200, readTimeout: 1200 }).then(() => ip).catch(() => null)
+  ));
+  return results.find(ip => ip !== null) || null;
 }
 
 function extractSessionKey(html) {
@@ -215,6 +217,12 @@ function extractCSRF(html) {
          || html.match(/value\s*=\s*["']([a-f0-9]{32})["'][^>]*name\s*=\s*["']csrftoken["']/i)
          || html.match(/csrftoken["']?\s*[=:]\s*["']?([a-f0-9]{32})/i);
   return m ? m[1] : null;
+}
+
+/* ─── Parsear texto XML de ZTE ─────────────────────────── */
+function zteXmlVal(xml, tag) {
+  const m = xml.match(new RegExp(`<${tag}>([^<]*)<\/${tag}>`));
+  return m ? m[1].trim() : "";
 }
 
 /* ─── Clase de configuración por modelo ─────────────────── */
@@ -241,39 +249,32 @@ class ONUConfigurator {
     this.pass5      = pass5;
     this.sk         = "";
     this.csrf       = "";
-    // ZTE token
     this.zteToken   = "";
+    this.zteTmpToken = "";
+    this.zteHeaders = {};
+    this.deviceInfo = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
   }
 
   url(ep) { return buildUrl(ep, this.ontIp, this.equipo); }
-
   hdrs(extra = {}) { return devHdrs(this.ontIp, this.equipo, extra); }
 
-  // ── GET usando plugin nativo en prod, fetch en dev ── //
   async getCGI(ep) {
     if (IS_DEV) {
-      const r = await fetch(this.url(ep), {
-        credentials: "include",
-        headers: this.hdrs({ Accept: "text/html,*/*" }),
-      });
+      const r = await fetch(this.url(ep), { credentials: "include", headers: this.hdrs({ Accept: "text/html,*/*" }) });
       return r.text();
     }
     const r = await CapacitorHttp.get({
       url: this.url(ep),
       headers: { Accept: "text/html,*/*" },
-      params: {},
-      connectTimeout: 5000,
-      readTimeout: 5000,
+      params: {}, connectTimeout: 5000, readTimeout: 5000,
     });
     return r.data;
   }
 
-  // ── POST usando plugin nativo en prod, fetch en dev ── //
   async postCGI(ep, params) {
     if (IS_DEV) {
       const r = await fetch(this.url(ep), {
-        method: "POST",
-        credentials: "include",
+        method: "POST", credentials: "include",
         headers: this.hdrs({ "Content-Type": "application/x-www-form-urlencoded", Accept: "text/html,*/*" }),
         body: enc(params),
       });
@@ -282,22 +283,16 @@ class ONUConfigurator {
     const r = await CapacitorHttp.post({
       url: this.url(ep),
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      data: params,
-      params: {},
-      connectTimeout: 5000,
-      readTimeout: 5000,
+      data: params, params: {}, connectTimeout: 5000, readTimeout: 5000,
     });
     return r.data;
   }
 
-  // ── POST nativo para requests con arrays (chkpt) ── //
   async postRaw(url, body) {
     if (IS_DEV) {
       const r = await fetch(url, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body,
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }, body,
       });
       return r.text();
     }
@@ -310,71 +305,16 @@ class ONUConfigurator {
       if (k in obj) {
         if (!Array.isArray(obj[k])) obj[k] = [obj[k]];
         obj[k].push(v);
-      } else {
-        obj[k] = v;
-      }
+      } else { obj[k] = v; }
     }
     const r = await CapacitorHttp.post({
-      url,
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      data: obj,
-      params: {},
-      connectTimeout: 5000,
-      readTimeout: 5000,
+      url, headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      data: obj, params: {}, connectTimeout: 5000, readTimeout: 5000,
     });
     return r.data;
   }
 
-  // ── POST JSON para ZTE F6201B ── //
-  async postJSON(ep, body) {
-    const url = `http://${this.ontIp}/${ep}`;
-    if (IS_DEV) {
-      const r = await fetch(this.url(ep), {
-        method: "POST",
-        credentials: "include",
-        headers: this.hdrs({ "Content-Type": "application/json" }),
-        body: JSON.stringify(body),
-      });
-      return r.json();
-    }
-    const headers = { "Content-Type": "application/json" };
-    if (this.zteToken) headers["Authorization"] = `Bearer ${this.zteToken}`;
-    const r = await CapacitorHttp.post({
-      url,
-      headers,
-      data: body,
-      params: {},
-      connectTimeout: 8000,
-      readTimeout: 8000,
-    });
-    return typeof r.data === "string" ? JSON.parse(r.data) : r.data;
-  }
-
-  // ── GET JSON para ZTE F6201B ── //
-  async getJSON(ep) {
-    const url = `http://${this.ontIp}/${ep}`;
-    if (IS_DEV) {
-      const r = await fetch(this.url(ep), {
-        credentials: "include",
-        headers: this.hdrs({ Accept: "application/json" }),
-      });
-      return r.json();
-    }
-    const headers = { Accept: "application/json" };
-    if (this.zteToken) headers["Authorization"] = `Bearer ${this.zteToken}`;
-    const r = await CapacitorHttp.get({
-      url,
-      headers,
-      params: {},
-      connectTimeout: 8000,
-      readTimeout: 8000,
-    });
-    return typeof r.data === "string" ? JSON.parse(r.data) : r.data;
-  }
-
-  calcPSF(fields) {
-    return postTableEncrypt(fields);
-  }
+  calcPSF(fields) { return postTableEncrypt(fields); }
 
   async refreshSK(pages = ["index.cgi", "wanpon_edit.cgi", "dhcpgateway.cgi", "wlantop.cgi"]) {
     for (const p of pages) {
@@ -395,7 +335,253 @@ class ONUConfigurator {
   }
 
   // ════════════════════════════════════════════════════════
+  // INFO DISPOSITIVO
+  // ════════════════════════════════════════════════════════
+
+  // ── OPTIC — con sesión activa, antes del reboot ──────────
+  async _fetchDeviceInfoOptic() {
+    const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
+    try {
+      const pages = [
+        { url: `http://${this.ontIp}/cgi-bin/deviceinfo.cgi`, tipo: "device" },
+        { url: `http://${this.ontIp}/cgi-bin/pon_status.cgi`, tipo: "pon" },
+        { url: `http://${this.ontIp}/cgi-bin/status.cgi`,     tipo: "status" },
+        { url: `http://${this.ontIp}/cgi-bin/optical.cgi`,    tipo: "optical" },
+      ];
+      for (const { url, tipo } of pages) {
+        try {
+          const r = await CapacitorHttp.get({
+            url,
+            headers: { Accept: "text/html,*/*" },
+            params: {},
+            connectTimeout: 3000,
+            readTimeout: 3000,
+          });
+          const html = typeof r.data === "string" ? r.data : "";
+
+          // Log para debug — podés quitar esto después
+          console.log(`[INFO ${tipo}] status=${r.status} len=${html.length} snippet=`, html.slice(0, 300));
+
+          // Si redirige al login o respuesta demasiado corta, saltear
+          if (!html || html.length < 300) continue;
+          if (html.includes("jumpUrl") || html.includes("login.cgi")) continue;
+
+          if (tipo === "device") {
+            // SN — buscar en el HTML del deviceinfo (el router lo pone en un <td>)
+            const snM = html.match(/id="?devinceinfo_sn"?[^>]*>\s*([A-Za-z0-9\-]{6,30})\s*</)
+                     || html.match(/([A-Fa-f0-9]{4}[A-Fa-f0-9\-]{8,16})/)  // patrón SN tipo DC54AD-336581700044
+                     || html.match(/width="75%"[^>]*>\s*([A-Za-z0-9\-]{6,30})\s*</);
+            if (snM && !info.sn) info.sn = snM[1]?.trim();
+
+            const fwM = html.match(/id="?devinceinfo_softwareversion"?[^>]*>\s*([^<]{4,30})\s*</)
+                     || html.match(/SoftwareVersion[^>]*>\s*([^<]{4,30})\s*</i);
+            if (fwM && !info.firmware) info.firmware = fwM[1]?.trim();
+
+            const modM = html.match(/id="?devinceinfo_modelname"?[^>]*>\s*([^<]{3,20})\s*</);
+            if (modM && !info.modelo) info.modelo = modM[1]?.trim();
+          }
+
+          if (tipo === "pon" || tipo === "optical" || tipo === "status") {
+            // RX Power
+            const rxM = html.match(/(?:rx_power|RxPower|Rx\s*Power|RX\s*Power)[^<>]*>\s*([^<]{2,20})\s*</i)
+                     || html.match(/(-?\d{1,3}\.\d{1,3})\s*dBm/i);
+            if (rxM && !info.rxPower) {
+              const v = rxM[1]?.trim();
+              if (v) info.rxPower = v.includes("dBm") ? v : v + " dBm";
+            }
+
+            // TX Power
+            const txM = html.match(/(?:tx_power|TxPower|Tx\s*Power|TX\s*Power)[^<>]*>\s*([^<]{2,20})\s*</i);
+            if (txM && !info.txPower) {
+              const v = txM[1]?.trim();
+              if (v) info.txPower = v.includes("dBm") ? v : v + " dBm";
+            }
+
+            // Temperatura
+            const tempM = html.match(/(?:temperature|Temperature|Temp)[^<>]*>\s*([^<]{2,15})\s*</i);
+            if (tempM && !info.temp) {
+              const v = tempM[1]?.trim();
+              if (v) info.temp = v.includes("°") ? v : v + "°C";
+            }
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    return info;
+  }
+
+  async _fetchDeviceInfoBOA(sessionCookie = null) {
+    const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
+    const headers = { Accept: "text/html,*/*" };
+    if (sessionCookie) headers["Cookie"] = sessionCookie;
+    const statusPages = [
+      `http://${this.ontIp}/status_device_basic_info.asp`,
+      `http://${this.ontIp}/pon_optical_info.asp`,
+      `http://${this.ontIp}/status_pon.asp`,
+      `http://${this.ontIp}/status_device.asp`,
+      `http://${this.ontIp}/info.asp`,
+      `http://${this.ontIp}/cgi-bin/deviceinfo.cgi`,
+    ];
+    for (const url of statusPages) {
+      try {
+        const r = await CapacitorHttp.get({ url, headers, connectTimeout: 3000, readTimeout: 3000 });
+        const html = typeof r.data === "string" ? r.data : "";
+        if (html.length < 200 || r.status >= 400) continue;
+        if (html.includes("login") && html.length < 2000) continue;
+        const snM = html.match(/(?:serialNumber|SerialNumber|GPON.SN|PON.SN|serial)[^"'<>]*["'>]\s*([A-Fa-f0-9]{12,20})\s*[<"']/i)
+                 || html.match(/>[^\S\r\n]*([A-Fa-f0-9]{4}[A-Fa-f0-9]{8,12})[^\S\r\n]*</);
+        if (snM && !info.sn) info.sn = snM[1];
+        const rxM = html.match(/(?:Rx\s*(?:Optical\s*)?Power|RxPower|rx_power)[^<>]*>([^<]{1,20})</i)
+                 || html.match(/(?:rx_power|rxPower)[^"']*["']\s*:\s*["']?(-?\d+\.?\d*)/i);
+        if (rxM && !info.rxPower) {
+          const v = rxM[1].trim().replace(/[^\d.\-]/g, "");
+          if (v) info.rxPower = v + " dBm";
+        }
+        const txM = html.match(/(?:Tx\s*(?:Optical\s*)?Power|TxPower|tx_power)[^<>]*>([^<]{1,20})</i)
+                 || html.match(/(?:tx_power|txPower)[^"']*["']\s*:\s*["']?(-?\d+\.?\d*)/i);
+        if (txM && !info.txPower) {
+          const v = txM[1].trim().replace(/[^\d.\-]/g, "");
+          if (v) info.txPower = v + " dBm";
+        }
+        const tempM = html.match(/(?:Temperature|Temp)[^<>]*>([^<]{1,20})</i);
+        if (tempM && !info.temp) {
+          const v = tempM[1].trim().replace(/[^\d.\-]/g, "");
+          if (v) info.temp = v + "°C";
+        }
+        const fwM = html.match(/(?:SoftwareVersion|FirmwareVersion|firmware_version)[^<>]*>([^<]{3,30})</i);
+        if (fwM && !info.firmware) info.firmware = fwM[1].trim();
+        if (info.sn || info.rxPower) break;
+      } catch (_) {}
+    }
+    return info;
+  }
+
+  async _fetchDeviceInfoMCT() {
+    const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
+    try {
+      const statusPages = [
+        `status.html`, `x_poninfo.html`, `x_devinfo.html`,
+        `ctstatus.html`, `ctdevinfo.html`,
+      ];
+      for (const page of statusPages) {
+        try {
+          const html = await this.getCGI(page);
+          if (!html || html.length < 200 || html.includes("login.html")) continue;
+          const snM = html.match(/(?:SerialNumber|GPON_SN|serial_number)[^"'<>]*["'>]([A-Fa-f0-9]{12,20})[<"']/i)
+                   || html.match(/MDMOID[^"']*SN[^"']*["']([A-Fa-f0-9]{12,20})["']/i);
+          if (snM && !info.sn) info.sn = snM[1];
+          const rxM = html.match(/(?:RxPower|RX_Power|rx_power)[^"'<>]*["'>](-?\d+\.?\d*)[<"']/i);
+          if (rxM && !info.rxPower) info.rxPower = rxM[1] + " dBm";
+          const txM = html.match(/(?:TxPower|TX_Power|tx_power)[^"'<>]*["'>](-?\d+\.?\d*)[<"']/i);
+          if (txM && !info.txPower) info.txPower = txM[1] + " dBm";
+          const fwM = html.match(/(?:SoftwareVersion|FirmwareVersion)[^"'<>]*["'>]([^<>"']{3,30})[<"']/i);
+          if (fwM && !info.firmware) info.firmware = fwM[1].trim();
+          const modM = html.match(/(?:ModelName|ProductName)[^"'<>]*["'>]([^<>"']{3,20})[<"']/i);
+          if (modM && !info.modelo) info.modelo = modM[1].trim();
+          if (info.sn || info.rxPower) break;
+        } catch (_) {}
+      }
+      try {
+        const ponHtml = await this.getCGI(`x_poninfocfg.cgi?type=objShow&id=MDMOID_PON_INFO`);
+        const rxM = ponHtml.match(/RxPower[^"'<>]*["'>](-?\d+\.?\d*)[<"']/i);
+        if (rxM && !info.rxPower) info.rxPower = rxM[1] + " dBm";
+        const txM = ponHtml.match(/TxPower[^"'<>]*["'>](-?\d+\.?\d*)[<"']/i);
+        if (txM && !info.txPower) info.txPower = txM[1] + " dBm";
+        const snM = ponHtml.match(/SerialNumber[^"'<>]*["'>]([A-Fa-f0-9]{12,20})[<"']/i);
+        if (snM && !info.sn) info.sn = snM[1];
+      } catch (_) {}
+    } catch (_) {}
+    return info;
+  }
+
+  async _fetchDeviceInfoZTE() {
+    const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
+    const luaEndpoints = [
+      { tag: "systeminfo",    lua: "devmgr_devinfo_lua.lua" },
+      { tag: "ponStatus",     lua: "devmgr_pon_lua.lua" },
+      { tag: "deviceSummary", lua: "devmgr_summary_lua.lua" },
+      { tag: "statusinfo",    lua: null },
+    ];
+    for (const { tag, lua } of luaEndpoints) {
+      try {
+        const viewRes = await CapacitorHttp.get({
+          url: `http://${this.ontIp}/?_type=menuView&_tag=${tag}&Menu3Location=0`,
+          headers: { Accept: "text/html,*/*", ...this.zteHeaders },
+          params: {}, connectTimeout: 5000, readTimeout: 5000,
+        });
+        const viewHtml = typeof viewRes.data === "string" ? viewRes.data : "";
+        if (viewRes.status >= 400 || viewHtml.length < 100) continue;
+        const tokM = viewHtml.match(/_sessionTmpToken\s*=\s*"((?:\\x[0-9a-fA-F]{2}|[^"\\])+)"/);
+        const tok = tokM ? tokM[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16))) : this.zteTmpToken;
+        if (!info.sn) {
+          const snM = viewHtml.match(/GPON\s*SN[^<>]*>[^<]*<[^<>]*>([A-Fa-f0-9]{12,20})/i)
+                   || viewHtml.match(/SerialNumber[^<>]*>([A-Fa-f0-9]{12,20})/i)
+                   || viewHtml.match(/(?:value|val)\s*=\s*["']([A-Fa-f0-9]{12,20})["'][^>]*(?:sn|serial)/i);
+          if (snM) info.sn = snM[1];
+        }
+        const fwM = viewHtml.match(/(?:SoftwareVersion|FirmwareVersion|Software Version)[^<>]*>([^<]{4,30})</i);
+        if (fwM && !info.firmware) info.firmware = fwM[1].trim();
+        if (lua) {
+          try {
+            const dataRes = await CapacitorHttp.post({
+              url: `http://${this.ontIp}/?_type=menuData&_tag=${lua}`,
+              headers: { "Content-Type": "application/x-www-form-urlencoded", ...this.zteHeaders },
+              data: `IF_ACTION=Query&_sessionTOKEN=${encodeURIComponent(tok)}`,
+              params: {}, connectTimeout: 5000, readTimeout: 5000,
+            });
+            const xml = typeof dataRes.data === "string" ? dataRes.data : "";
+            const snXml = zteXmlVal(xml, "SerialNumber") || zteXmlVal(xml, "GPON_SN") || zteXmlVal(xml, "sn");
+            if (snXml && !info.sn) info.sn = snXml;
+            const rxXml = zteXmlVal(xml, "RxPower") || zteXmlVal(xml, "RXPower") || zteXmlVal(xml, "rx_power");
+            if (rxXml && !info.rxPower) info.rxPower = rxXml + (rxXml.includes("dBm") ? "" : " dBm");
+            const txXml = zteXmlVal(xml, "TxPower") || zteXmlVal(xml, "TXPower") || zteXmlVal(xml, "tx_power");
+            if (txXml && !info.txPower) info.txPower = txXml + (txXml.includes("dBm") ? "" : " dBm");
+            const tempXml = zteXmlVal(xml, "Temperature") || zteXmlVal(xml, "Temp");
+            if (tempXml && !info.temp) info.temp = tempXml + (tempXml.includes("°") ? "" : "°C");
+            const fwXml = zteXmlVal(xml, "SoftwareVersion") || zteXmlVal(xml, "FirmwareVersion");
+            if (fwXml && !info.firmware) info.firmware = fwXml;
+            const modXml = zteXmlVal(xml, "ModelName") || zteXmlVal(xml, "ProductClass");
+            if (modXml && !info.modelo) info.modelo = modXml;
+          } catch (_) {}
+        }
+        if (info.sn && info.rxPower) break;
+      } catch (_) {}
+    }
+    if (!info.rxPower) {
+      try {
+        const ponEndpoints = [
+          `/?_type=menuData&_tag=devmgr_pon_info_lua.lua`,
+          `/?_type=menuData&_tag=poninfo_lua.lua`,
+          `/?_type=menuData&_tag=devmgr_poninfo_lua.lua`,
+        ];
+        for (const ep of ponEndpoints) {
+          try {
+            const r = await CapacitorHttp.post({
+              url: `http://${this.ontIp}${ep}`,
+              headers: { "Content-Type": "application/x-www-form-urlencoded", ...this.zteHeaders },
+              data: `IF_ACTION=Query&_sessionTOKEN=${encodeURIComponent(this.zteTmpToken)}`,
+              params: {}, connectTimeout: 5000, readTimeout: 5000,
+            });
+            const xml = typeof r.data === "string" ? r.data : "";
+            if (xml.includes("SUCC") || xml.length > 100) {
+              const rxM = xml.match(/<[^>]*[Rr]x[Pp]ower[^>]*>([^<]+)</);
+              if (rxM && !info.rxPower) info.rxPower = rxM[1].trim() + " dBm";
+              const txM = xml.match(/<[^>]*[Tt]x[Pp]ower[^>]*>([^<]+)</);
+              if (txM && !info.txPower) info.txPower = txM[1].trim() + " dBm";
+              const snM = xml.match(/<[^>]*[Ss]erial[Nn]umber[^>]*>([^<]+)</);
+              if (snM && !info.sn) info.sn = snM[1].trim();
+              if (info.rxPower) break;
+            }
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+    return info;
+  }
+
+  // ════════════════════════════════════════════════════════
   // OPTIC — ZTE CGI
+  // ORDEN: login → wan → lan → acl → upnp → INFO → wifi5 → wifi24 → reboot
   // ════════════════════════════════════════════════════════
   async runOptic(onProgress) {
     onProgress("login", "running");
@@ -409,10 +595,7 @@ class ONUConfigurator {
       const k = await this.refreshSK();
       if (!k) throw new Error("No se encontró sessionkey");
       onProgress("login", "done");
-    } catch (e) {
-      onProgress("login", "error");
-      throw new Error(`Login fallido: ${e.message}`);
-    }
+    } catch (e) { onProgress("login", "error"); throw new Error(`Login fallido: ${e.message}`); }
     await sleep(300);
 
     onProgress("wan", "running");
@@ -460,10 +643,7 @@ class ONUConfigurator {
         wanponedit_option125username: "",
       });
       onProgress("wan", "done");
-    } catch (e) {
-      onProgress("wan", "error");
-      throw new Error(`WAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wan", "error"); throw new Error(`WAN fallida: ${e.message}`); }
     await sleep(800);
 
     onProgress("lan", "running");
@@ -479,10 +659,7 @@ class ONUConfigurator {
         dhcpsv_dns1: this.dns1, dhcpsv_dns2: this.dns2,
       });
       onProgress("lan", "done");
-    } catch (e) {
-      onProgress("lan", "error");
-      throw new Error(`LAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("lan", "error"); throw new Error(`LAN fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("acl", "running");
@@ -504,22 +681,26 @@ class ONUConfigurator {
     try {
       await this.refreshSK(["upnp.cgi"]);
       await this.postCGI("upnp.cgi", {
-        onSubmit: "1", sessionkey: this.sk,
-        upnpenable: "1", upnp_enable: "on",
+        onSubmit: "1", sessionkey: this.sk, upnpenable: "1", upnp_enable: "on",
       });
       onProgress("upnp", "done");
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
+
+    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
+    onProgress("info", "running");
+    try {
+      this.deviceInfo = await this._fetchDeviceInfoOptic();
+      onProgress("info", "done");
+    } catch (_) { onProgress("info", "done"); }
+    await sleep(300);
 
     onProgress("wifi5", "running");
     try {
       await this.refreshSK(["wlantop.cgi"]);
       await this._wifiOptic(this.ssid5, this.pass5, 9, "160MHz", "a,n,ac,ax");
       onProgress("wifi5", "done");
-    } catch (e) {
-      onProgress("wifi5", "error");
-      throw new Error(`WiFi 5G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
     await sleep(1500);
 
     onProgress("wifi24", "running");
@@ -527,10 +708,7 @@ class ONUConfigurator {
       await this.refreshSK(["wlantop.cgi"]);
       await this._wifiOptic(this.ssid24, this.pass24, 1, "40MHz", "b,g,n,ax");
       onProgress("wifi24", "done");
-    } catch (e) {
-      onProgress("wifi24", "error");
-      throw new Error(`WiFi 2.4G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
     await sleep(1500);
 
     onProgress("reboot", "running");
@@ -571,14 +749,8 @@ class ONUConfigurator {
       });
     } catch (e) {
       const msg = e.message || "";
-      if (
-        msg.includes("IOException") ||
-        msg.includes("EOFException") ||
-        msg.includes("unexpected end") ||
-        msg.includes("NullPointerException")
-      ) {
-        return;
-      }
+      if (msg.includes("IOException") || msg.includes("EOFException") ||
+          msg.includes("unexpected end") || msg.includes("NullPointerException")) return;
       throw e;
     }
   }
@@ -591,7 +763,6 @@ class ONUConfigurator {
     try {
       let html = await this.getCGI("net_eth_links.asp");
       let tok = extractCSRF(html);
-
       if (!tok || html.includes("formLogin") || html.length < 1000) {
         const loginHtml = await this.getCGI("admin/login.asp");
         const loginTok = extractCSRF(loginHtml);
@@ -607,13 +778,9 @@ class ONUConfigurator {
         tok = extractCSRF(html);
         if (!tok && html.includes("formLogin")) throw new Error("Credenciales inválidas");
       }
-
       if (tok) this.csrf = tok;
       onProgress("login", "done");
-    } catch (e) {
-      onProgress("login", "error");
-      throw new Error(`Login fallido: ${e.message}`);
-    }
+    } catch (e) { onProgress("login", "error"); throw new Error(`Login fallido: ${e.message}`); }
     await sleep(300);
 
     onProgress("wan", "running");
@@ -660,10 +827,7 @@ class ONUConfigurator {
         chkpt: ["on","on","on","on","on","","","","","on","","","",""],
       });
       onProgress("wan", "done");
-    } catch (e) {
-      onProgress("wan", "error");
-      throw new Error(`WAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wan", "error"); throw new Error(`WAN fallida: ${e.message}`); }
     await sleep(800);
 
     onProgress("lan", "running");
@@ -678,10 +842,7 @@ class ONUConfigurator {
         csrftoken: this.csrf,
       });
       onProgress("lan", "done");
-    } catch (e) {
-      onProgress("lan", "error");
-      throw new Error(`LAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("lan", "error"); throw new Error(`LAN fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("acl", "running");
@@ -711,6 +872,14 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
+    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
+    onProgress("info", "running");
+    try {
+      this.deviceInfo = await this._fetchDeviceInfoBOA();
+      onProgress("info", "done");
+    } catch (_) { onProgress("info", "done"); }
+    await sleep(300);
+
     onProgress("wifi5", "running");
     try {
       await this.refreshCSRF("admin/wlbasic.asp?wlan_idx=0");
@@ -725,10 +894,7 @@ class ONUConfigurator {
         regDomain: "11", csrftoken: this.csrf,
       });
       onProgress("wifi5", "done");
-    } catch (e) {
-      onProgress("wifi5", "error");
-      throw new Error(`WiFi 5G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
     await sleep(3000);
 
     onProgress("wifi24", "running");
@@ -746,17 +912,12 @@ class ONUConfigurator {
       onProgress("wifi24", "done");
     } catch (e) {
       const msg = e.message || "";
-      if (
-        msg.includes("SocketException") || msg.includes("connection abort") ||
-        msg.includes("Software caused") || msg.includes("IOException") ||
-        msg.includes("EOFException") || msg.includes("unexpected end") ||
-        msg.includes("NullPointerException")
-      ) {
+      if (msg.includes("SocketException") || msg.includes("connection abort") ||
+          msg.includes("Software caused") || msg.includes("IOException") ||
+          msg.includes("EOFException") || msg.includes("unexpected end") ||
+          msg.includes("NullPointerException")) {
         onProgress("wifi24", "done");
-      } else {
-        onProgress("wifi24", "error");
-        throw new Error(`WiFi 2.4G fallida: ${e.message}`);
-      }
+      } else { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
     }
     await sleep(600);
 
@@ -802,10 +963,8 @@ class ONUConfigurator {
                  || loginHtml.match(/value\s*=\s*["']([^"']*)["'][^>]*name\s*=\s*["']challenge["']/i);
       const loginParams = {
         challenge: chalM ? chalM[1] : "",
-        username: this.usuario,
-        password: this.password,
-        save: "Login",
-        "submit-url": "/admin/login.asp",
+        username: this.usuario, password: this.password,
+        save: "Login", "submit-url": "/admin/login.asp",
         postSecurityFlag: psfM ? psfM[1] : "",
       };
       await this.postCGI("boaform/admin/formLogin", loginParams);
@@ -820,10 +979,7 @@ class ONUConfigurator {
       }
       if (!ok) throw new Error("Credenciales inválidas");
       onProgress("login", "done");
-    } catch (e) {
-      onProgress("login", "error");
-      throw new Error(`Login fallido: ${e.message}`);
-    }
+    } catch (e) { onProgress("login", "error"); throw new Error(`Login fallido: ${e.message}`); }
     await sleep(300);
 
     onProgress("wan", "running");
@@ -833,7 +989,6 @@ class ONUConfigurator {
       const itfGroup = (itfGroupM && parseInt(itfGroupM[1]) > 0) ? itfGroupM[1] : "275";
       const existingLstM = wanPageHtml.match(/new\s+it_nr\s*\(\s*["'](nas[\w_]+)["']/);
       const existingLst = existingLstM ? existingLstM[1] : null;
-
       if (existingLst) {
         const delFields = {
           lkname: existingLst, lst: existingLst, action: "rm",
@@ -846,7 +1001,6 @@ class ONUConfigurator {
         await this.postRaw(this.url("boaform/admin/formWanEth"), delParams.toString());
         await sleep(1500);
       }
-
       const wanFields = {
         lkname: existingLst || "new", vlan: "ON", vid: this.vlan,
         vprio: "1", multicast_vid: "", adslConnectionMode: "1",
@@ -861,8 +1015,7 @@ class ONUConfigurator {
         iana: "ON", dnsV6Mode: "1", dslite_aftr_hostname: "",
         "submit-url": "/multi_wan_generic.asp",
         lst: existingLst || "", encodePppUserName: "", encodePppPassword: "",
-        apply: "Apply Changes", itfGroup,
-        postSecurityFlag: "",
+        apply: "Apply Changes", itfGroup, postSecurityFlag: "",
       };
       wanFields.postSecurityFlag = String(this.calcPSF(wanFields));
       const wanParams = new URLSearchParams();
@@ -870,10 +1023,7 @@ class ONUConfigurator {
       for (const v of ["on","on","","","on","","","","on","","",""]) wanParams.append("chkpt", v);
       await this.postRaw(this.url("boaform/admin/formWanEth"), wanParams.toString());
       onProgress("wan", "done");
-    } catch (e) {
-      onProgress("wan", "error");
-      throw new Error(`WAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wan", "error"); throw new Error(`WAN fallida: ${e.message}`); }
     await sleep(2000);
 
     onProgress("lan", "running");
@@ -884,16 +1034,12 @@ class ONUConfigurator {
         dhcpSubnetMask: "255.255.255.0", ltime: "43200", dname: "bbrouter",
         ip: this.lanIp, dhcpdns: "1",
         dns1: this.dns1, dns2: this.dns2, dns3: "1.1.1.1",
-        save: "Apply Changes", "submit-url": "/dhcpd.asp",
-        postSecurityFlag: "",
+        save: "Apply Changes", "submit-url": "/dhcpd.asp", postSecurityFlag: "",
       };
       lanFields.postSecurityFlag = String(this.calcPSF(lanFields));
       await this.postCGI("boaform/formDhcpServer", lanFields);
       onProgress("lan", "done");
-    } catch (e) {
-      onProgress("lan", "error");
-      throw new Error(`LAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("lan", "error"); throw new Error(`LAN fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("acl", "running");
@@ -922,8 +1068,7 @@ class ONUConfigurator {
       const validOpt = allOpts.find(m => parseInt(m[1]) < 65535);
       const extIf = validOpt ? validOpt[1] : "130816";
       const upnpFields = {
-        daemon: "1", ext_if: extIf,
-        "submit-url": "/upnp.asp", postSecurityFlag: "",
+        daemon: "1", ext_if: extIf, "submit-url": "/upnp.asp", postSecurityFlag: "",
       };
       upnpFields.postSecurityFlag = String(this.calcPSF(upnpFields));
       await this.postCGI("boaform/formUpnp", upnpFields);
@@ -931,31 +1076,31 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
+    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
+    onProgress("info", "running");
+    try {
+      this.deviceInfo = await this._fetchDeviceInfoBOA();
+      onProgress("info", "done");
+    } catch (_) { onProgress("info", "done"); }
+    await sleep(300);
+
     onProgress("wifi5", "running");
     try {
       await this._wifiBenmundo(this.ssid5, this.pass5, "5");
       onProgress("wifi5", "done");
-    } catch (e) {
-      onProgress("wifi5", "error");
-      throw new Error(`WiFi 5G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("wifi24", "running");
     try {
       await this._wifiBenmundo(this.ssid24, this.pass24, "24");
       onProgress("wifi24", "done");
-    } catch (e) {
-      onProgress("wifi24", "error");
-      throw new Error(`WiFi 2.4G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("reboot", "running");
     try {
-      const rebootFields = {
-        "submit-url": "/mgm_dev_reboot.asp", postSecurityFlag: "",
-      };
+      const rebootFields = { "submit-url": "/mgm_dev_reboot.asp", postSecurityFlag: "" };
       rebootFields.postSecurityFlag = String(this.calcPSF(rebootFields));
       this.postRaw(this.url("boaform/admin/formReboot"), enc(rebootFields)).catch(() => {});
       await sleep(2000);
@@ -979,8 +1124,7 @@ class ONUConfigurator {
       wlanOnOff: "0", SSIDindex: "0", wlanDisabled: "0",
       hidessid: "0", ssid, encrypt: "6",
       wpa2UnicastCipher: "3", wpaPSK: pass,
-      wlan_idx: wlanIdx, "submit-btn": "Apply Changes",
-      "submit-url": submitUrl,
+      wlan_idx: wlanIdx, "submit-btn": "Apply Changes", "submit-url": submitUrl,
     };
     if (!psf) {
       params.postSecurityFlag = String(this.calcPSF(params));
@@ -998,28 +1142,19 @@ class ONUConfigurator {
     try {
       await this.getCGI(`login.cgi?username=${b64(this.usuario)}&psd=${b64(this.password)}`);
       const main = await this.getCGI("main.html");
-      if (main.includes("login.html") || main.length < 500)
-        throw new Error("Credenciales incorrectas");
+      if (main.includes("login.html") || main.length < 500) throw new Error("Credenciales incorrectas");
       onProgress("login", "done");
-    } catch (e) {
-      onProgress("login", "error");
-      throw new Error(`Login fallido: ${e.message}`);
-    }
+    } catch (e) { onProgress("login", "error"); throw new Error(`Login fallido: ${e.message}`); }
     await sleep(300);
 
     onProgress("wan", "running");
     try {
-      // Verificar si ya existe una WAN
       const wanH = await this.getCGI("x_wancfg.html");
       const wanExists = wanH.includes("MDMOID_WAN_IP_CONN{1-") || wanH.includes("MDMOID_WAN_PPP_CONN{1-");
-
-      // Extraer OID existente si hay
       const oidM = wanH.match(/objBuf\['(MDMOID_WAN_IP_CONN\{[^']+\})'\]\['ExternalIPAddress'\]/);
       const oid = oidM ? oidM[1] : null;
-
       const dns = `${this.dns1},${this.dns2}`;
       const fields = `UserDefinedMtu=1480&X_CU_MulticastVlan=-1&ConnectionType=IP_Routed&NATEnabled=1&Enable=1&AddressingType=Static&ExternalIPAddress=${this.ip}&DefaultGateway=${this.gateway}&DNSServers=${dns}&X_CU_ServiceList=INTERNET&X_UM_COM_VlanMuxID=${this.vlan}&X_UM_COM_VlanMux8021p=0&X_CU_IPv6IPAddress=&X_CU_DefaultIPv6Gateway=&X_CU_IPv6IPAddressOrigin=AutoConfigured&X_CU_IPv6DNSServers=&X_CU_IPv6Prefix=&X_CU_IPv6PrefixVltime=604800&X_CU_IPv6PrefixPltime=86400&X_CU_IPv6PrefixOrigin=PrefixDelegation&PrefixChildPrefixBits=::/64&X_CU_IPMode=1&X_CU_Dslite_Enable=0&X_CU_AftrMode=0&X_CU_Aftr=&X_CU_LanInterface=InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.,InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.&X_UM_COM_IPv6Enabled=0&X_UM_COM_IPv4Enabled=1&X_CU_IPForwardModeEnabled=0&X_CU_IPForwardList=&ConnectionStatus=Disconnected&SubnetMask=${this.mascara}`;
-
       let wanUrl;
       if (wanExists && oid) {
         const val = `<${oid}>${fields}</${oid}>`;
@@ -1030,10 +1165,7 @@ class ONUConfigurator {
       }
       await this.getCGI(wanUrl);
       onProgress("wan", "done");
-    } catch (e) {
-      onProgress("wan", "error");
-      throw new Error(`WAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wan", "error"); throw new Error(`WAN fallida: ${e.message}`); }
     await sleep(800);
 
     onProgress("lan", "running");
@@ -1041,10 +1173,7 @@ class ONUConfigurator {
       const val = `<MDMOID_LAN_IP_INTF{1-1}>IPInterfaceIPAddress=${this.lanIp}&IPInterfaceSubnetMask=255.255.255.0</MDMOID_LAN_IP_INTF{1-1}><MDMOID_LAN_HOST_CFG{1}>DHCPServerEnable=1&MinAddress=${this.dhcpS}&MaxAddress=${this.dhcpE}&SubnetMask=255.255.255.0&IPRouters=${this.lanIp}&DHCPLeaseTime=86400&DNSOption=2&DNSServers=${this.dns1},${this.dns2}</MDMOID_LAN_HOST_CFG{1}>`;
       await this.getCGI(`ctdhcp.cgi?type=objOperate&action=edit&id=MDMOID_LAN_IP_INTF{1-1}|MDMOID_LAN_HOST_CFG{1}&value=${encodeURIComponent(val)}`);
       onProgress("lan", "done");
-    } catch (e) {
-      onProgress("lan", "error");
-      throw new Error(`LAN fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("lan", "error"); throw new Error(`LAN fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("acl", "running");
@@ -1062,15 +1191,20 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
+    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
+    onProgress("info", "running");
+    try {
+      this.deviceInfo = await this._fetchDeviceInfoMCT();
+      onProgress("info", "done");
+    } catch (_) { onProgress("info", "done"); }
+    await sleep(300);
+
     onProgress("wifi5", "running");
     try {
       const val5 = `<MDMOID_LAN_WLAN_CT{1-5}>SSID=${this.ssid5}&Enable=1&SSIDAdvertisementEnabled=0&WMMEnable=1&MaxStaNum=0&BeaconType=WPA2&WPAEncryptionModes=AESEncryption</MDMOID_LAN_WLAN_CT{1-5}><MDMOID_LAN_WLAN_CT_PRE_SHARED_KEY{1-5-1}>KeyPassphrase=${this.pass5}&wlWpaPskShow=0</MDMOID_LAN_WLAN_CT_PRE_SHARED_KEY{1-5-1}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-1}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-1}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-2}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-2}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-3}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-3}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-4}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-4}>`;
       await this.getCGI(`x_wl5gssidcfg.cgi?type=objOperate&action=edit&id=MDMOID_LAN_WLAN_CT{1-5}|MDMOID_LAN_WLAN_CT_PRE_SHARED_KEY{1-5-1}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-1}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-2}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-3}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-5-4}&value=${encodeURIComponent(val5)}`);
       onProgress("wifi5", "done");
-    } catch (e) {
-      onProgress("wifi5", "error");
-      throw new Error(`WiFi 5G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("wifi24", "running");
@@ -1078,10 +1212,7 @@ class ONUConfigurator {
       const val24 = `<MDMOID_LAN_WLAN_CT{1-1}>SSID=${this.ssid24}&Enable=1&SSIDAdvertisementEnabled=0&WMMEnable=1&MaxStaNum=0&BeaconType=WPA2&WPAEncryptionModes=AESEncryption</MDMOID_LAN_WLAN_CT{1-1}><MDMOID_LAN_WLAN_CT_PRE_SHARED_KEY{1-1-1}>KeyPassphrase=${this.pass24}&wlWpaPskShow=0</MDMOID_LAN_WLAN_CT_PRE_SHARED_KEY{1-1-1}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-1}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-1}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-2}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-2}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-3}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-3}><MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-4}></MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-4}>`;
       await this.getCGI(`x_wlssidcfg.cgi?type=objOperate&action=edit&id=MDMOID_LAN_WLAN_CT{1-1}|MDMOID_LAN_WLAN_CT_PRE_SHARED_KEY{1-1-1}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-1}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-2}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-3}|MDMOID_LAN_WLAN_CT_WEP_KEY{1-1-4}&value=${encodeURIComponent(val24)}`);
       onProgress("wifi24", "done");
-    } catch (e) {
-      onProgress("wifi24", "error");
-      throw new Error(`WiFi 2.4G fallida: ${e.message}`);
-    }
+    } catch (e) { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
     await sleep(600);
 
     onProgress("reboot", "running");
@@ -1095,8 +1226,8 @@ class ONUConfigurator {
     } catch (_) { onProgress("reboot", "done"); }
   }
 
- // ════════════════════════════════════════════════════════
-  // ZTE F6201B — API REST JSON
+  // ════════════════════════════════════════════════════════
+  // ZTE F6201B — API REST con Lua + AES/RSA encrypt
   // ════════════════════════════════════════════════════════
 
   _zteExtractTmpToken(html) {
@@ -1104,27 +1235,26 @@ class ONUConfigurator {
     if (!m) { console.log("ZTE: no tmpToken found"); return null; }
     try {
       const decoded = m[1].replace(/\\x([0-9a-fA-F]{2})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));
-      console.log("ZTE tmpToken decoded:", decoded);
       return decoded;
     } catch {
-      console.log("ZTE tmpToken raw:", m[1]);
       return m[1];
     }
   }
 
-  async _ztePost(path, data) {
-    // Cargar forge si no está
-    if (!window._forge) {
-      await new Promise((res, rej) => {
-        const s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js";
-        s.onload = res; s.onerror = rej;
-        document.head.appendChild(s);
-      });
-      window._forge = window.forge;
-    }
-    const forge = window._forge;
+  async _loadForge() {
+    if (window._forge) return window._forge;
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/forge/1.3.1/forge.min.js";
+      s.onload = res; s.onerror = rej;
+      document.head.appendChild(s);
+    });
+    window._forge = window.forge;
+    return window._forge;
+  }
 
+  async _ztePost(path, data) {
+    const forge = await this._loadForge();
     const RSA_PUB_PEM =
       "-----BEGIN PUBLIC KEY-----\n" +
       "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAodPTerkUVCYmv28SOfRV\n" +
@@ -1137,8 +1267,6 @@ class ONUConfigurator {
       "-----END PUBLIC KEY-----";
 
     const tok = data._sessionTOKEN || this.zteToken;
-
-    // AES encrypt helper (replica build_body del Python)
     const rand16 = () => Array.from({length:16}, () => Math.floor(Math.random()*10)).join("");
     const aesEncrypt = (val, ck, ci) => {
       const key = forge.util.createBuffer(forge.md.sha256.create().update(ck).digest().getBytes());
@@ -1151,42 +1279,32 @@ class ONUConfigurator {
       return forge.util.encode64(cipher.output.getBytes());
     };
 
-    // Determinar qué campos encriptar según el endpoint
-    // Determinar qué campos encriptar según el endpoint
     const url = path;
     let encFields = [];
-    if (url.includes("wan_internet_lua"))           encFields = ["Password"];
-    if (url.includes("DHCPBasicCfg"))                encFields = ["IPAddr","MinAddress","MaxAddress","DNSServer1","DNSServer2"];
-    if (url.includes("wlansssidconf"))               encFields = ["KeyPassphrase","WEPKey00","WEPKey01","WEPKey02","WEPKey03"];
+    if (url.includes("wan_internet_lua"))  encFields = ["Password"];
+    if (url.includes("DHCPBasicCfg"))      encFields = ["IPAddr","MinAddress","MaxAddress","DNSServer1","DNSServer2"];
+    if (url.includes("wlansssidconf"))     encFields = ["KeyPassphrase","WEPKey00","WEPKey01","WEPKey02","WEPKey03"];
 
     const ck = rand16(); const ci = rand16();
     const { _sessionTOKEN: _t, ...fields } = data;
-
-    // Construir body con campos encriptados
     const parts = [];
     for (const [k, v] of Object.entries(fields)) {
       const val = encFields.includes(k) ? aesEncrypt(String(v ?? ""), ck, ci) : String(v ?? "");
       parts.push(`${encodeURIComponent(k)}=${encodeURIComponent(val)}`);
     }
     if (encFields.length > 0) {
-      // encode = RSA(ck+ci)
       const pubKey = forge.pki.publicKeyFromPem(RSA_PUB_PEM);
       const encKey = forge.util.encode64(pubKey.encrypt(`${ck}+${ci}`, "RSAES-PKCS1-V1_5"));
       parts.push(`encode=${encodeURIComponent(encKey)}`);
     }
-
     const bodyStr = parts.join("&");
     const bodyWithTok = bodyStr + "&_sessionTOKEN=" + encodeURIComponent(tok);
-
-    // Check = RSA(SHA256(body+token))
     const md = forge.md.sha256.create();
     md.update(bodyWithTok, "utf8");
     const hashHex = md.digest().toHex();
     const pubKey = forge.pki.publicKeyFromPem(RSA_PUB_PEM);
     const checkVal = forge.util.encode64(pubKey.encrypt(hashHex, "RSAES-PKCS1-V1_5"));
-
     const fullUrl = IS_DEV ? this.url(path.replace(/^\//,"").split("?")[0]) : `http://${this.ontIp}${path}`;
-
     const r = await CapacitorHttp.post({
       url: fullUrl,
       headers: {
@@ -1195,9 +1313,7 @@ class ONUConfigurator {
         ...this.zteHeaders,
       },
       data: bodyWithTok,
-      params: {},
-      connectTimeout: 10000,
-      readTimeout: 10000,
+      params: {}, connectTimeout: 10000, readTimeout: 10000,
     });
     return r;
   }
@@ -1211,27 +1327,6 @@ class ONUConfigurator {
     const html = typeof res.data === "string" ? res.data : "";
     const tok = this._zteExtractTmpToken(html);
     if (tok) this.zteTmpToken = tok;
-    
-    // Buscar action URL real
-    let actionM = html.match(/action\s*=\s*["'](\/\?_type=menuData[^"']+)["']/i)
-               || html.match(/["'](\/\?_type=menuData&_tag=[^"'\s]+)["']/);
-    
-    if (!actionM) {
-      // Buscar cualquier archivo .lua mencionado en el HTML
-      const luaMatches = [...html.matchAll(/([a-z][\w-]*_lua\.lua)/gi)];
-      console.log("ZTE luas found:", luaMatches.length > 0 ? luaMatches.slice(0, 5).map(m => m[1]).join(", ") : "none");
-      
-      // Buscar form actions que no sean "begin"
-      const allActions = [...html.matchAll(/action\s*=\s*["']([^"']{5,200})["']/gi)];
-      const validActions = allActions.filter(m => !m[1].includes("begin") && !m[1].includes("return"));
-      console.log("ZTE form actions:", validActions.length > 0 ? validActions.map(m => m[1]).slice(0, 3).join(" | ") : "none");
-      
-      // Intentar extraer el tag del menú
-      const menuTagM = html.match(/menu3Location|Menu3Location|_tag\s*[:=]\s*["'](\w+)["']/i);
-      console.log("ZTE menu tag found:", menuTagM ? menuTagM[1] : "none");
-    }
-    
-    this.zteLastAction = actionM ? actionM[1] : null;
     return html;
   }
 
@@ -1256,11 +1351,9 @@ class ONUConfigurator {
         headers: { Accept: "text/html,*/*", ...this.zteHeaders },
         params: {}, connectTimeout: 5000, readTimeout: 5000,
       });
-      const tokenStr = typeof tokenRes.data === "string"
-        ? tokenRes.data : JSON.stringify(tokenRes.data);
+      const tokenStr = typeof tokenRes.data === "string" ? tokenRes.data : JSON.stringify(tokenRes.data);
       const chalM = tokenStr.match(/<ajax_response_xml_root>([^<]+)<\/ajax_response_xml_root>/);
       const challenge = chalM ? chalM[1].trim() : "";
-
       const finalHash = await sha256hex(this.password + challenge);
 
       const loginRes = await CapacitorHttp.post({
@@ -1276,60 +1369,35 @@ class ONUConfigurator {
 
       const newSidCookie = loginRes.headers?.["Set-Cookie"] || "";
       const newSidMatches = [...newSidCookie.matchAll(/SID=([a-f0-9]+)/gi)];
-      const newSid = newSidMatches.length > 0
-        ? newSidMatches[newSidMatches.length - 1][1] : sid;
+      const newSid = newSidMatches.length > 0 ? newSidMatches[newSidMatches.length - 1][1] : sid;
       this.zteHeaders = newSid ? { Cookie: `SID=${newSid}` } : this.zteHeaders;
       const newToken = loginData?.sess_token || sessionToken;
       if (!newToken) throw new Error("No se obtuvo token de sesión");
       this.zteToken = newToken;
       this.zteTmpToken = "";
       onProgress("login", "done");
-    } catch (e) {
-      onProgress("login", "error");
-      throw new Error(`Login fallido: ${e.message}`);
-    }
+    } catch (e) { onProgress("login", "error"); throw new Error(`Login fallido: ${e.message}`); }
     await sleep(300);
 
-    // ─── WAN ───────────────────────────────────────────────
     onProgress("wan", "running");
     try {
       await this._zteNav("ethWanConfig");
       const wanAction = "/?_type=menuData&_tag=wan_internet_lua.lua&TypeUplink=2&pageType=0";
-      
-      for (const instId of ["1", "2", "3", "4", "5", "6", "7", "8"]) {
+      for (const instId of ["1","2","3","4","5","6","7","8"]) {
         try {
-          await this._ztePost(wanAction, {
-            IF_ACTION: "Delete",
-            _InstID: instId,
-            _sessionTOKEN: this.zteTmpToken,
-          });
+          await this._ztePost(wanAction, { IF_ACTION: "Delete", _InstID: instId, _sessionTOKEN: this.zteTmpToken });
           await sleep(200);
         } catch (_) {}
       }
       await sleep(500);
-      
       await this._zteNav("ethWanConfig");
-      
       await this._ztePost(wanAction, {
-        IF_ACTION: "Apply",
-        _InstID: "-1",
-        uplink: "2",
-        InstHasGot: "0",
-        ControlType: "1",
-        WANCName: "Enet",
-        Enable: "1",
-        mode: "route",
-        ServList: "1",
-        MTU: "1480",
-        linkMode: "IP",
-        TransType: "PPPoE",
-        UserName: "",
-        Password: "",
-        AuthType: "PAP,CHAP,MS-CHAP",
-        ConnTrigger: "AlwaysOn",
-        IdleTime0: "20", IdleTime1: "0",
-        IpMode: "IPv4",
-        Addressingtype: "Static",
+        IF_ACTION: "Apply", _InstID: "-1", uplink: "2", InstHasGot: "0",
+        ControlType: "1", WANCName: "Enet", Enable: "1", mode: "route",
+        ServList: "1", MTU: "1480", linkMode: "IP", TransType: "PPPoE",
+        UserName: "", Password: "", AuthType: "PAP,CHAP,MS-CHAP",
+        ConnTrigger: "AlwaysOn", IdleTime0: "20", IdleTime1: "0",
+        IpMode: "IPv4", Addressingtype: "Static",
         IPAddress0: this.ip.split(".")[0], IPAddress1: this.ip.split(".")[1],
         IPAddress2: this.ip.split(".")[2], IPAddress3: this.ip.split(".")[3],
         SubnetMask0: this.mascara.split(".")[0], SubnetMask1: this.mascara.split(".")[1],
@@ -1341,8 +1409,7 @@ class ONUConfigurator {
         DNS20: this.dns2.split(".")[0], DNS21: this.dns2.split(".")[1],
         DNS22: this.dns2.split(".")[2], DNS23: this.dns2.split(".")[3],
         DNS30: "1", DNS31: "1", DNS32: "1", DNS33: "1",
-        IsNAT: "1",
-        IPv6AcquireMode: "Auto",
+        IsNAT: "1", IPv6AcquireMode: "Auto",
         Gua1: "", Gua1PrefixLen: "128", Gateway6: "", Pd: "", PdLen: "",
         Dns1v6: "", Dns2v6: "", Dns3v6: "",
         IsPD: "1", Unnumbered: "0", IsSLAAC: "1", IsGUA: "1", IsPdAddr: "1",
@@ -1354,21 +1421,15 @@ class ONUConfigurator {
     } catch (e) {
       const msg = e.message || "";
       if (msg.includes("can not be the same") || msg.includes("same with name")) {
-        console.log("WAN ya existe o fue creada, continuando...");
         onProgress("wan", "done");
-      } else {
-        onProgress("wan", "error");
-        throw new Error(`WAN fallida: ${msg}`);
-      }
+      } else { onProgress("wan", "error"); throw new Error(`WAN fallida: ${msg}`); }
     }
     await sleep(800);
 
-    // ─── LAN ───────────────────────────────────────────────
     onProgress("lan", "running");
     try {
       await this._zteNav("lanMgrIpv4");
-      const lanAction = "/?_type=menuData&_tag=Localnet_LanMgrIpv4_DHCPBasicCfg_lua.lua";
-      await this._ztePost(lanAction, {
+      await this._ztePost("/?_type=menuData&_tag=Localnet_LanMgrIpv4_DHCPBasicCfg_lua.lua", {
         IF_ACTION: "Apply", IF_URL_HOST: this.ontIp, _InstID: "IGD",
         IPAddr: this.lanIp, SubMask: "255.255.255.0", SubnetMask: "255.255.255.0",
         MinAddress: this.dhcpS, MaxAddress: this.dhcpE, IPRouters: "",
@@ -1381,69 +1442,54 @@ class ONUConfigurator {
     } catch (e) { onProgress("lan", "error"); throw new Error(`LAN fallida: ${e.message}`); }
     await sleep(600);
 
-    // ─── ACL ───────────────────────────────────────────────
     onProgress("acl", "running");
     try {
       await this._zteNav("localServiceCtrl");
       const aclAction = "/?_type=menuData&_tag=firewall_ipv4service_lua.lua";
-      
-      for (const instId of ["1", "2", "3", "4", "IGD.FWSc.FWSC1", "IGD.FWSc.FWSC2", "IGD.FWSc.FWSC3"]) {
+      for (const instId of ["1","2","3","4","IGD.FWSc.FWSC1","IGD.FWSc.FWSC2","IGD.FWSc.FWSC3"]) {
         try {
-          await this._ztePost(aclAction, {
-            IF_ACTION: "Delete",
-            _InstID: instId,
-            _sessionTOKEN: this.zteTmpToken,
-          });
+          await this._ztePost(aclAction, { IF_ACTION: "Delete", _InstID: instId, _sessionTOKEN: this.zteTmpToken });
           await sleep(100);
         } catch (_) {}
       }
       await sleep(300);
-      
       await this._zteNav("localServiceCtrl");
-      
       await this._ztePost(aclAction, {
-        IF_ACTION: "Apply",
-        Enable: "1",
-        _InstID: "-1",
-        INCName: "WAN",
-        MinSrcIp: "0.0.0.0",
-        MaxSrcIp: "0.0.0.0",
+        IF_ACTION: "Apply", Enable: "1", _InstID: "-1", INCName: "WAN",
+        MinSrcIp: "0.0.0.0", MaxSrcIp: "0.0.0.0",
         ServiceList: "HTTP,FTP,TELNET,HTTPS,PING",
-        IPMode: "1",
-        Name: "Enet",
-        FilterTarget: "1",
-        INCViewName: "IGD.WANIF",
-        Btn_cancel_serviceCtl: "",
-        Btn_apply_serviceCtl: "",
+        IPMode: "1", Name: "Enet", FilterTarget: "1", INCViewName: "IGD.WANIF",
+        Btn_cancel_serviceCtl: "", Btn_apply_serviceCtl: "",
         _sessionTOKEN: this.zteTmpToken,
       });
       onProgress("acl", "done");
     } catch (_) { onProgress("acl", "done"); }
     await sleep(400);
 
-    // ─── UPnP ──────────────────────────────────────────────
     onProgress("upnp", "running");
     try {
       await this._zteNav("appUpnp");
-      const upnpAction = "/?_type=menuData&_tag=app_upnp_lua.lua";
-      await this._ztePost(upnpAction, {
-        IF_ACTION: "Apply",
-        Enable: "1",
-        _InstID: "-1",
-        Btn_cancel_UPnP: "",
-        Btn_apply_UPnP: "",
+      await this._ztePost("/?_type=menuData&_tag=app_upnp_lua.lua", {
+        IF_ACTION: "Apply", Enable: "1", _InstID: "-1",
+        Btn_cancel_UPnP: "", Btn_apply_UPnP: "",
         _sessionTOKEN: this.zteTmpToken,
       });
       onProgress("upnp", "done");
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
-    // ─── WiFi 5G ───────────────────────────────────────────
+    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
+    onProgress("info", "running");
+    try {
+      this.deviceInfo = await this._fetchDeviceInfoZTE();
+      onProgress("info", "done");
+    } catch (_) { onProgress("info", "done"); }
+    await sleep(300);
+
     onProgress("wifi5", "running");
     try {
       await this._zteNav("wlanBasic");
-      const wifiAction = "/?_type=menuData&_tag=wlan_wlansssidconf_lua.lua";
-      await this._ztePost(wifiAction, {
+      await this._ztePost("/?_type=menuData&_tag=wlan_wlansssidconf_lua.lua", {
         IF_ACTION: "Apply", Enable: "1", _InstID: "DEV.WIFI.AP5",
         _WEPCONIG: "N", _PSKCONIG: "Y", BeaconType: "11i",
         WEPAuthMode: "None", WPAAuthMode: "PSKAuthentication", "11iAuthMode": "PSKAuthentication",
@@ -1458,12 +1504,10 @@ class ONUConfigurator {
     } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
     await sleep(1500);
 
-    // ─── WiFi 2.4G ─────────────────────────────────────────
     onProgress("wifi24", "running");
     try {
       await this._zteNav("wlanBasic");
-      const wifiAction = "/?_type=menuData&_tag=wlan_wlansssidconf_lua.lua";
-      await this._ztePost(wifiAction, {
+      await this._ztePost("/?_type=menuData&_tag=wlan_wlansssidconf_lua.lua", {
         IF_ACTION: "Apply", Enable: "1", _InstID: "DEV.WIFI.AP1",
         _WEPCONIG: "N", _PSKCONIG: "Y", BeaconType: "11i",
         WEPAuthMode: "None", WPAAuthMode: "PSKAuthentication", "11iAuthMode": "PSKAuthentication",
@@ -1478,12 +1522,10 @@ class ONUConfigurator {
     } catch (e) { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
     await sleep(600);
 
-    // ─── Reboot ────────────────────────────────────────────
     onProgress("reboot", "running");
     try {
       await this._zteNav("rebootAndReset");
-      const rebootAction = "/?_type=menuData&_tag=devmgr_restartmgr_lua.lua";
-      this._ztePost(rebootAction, {
+      this._ztePost("/?_type=menuData&_tag=devmgr_restartmgr_lua.lua", {
         IF_ACTION: "Restart", Btn_restart: "",
         _sessionTOKEN: this.zteTmpToken,
       }).catch(() => {});
@@ -1505,7 +1547,6 @@ class ONUConfigurator {
 /* ─── Componente principal ───────────────────────────────── */
 export default function TecConfigurarONU({ ordenActual, onVolver }) {
   const [modeloId, setModeloId] = useState("");
-
   const [ip,       setIp]      = useState(ordenActual?.ip_local || "");
   const [mascara,  setMascara] = useState(ordenActual?.mascara  || "255.255.255.0");
   const [gateway,  setGateway] = useState(ordenActual?.gateway  || "");
@@ -1520,15 +1561,16 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
   const [pasos,     setPasos]   = useState(() =>
     Object.fromEntries(PASOS.map(p => [p.id, "pending"]))
   );
-  const [errorMsg, setErrorMsg] = useState("");
-  const [ipDetectada,  setIpDetectada]  = useState("");
+  const [errorMsg,    setErrorMsg]    = useState("");
+  const [ipDetectada, setIpDetectada] = useState("");
+  const [deviceInfo,  setDeviceInfo]  = useState({});
+  const [capturedImage, setCapturedImage] = useState(null);  // 👈 NUEVO
+  const [isGeneratingImage, setIsGeneratingImage] = useState(false);  // 👈 NUEVO
+  const shareRef = useRef(null);
 
   const modeloActual = MODELOS.find(m => m.id === modeloId);
 
-  const seleccionarModelo = (m) => {
-    setModeloId(m.id);
-    setErrors({});
-  };
+  const seleccionarModelo = (m) => { setModeloId(m.id); setErrors({}); };
 
   const onProgress = (pasoId, nuevoEstado) => {
     setPasos(prev => ({ ...prev, [pasoId]: nuevoEstado }));
@@ -1552,22 +1594,19 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
     setEstado("running");
     setPasos(Object.fromEntries(PASOS.map(p => [p.id, "pending"])));
     setErrorMsg("");
+    setDeviceInfo({});
 
     const m = MODELOS.find(x => x.id === modeloId);
-
     const gatewayDetectado = await getGatewayONU();
     const ontIpFinal = gatewayDetectado || m.ip;
-
-    // La LAN IP debe ser la misma que la IP actual de la ONU
-    // para no cambiar de subred a mitad de la configuración
     const lanIpBase = ontIpFinal.match(/(\d+\.\d+\.\d+)\./)?.[1] || "192.168.1";
     const lanDefaults = {
       mct: { lanIp: "192.168.2.1", dhcpS: "192.168.2.2", dhcpE: "192.168.2.254" },
     };
     const lan = lanDefaults[m.id] || {
-      lanIp:  ontIpFinal,                      // misma IP que tiene ahora la ONU
-      dhcpS:  `${lanIpBase}.100`,
-      dhcpE:  `${lanIpBase}.254`,
+      lanIp: ontIpFinal,
+      dhcpS: `${lanIpBase}.100`,
+      dhcpE: `${lanIpBase}.254`,
     };
 
     const cfg = new ONUConfigurator({
@@ -1583,6 +1622,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
     try {
       await cfg.run(onProgress);
       setIpDetectada(cfg.ontIp);
+      setDeviceInfo(cfg.deviceInfo || {});
       setEstado("done");
     } catch (err) {
       setEstado("error");
@@ -1595,6 +1635,88 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
     setPasos(Object.fromEntries(PASOS.map(p => [p.id, "pending"])));
     setErrorMsg("");
   };
+
+  const handleShareImage = async () => {
+    if (!shareRef.current || isGeneratingImage) return;
+    setIsGeneratingImage(true);
+    setCapturedImage(null); // Limpiar imagen anterior
+    
+    try {
+      const canvas = await html2canvas(shareRef.current, {
+        backgroundColor: "#ffffff",
+        scale: 2.5, // Mayor resolución
+        useCORS: true,
+        allowTaint: false,
+        logging: false,
+        windowWidth: shareRef.current.scrollWidth,
+        windowHeight: shareRef.current.scrollHeight,
+      });
+      
+      // Guardar imagen en estado para mostrarla
+      const imageUrl = canvas.toDataURL("image/png");
+      setCapturedImage(imageUrl);
+      
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+      if (!blob) throw new Error("No se pudo generar imagen");
+      const file = new File([blob], `ONU-${modeloActual?.nombre || "cfg"}.png`, { type: "image/png" });
+
+      // Intentar compartir nativamente
+      if (navigator.share && navigator.canShare?.({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: "Configuración ONU",
+          text: `ONU ${modeloActual?.nombre} configurada exitosamente`
+        });
+      } 
+      // Si no soporta compartir archivos, mostrar opciones
+      else {
+        const action = confirm("📸 Imagen generada\n\n¿Quieres descargar la imagen?\n(OK = Descargar | Cancelar = Copiar texto)");
+        if (action) {
+          const a = document.createElement("a");
+          a.href = imageUrl;
+          a.download = file.name;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        } else {
+          await navigator.clipboard.writeText(buildTextoResumen());
+          alert("📋 Configuración copiada al portapapeles");
+        }
+      }
+    } catch (e) {
+      console.error("Error al generar imagen:", e);
+      alert("No se pudo generar la imagen. Se copiará el texto al portapapeles.");
+      try {
+        await navigator.clipboard.writeText(buildTextoResumen());
+        alert("📋 Configuración copiada al portapapeles");
+      } catch (_) {}
+    } finally {
+      setIsGeneratingImage(false);
+    }
+  };
+
+  const handleDownloadImage = () => {
+    if (!capturedImage) return;
+    const a = document.createElement("a");
+    a.download = `ONU-${modeloActual?.nombre || "configurada"}.png`;
+    a.href = capturedImage;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
+
+  const buildTextoResumen = () =>
+    `📡 *ONU CONFIGURADA - ${modeloActual?.nombre}*\n\n` +
+    `🔹 Modelo: ${modeloActual?.nombre}\n` +
+    `🔹 IP ONU: ${ipDetectada}\n` +
+    (deviceInfo.sn      ? `🔹 GPON SN: ${deviceInfo.sn}\n`        : "") +
+    (deviceInfo.modelo  ? `🔹 Modelo HW: ${deviceInfo.modelo}\n`   : "") +
+    (deviceInfo.rxPower ? `🔹 RX Power: ${deviceInfo.rxPower}\n`   : "") +
+    (deviceInfo.txPower ? `🔹 TX Power: ${deviceInfo.txPower}\n`   : "") +
+    (deviceInfo.temp    ? `🔹 Temp: ${deviceInfo.temp}\n`          : "") +
+    (deviceInfo.firmware? `🔹 Firmware: ${deviceInfo.firmware}\n`  : "") +
+    `\n🌐 *WAN*\nIP: ${ip}\nMáscara: ${mascara}\nGateway: ${gateway}\nVLAN: ${vlan}\n\n` +
+    `📶 *WiFi*\n2.4G: ${ssid}\n5G: ${ssid}-5G\nClave: ${wifiPass}\n\n✅ Configuración completada`;
 
   const pasoBg = (est) => {
     if (est === "done")    return "var(--success, #16a34a)";
@@ -1610,7 +1732,6 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
     return <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)" }}>{idx + 1}</span>;
   };
 
-  // Grid dinámico según cantidad de modelos
   const gridCols = MODELOS.length <= 3 ? "1fr 1fr 1fr" : "1fr 1fr";
 
   return (
@@ -1634,6 +1755,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       </div>
 
+      {/* ── Selector de modelo ── */}
       {estado === "idle" && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "var(--hover)", borderRadius: "12px 12px 0 0" }}>
@@ -1646,8 +1768,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
               {MODELOS.map(m => {
                 const sel = modeloId === m.id;
                 return (
-                  <button key={m.id} type="button"
-                    onClick={() => seleccionarModelo(m)}
+                  <button key={m.id} type="button" onClick={() => seleccionarModelo(m)}
                     style={{
                       padding: "12px 8px", borderRadius: 10, border: "1.5px solid",
                       borderColor: sel ? m.color : "var(--border)",
@@ -1657,9 +1778,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
                     <div style={{ fontWeight: 800, fontSize: 14, color: sel ? m.color : "var(--text)", marginBottom: 3 }}>
                       {m.nombre}
                     </div>
-                    <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.3 }}>
-                      {m.desc}
-                    </div>
+                    <div style={{ fontSize: 10, color: "var(--text-muted)", lineHeight: 1.3 }}>{m.desc}</div>
                     {sel && (
                       <div style={{ marginTop: 6, width: 18, height: 18, borderRadius: "50%", background: m.color, display: "flex", alignItems: "center", justifyContent: "center", margin: "6px auto 0" }}>
                         <Icon d={IC.check} size={10} color="white" />
@@ -1674,6 +1793,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       )}
 
+      {/* ── Datos de red ── */}
       {modoManual && estado === "idle" && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "#f0fdf4", borderRadius: "12px 12px 0 0" }}>
@@ -1708,12 +1828,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
             </div>
           </div>
           <div style={{ padding: "12px 14px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "8px 12px" }}>
-            {[
-              { label: "IP WAN",  value: ip },
-              { label: "Máscara", value: mascara },
-              { label: "Gateway", value: gateway },
-              { label: "VLAN",    value: vlan },
-            ].map(({ label, value }) => (
+            {[["IP WAN", ip], ["Máscara", mascara], ["Gateway", gateway], ["VLAN", vlan]].map(([label, value]) => (
               <div key={label}>
                 <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{label}</div>
                 <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#14532d" }}>{value || "—"}</div>
@@ -1723,6 +1838,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       )}
 
+      {/* ── WiFi + botón configurar ── */}
       {estado === "idle" && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "var(--hover)", borderRadius: "12px 12px 0 0" }}>
@@ -1762,8 +1878,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
             <button className="btn btn-primary btn-lg btn-full"
               onClick={handleConfigurar}
               disabled={!modeloId || !ip}
-              style={{ minHeight: 48, marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                       opacity: (!modeloId || !ip) ? 0.5 : 1 }}>
+              style={{ minHeight: 48, marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 8, opacity: (!modeloId || !ip) ? 0.5 : 1 }}>
               <Icon d={IC.zap} size={16} />
               Configurar ONU automáticamente
             </button>
@@ -1771,6 +1886,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
         </div>
       )}
 
+      {/* ── Panel de progreso ── */}
       {(estado === "running" || estado === "done" || estado === "error") && (
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{
@@ -1791,7 +1907,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
               <div style={{ fontSize: 11, marginTop: 3, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 5 }}>
                 <span style={{ fontWeight: 700, color: modeloActual.color }}>{modeloActual.nombre}</span>
                 <span>·</span>
-                <span style={{ fontFamily: "monospace" }}>{modeloActual?.ip}</span>
+                <span style={{ fontFamily: "monospace" }}>{ipDetectada || modeloActual.ip}</span>
               </div>
             )}
             {estado === "done"  && <div style={{ fontSize: 12, color: "#166534", marginTop: 2 }}>El equipo se está reiniciando. Esperá 2 minutos y probá el servicio.</div>}
@@ -1837,26 +1953,189 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
             </div>
           )}
 
+          {/* ── Resumen + botón compartir ── */}
           {estado === "done" && (
-            <div style={{ padding: "0 14px 14px" }}>
-              <div style={{ padding: "10px 14px", background: "#f0fdf4", border: "1px solid #bbf7d0", borderRadius: 10, fontSize: 13, color: "#166534" }}>
-                <div style={{ fontWeight: 700, marginBottom: 6 }}>✅ Resumen</div>
-                <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 12px", fontSize: 12 }}>
-                  <span style={{ opacity: 0.7 }}>Modelo:</span>   <span style={{ fontWeight: 600, color: modeloActual?.color }}>{modeloActual?.nombre}</span>
-                  <span style={{ opacity: 0.7 }}>IP ONU:</span>   <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{ipDetectada}</span>
-                  <span style={{ opacity: 0.7 }}>IP WAN:</span>   <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{ip}</span>
-                  <span style={{ opacity: 0.7 }}>Gateway:</span>  <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{gateway}</span>
-                  <span style={{ opacity: 0.7 }}>VLAN:</span>     <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{vlan}</span>
-                  <span style={{ opacity: 0.7 }}>WiFi 2.4G:</span><span style={{ fontWeight: 600 }}>{ssid}</span>
-                  <span style={{ opacity: 0.7 }}>WiFi 5G:</span>  <span style={{ fontWeight: 600 }}>{ssid}-5G</span>
-                  <span style={{ opacity: 0.7 }}>Contraseña:</span><span style={{ fontFamily: "monospace", fontWeight: 600 }}>{wifiPass}</span>
+            <>
+              <div ref={shareRef} style={{ margin: "0 14px 14px", background: "#fff", borderRadius: 10, overflow: "hidden", border: "1px solid #bbf7d0" }}>
+                {/* Cabecera */}
+                <div style={{ background: modeloActual?.color || "#2563eb", padding: "12px 14px" }}>
+                  <div style={{ color: "white", fontWeight: 800, fontSize: 16 }}>
+                    ✅ ONU Configurada — {modeloActual?.nombre}
+                  </div>
+                  <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11, marginTop: 2 }}>
+                    {new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {ipDetectada && ` · ${ipDetectada}`}
+                  </div>
                 </div>
+
+                {/* WAN */}
+                <div style={{ padding: "10px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>🌐 WAN</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px" }}>
+                    {[["IP WAN", ip], ["Máscara", mascara], ["Gateway", gateway], ["VLAN", vlan]].map(([label, value]) => (
+                      <div key={label} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
+                        <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 54 }}>{label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#1e293b" }}>{value || "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* WiFi */}
+                <div style={{ padding: "10px 14px", background: "#f0fdf4", borderBottom: "1px solid #dcfce7" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📶 WiFi</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px" }}>
+                    {[["2.4G", ssid], ["5G", `${ssid}-5G`], ["Clave", wifiPass]].map(([label, value]) => (
+                      <div key={label} style={{ display: "contents" }}>
+                        <span style={{ fontSize: 11, color: "#4ade80" }}>{label}</span>
+                        <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#14532d" }}>{value || "—"}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Info dispositivo */}
+                {(deviceInfo.sn || deviceInfo.rxPower || deviceInfo.txPower || deviceInfo.temp || deviceInfo.firmware || deviceInfo.modelo) && (
+                  <div style={{ padding: "10px 14px", background: "#fffbeb", borderBottom: "1px solid #fef08a" }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>⚡ Dispositivo</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 10px" }}>
+                      {[
+                        deviceInfo.sn       && ["GPON SN",   deviceInfo.sn],
+                        deviceInfo.modelo   && ["Modelo",    deviceInfo.modelo],
+                        deviceInfo.rxPower  && ["RX Power",  deviceInfo.rxPower],
+                        deviceInfo.txPower  && ["TX Power",  deviceInfo.txPower],
+                        deviceInfo.temp     && ["Temp",      deviceInfo.temp],
+                        deviceInfo.firmware && ["Firmware",  deviceInfo.firmware],
+                      ].filter(Boolean).map(([label, value]) => (
+                        <div key={label} style={{ display: "contents" }}>
+                          <span style={{ fontSize: 10, color: "#b45309" }}>{label}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "monospace", color: "#78350f" }}>{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Sin info */}
+                {!deviceInfo.sn && !deviceInfo.rxPower && !deviceInfo.firmware && (
+                  <div style={{ padding: "8px 14px", background: "#f8fafc" }}>
+                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Info del dispositivo no disponible para este modelo</span>
+                  </div>
+                )}
               </div>
-            </div>
+
+              {/* Mostrar la imagen generada */}
+              {capturedImage && (
+                <div style={{ margin: "0 14px 14px", textAlign: "center" }}>
+                  <div style={{ 
+                    fontSize: 12, 
+                    fontWeight: 600, 
+                    color: "#64748b", 
+                    marginBottom: 8,
+                    textTransform: "uppercase",
+                    letterSpacing: 0.5
+                  }}>
+                    📸 Vista previa de la imagen
+                  </div>
+                  <img 
+                    src={capturedImage} 
+                    alt="Configuración ONU"
+                    style={{
+                      maxWidth: "100%",
+                      borderRadius: 12,
+                      border: "1px solid #e2e8f0",
+                      boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)"
+                    }}
+                  />
+                  <button
+                    onClick={handleDownloadImage}
+                    style={{
+                      marginTop: 10,
+                      padding: "6px 12px",
+                      background: "#f1f5f9",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6
+                    }}
+                  >
+                    💾 Descargar imagen
+                  </button>
+                </div>
+              )}
+
+              {/* Botón compartir mejorado */}
+              <div style={{ padding: "0 14px 14px" }}>
+                <button
+                  onClick={handleShareImage}
+                  disabled={isGeneratingImage}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    gap: 8,
+                    minHeight: 44,
+                    background: "#f0fdf4",
+                    border: "1px solid #bbf7d0",
+                    color: "#166534",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    borderRadius: 8,
+                    width: "100%",
+                    cursor: isGeneratingImage ? "wait" : "pointer",
+                    opacity: isGeneratingImage ? 0.6 : 1,
+                  }}
+                >
+                  {isGeneratingImage ? (
+                    <>
+                      <SpinIcon color="#166634" size={14} />
+                      Generando imagen...
+                    </>
+                  ) : capturedImage ? (
+                    <>
+                      📤
+                      Compartir imagen
+                    </>
+                  ) : (
+                    <>
+                      📸
+                      Generar y compartir imagen
+                    </>
+                  )}
+                </button>
+                
+                {/* Botón para regenerar si ya hay imagen */}
+                {capturedImage && !isGeneratingImage && (
+                  <button
+                    onClick={handleShareImage}
+                    style={{
+                      marginTop: 8,
+                      padding: "6px 12px",
+                      background: "transparent",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: 6,
+                      fontSize: 12,
+                      cursor: "pointer",
+                      width: "100%",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      gap: 6
+                    }}
+                  >
+                    ⟳ Regenerar imagen
+                  </button>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}
 
+      {/* ── Instrucciones ── */}
       {estado === "idle" && (
         <div style={{ padding: "10px 14px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 10, fontSize: 12, color: "#92400e" }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠️ Antes de configurar:</div>
