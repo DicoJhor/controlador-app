@@ -347,6 +347,7 @@ router.post(
 
     const u = (orden.servicio ?? "").toUpperCase();
     const esCambioOnu = u.includes("CAMBIO DE EQUIPO");
+    const esRetiroEquipo = u.includes("RETIRO DE EQUIPO");
     const esAveria    = u.includes("AVERIA") || esCambioOnu;
 
     let items = [];
@@ -393,26 +394,47 @@ router.post(
           );
         }
 
-        if (esCambioOnu && onuRecogidaPon) {
+        if ((esCambioOnu || esRetiroEquipo) && onuRecogidaPon) {
+          console.log("========== DEBUG CAMBIO ONU ==========");
+          console.log("1. onuRecogidaPon:", onuRecogidaPon);
+          console.log("2. onuRecogidaProductoId:", onuRecogidaProductoId);
+          console.log("3. tecnicoId:", tecnicoId);
+          console.log("4. sedeId:", sedeId);
+          
           const codigoRecojo = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+          console.log("5. codigoRecojo generado:", codigoRecojo);
+          
           const [recojoIns] = await conn.execute(
             `INSERT INTO recojos
-               (codigo, tecnico_id, cliente, direccion, tipo_equipo, codigo_pon,
+              (codigo, tecnico_id, cliente, direccion, tipo_equipo, codigo_pon,
                 producto_id, estado, registrado_por)
-             VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'pendiente', ?)`,
+            VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'pendiente', ?)`,
             [codigoRecojo, tecnicoId, orden.abonado || null, orden.direccion || null,
-             onuRecogidaPon, onuRecogidaProductoId || null, tecnicoId]
+            onuRecogidaPon, onuRecogidaProductoId || null, tecnicoId]
           );
+          
+          console.log("6. recojoIns:", JSON.stringify(recojoIns));
+          console.log("7. recojoIns.insertId:", recojoIns.insertId);
+          
           const recojoId = recojoIns.insertId;
-          await conn.execute(
+          console.log("8. recojoId:", recojoId);
+          
+          if (!recojoId) {
+            console.error("❌ ERROR: recojoId es null o undefined");
+            throw new Error("No se pudo crear el registro de recojo");
+          }
+          
+          console.log("9. Intentando insertar en onus_recicladas...");
+          const [result] = await conn.execute(
             `INSERT INTO onus_recicladas
-               (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, onu_id)
-             VALUES (?, 'ONU', ?, ?, ?, 'revision', ?)`,
-            [recojoId || null, onuRecogidaPon || null, onuRecogidaProductoId || null,
-             sedeId || null, onuId || null]
+              (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, onu_id)
+            VALUES (?, 'ONU', ?, ?, ?, 'revision', ?)`,
+            [recojoId, onuRecogidaPon, onuRecogidaProductoId, sedeId, onuId]
           );
+          
+          console.log("10. Resultado insert onus_recicladas:", result);
+          console.log("========== FIN DEBUG ==========");
         }
-
         await conn.execute(
           "UPDATE ordenes_servicio SET averia_id = ? WHERE id = ?",
           [registroId, ordenId]

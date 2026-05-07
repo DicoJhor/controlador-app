@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { MotivoBadge } from "../../components/ui/Badge";
 import { formatDate } from "../../utils/formatters";
 import tecnicoService from "../../services/tecnicoService";
+import { db } from "../../db/localDB";
 
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (

@@ -1,6 +1,8 @@
 import { useState, useRef } from "react";
 import { CapacitorHttp } from '@capacitor/core';
 import html2canvas from 'html2canvas';
+import { Share } from '@capacitor/share';
+import { Filesystem, Directory } from '@capacitor/filesystem';
 
 /* ─── Iconos ─────────────────────────────────────────────── */
 function Icon({ d, size = 16, color = "currentColor" }) {
@@ -22,7 +24,6 @@ const IC = {
   refresh:   "M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15",
   zap:       "M13 2L3 14h9l-1 8 10-12h-9l1-8",
   warning:   "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0zM12 9v4M12 17h.01",
-  server:    "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-.99l7-3 7 3c.6.27 1 .86 1 1.5v6z",
 };
 
 /* ─── Modelos disponibles ────────────────────────────────── */
@@ -342,119 +343,95 @@ class ONUConfigurator {
   async _fetchDeviceInfoOptic() {
     const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
     try {
-      const pages = [
-        { url: `http://${this.ontIp}/cgi-bin/deviceinfo.cgi`, tipo: "device" },
-        { url: `http://${this.ontIp}/cgi-bin/pon_status.cgi`, tipo: "pon" },
-        { url: `http://${this.ontIp}/cgi-bin/status.cgi`,     tipo: "status" },
-        { url: `http://${this.ontIp}/cgi-bin/optical.cgi`,    tipo: "optical" },
-      ];
-      for (const { url, tipo } of pages) {
-        try {
-          const r = await CapacitorHttp.get({
-            url,
-            headers: { Accept: "text/html,*/*" },
-            params: {},
-            connectTimeout: 3000,
-            readTimeout: 3000,
-          });
-          const html = typeof r.data === "string" ? r.data : "";
+      // deviceinfo.cgi — modelo, SN, firmware
+      try {
+        const r = await CapacitorHttp.get({
+          url: `http://${this.ontIp}/cgi-bin/deviceinfo.cgi`,
+          headers: { Accept: "text/html,*/*" },
+          params: {}, connectTimeout: 3000, readTimeout: 3000,
+        });
+        const html = typeof r.data === "string" ? r.data : "";
+        if (html && html.length > 300 && !html.includes("jumpUrl") && !html.includes("login.cgi")) {
+          const modM = html.match(/id="?devinceinfo_modelname"?[^>]*>\s*([^<]{3,20})\s*</);
+          if (modM) info.modelo = modM[1].trim();
 
-          // Log para debug — podés quitar esto después
-          console.log(`[INFO ${tipo}] status=${r.status} len=${html.length} snippet=`, html.slice(0, 300));
+          const snM = html.match(/width="75%"[^>]*>\s*([A-Za-z0-9\-]{6,30})\s*</)
+                   || html.match(/id="?devinceinfo_sn"?[^>]*>\s*([A-Za-z0-9\-]{6,30})\s*</);
+          if (snM) info.sn = snM[1].trim();
 
-          // Si redirige al login o respuesta demasiado corta, saltear
-          if (!html || html.length < 300) continue;
-          if (html.includes("jumpUrl") || html.includes("login.cgi")) continue;
+          const fwM = html.match(/id="?devinceinfo_softwareversion"?[^>]*>\s*([^<]{4,30})\s*</);
+          if (fwM) info.firmware = fwM[1].trim();
+        }
+      } catch (_) {}
 
-          if (tipo === "device") {
-            // SN — buscar en el HTML del deviceinfo (el router lo pone en un <td>)
-            const snM = html.match(/id="?devinceinfo_sn"?[^>]*>\s*([A-Za-z0-9\-]{6,30})\s*</)
-                     || html.match(/([A-Fa-f0-9]{4}[A-Fa-f0-9\-]{8,16})/)  // patrón SN tipo DC54AD-336581700044
-                     || html.match(/width="75%"[^>]*>\s*([A-Za-z0-9\-]{6,30})\s*</);
-            if (snM && !info.sn) info.sn = snM[1]?.trim();
-
-            const fwM = html.match(/id="?devinceinfo_softwareversion"?[^>]*>\s*([^<]{4,30})\s*</)
-                     || html.match(/SoftwareVersion[^>]*>\s*([^<]{4,30})\s*</i);
-            if (fwM && !info.firmware) info.firmware = fwM[1]?.trim();
-
-            const modM = html.match(/id="?devinceinfo_modelname"?[^>]*>\s*([^<]{3,20})\s*</);
-            if (modM && !info.modelo) info.modelo = modM[1]?.trim();
+      // poninfo.cgi — RX, TX, temperatura (endpoint correcto del OPTIC)
+      try {
+        const r = await CapacitorHttp.get({
+          url: `http://${this.ontIp}/cgi-bin/poninfo.cgi`,
+          headers: { Accept: "text/html,*/*" },
+          params: {}, connectTimeout: 3000, readTimeout: 3000,
+        });
+        const html = typeof r.data === "string" ? r.data : "";
+        if (html && html.length > 100 && !html.includes("jumpUrl") && !html.includes("login.cgi")) {
+          // El OPTIC usa IDs específicos en poninfo.cgi
+          const rxM = html.match(/id="poninfo_rxpower"[^>]*>\s*([^<]+)\s*</);
+          if (rxM) {
+            const v = rxM[1].trim();
+            info.rxPower = v.includes("dBm") ? v : v + " dBm";
           }
-
-          if (tipo === "pon" || tipo === "optical" || tipo === "status") {
-            // RX Power
-            const rxM = html.match(/(?:rx_power|RxPower|Rx\s*Power|RX\s*Power)[^<>]*>\s*([^<]{2,20})\s*</i)
-                     || html.match(/(-?\d{1,3}\.\d{1,3})\s*dBm/i);
-            if (rxM && !info.rxPower) {
-              const v = rxM[1]?.trim();
-              if (v) info.rxPower = v.includes("dBm") ? v : v + " dBm";
-            }
-
-            // TX Power
-            const txM = html.match(/(?:tx_power|TxPower|Tx\s*Power|TX\s*Power)[^<>]*>\s*([^<]{2,20})\s*</i);
-            if (txM && !info.txPower) {
-              const v = txM[1]?.trim();
-              if (v) info.txPower = v.includes("dBm") ? v : v + " dBm";
-            }
-
-            // Temperatura
-            const tempM = html.match(/(?:temperature|Temperature|Temp)[^<>]*>\s*([^<]{2,15})\s*</i);
-            if (tempM && !info.temp) {
-              const v = tempM[1]?.trim();
-              if (v) info.temp = v.includes("°") ? v : v + "°C";
-            }
+          const txM = html.match(/id="poninfo_txpower"[^>]*>\s*([^<]+)\s*</);
+          if (txM) {
+            const v = txM[1].trim();
+            info.txPower = v.includes("dBm") ? v : v + " dBm";
           }
-        } catch (_) {}
-      }
+          const tempM = html.match(/id="poninfo_worktemp"[^>]*>\s*([^<]+)\s*</);
+          if (tempM) {
+            const v = tempM[1].trim();
+            info.temp = v.includes("°") ? v : v + "°C";
+          }
+        }
+      } catch (_) {}
     } catch (_) {}
     return info;
   }
 
-  async _fetchDeviceInfoBOA(sessionCookie = null) {
-    const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
-    const headers = { Accept: "text/html,*/*" };
-    if (sessionCookie) headers["Cookie"] = sessionCookie;
-    const statusPages = [
-      `http://${this.ontIp}/status_device_basic_info.asp`,
-      `http://${this.ontIp}/pon_optical_info.asp`,
-      `http://${this.ontIp}/status_pon.asp`,
-      `http://${this.ontIp}/status_device.asp`,
-      `http://${this.ontIp}/info.asp`,
-      `http://${this.ontIp}/cgi-bin/deviceinfo.cgi`,
-    ];
-    for (const url of statusPages) {
-      try {
-        const r = await CapacitorHttp.get({ url, headers, connectTimeout: 3000, readTimeout: 3000 });
-        const html = typeof r.data === "string" ? r.data : "";
-        if (html.length < 200 || r.status >= 400) continue;
-        if (html.includes("login") && html.length < 2000) continue;
-        const snM = html.match(/(?:serialNumber|SerialNumber|GPON.SN|PON.SN|serial)[^"'<>]*["'>]\s*([A-Fa-f0-9]{12,20})\s*[<"']/i)
-                 || html.match(/>[^\S\r\n]*([A-Fa-f0-9]{4}[A-Fa-f0-9]{8,12})[^\S\r\n]*</);
-        if (snM && !info.sn) info.sn = snM[1];
-        const rxM = html.match(/(?:Rx\s*(?:Optical\s*)?Power|RxPower|rx_power)[^<>]*>([^<]{1,20})</i)
-                 || html.match(/(?:rx_power|rxPower)[^"']*["']\s*:\s*["']?(-?\d+\.?\d*)/i);
-        if (rxM && !info.rxPower) {
-          const v = rxM[1].trim().replace(/[^\d.\-]/g, "");
-          if (v) info.rxPower = v + " dBm";
+        async _fetchDeviceInfoBOA(sessionCookie = null) {
+          const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
+          const headers = { Accept: "text/html,*/*" };
+          if (sessionCookie) headers["Cookie"] = sessionCookie;
+
+          // Usar las URLs que sabemos que funcionan para esta LANLY
+          const ponUrl = `http://${this.ontIp}/status_gpon.asp`;
+          const deviceUrl = `http://${this.ontIp}/status_device_basic_info.asp`;
+
+          // Obtener datos PON (RX, TX, Temperatura)
+          try {
+            const r = await CapacitorHttp.get({ url: ponUrl, headers, connectTimeout: 5000, readTimeout: 5000 });
+            const html = typeof r.data === "string" ? r.data : "";
+            if (html && html.length > 300 && r.status === 200 && !html.includes("login")) {
+              const parsed = this._parseLanlyGpon(html);
+              if (parsed.rx) info.rxPower = parsed.rx + " dBm";
+              if (parsed.tx) info.txPower = parsed.tx + " dBm";
+              if (parsed.temp) info.temp = parsed.temp + "°C";
+              console.log("LANLY PON:", parsed);
+            }
+          } catch (e) { console.log("Error PON:", e.message); }
+
+          // Obtener datos del dispositivo (SN, Modelo, Firmware)
+          try {
+            const r = await CapacitorHttp.get({ url: deviceUrl, headers, connectTimeout: 5000, readTimeout: 5000 });
+            const html = typeof r.data === "string" ? r.data : "";
+            if (html && html.length > 500 && r.status === 200 && !html.includes("login")) {
+              const parsed = this._parseLanlyDeviceInfo(html);
+              if (parsed.modelo) info.modelo = parsed.modelo;
+              if (parsed.gponsn) info.sn = parsed.gponsn;
+              if (parsed.fw) info.firmware = parsed.fw;
+              console.log("LANLY Device:", parsed);
+            }
+          } catch (e) { console.log("Error Device:", e.message); }
+
+          return info;
         }
-        const txM = html.match(/(?:Tx\s*(?:Optical\s*)?Power|TxPower|tx_power)[^<>]*>([^<]{1,20})</i)
-                 || html.match(/(?:tx_power|txPower)[^"']*["']\s*:\s*["']?(-?\d+\.?\d*)/i);
-        if (txM && !info.txPower) {
-          const v = txM[1].trim().replace(/[^\d.\-]/g, "");
-          if (v) info.txPower = v + " dBm";
-        }
-        const tempM = html.match(/(?:Temperature|Temp)[^<>]*>([^<]{1,20})</i);
-        if (tempM && !info.temp) {
-          const v = tempM[1].trim().replace(/[^\d.\-]/g, "");
-          if (v) info.temp = v + "°C";
-        }
-        const fwM = html.match(/(?:SoftwareVersion|FirmwareVersion|firmware_version)[^<>]*>([^<]{3,30})</i);
-        if (fwM && !info.firmware) info.firmware = fwM[1].trim();
-        if (info.sn || info.rxPower) break;
-      } catch (_) {}
-    }
-    return info;
-  }
 
   async _fetchDeviceInfoMCT() {
     const info = { sn: "", rxPower: "", txPower: "", temp: "", firmware: "", modelo: "" };
@@ -687,7 +664,24 @@ class ONUConfigurator {
     } catch (_) { onProgress("upnp", "done"); }
     await sleep(400);
 
-    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
+    onProgress("wifi5", "running");
+    try {
+      await this.refreshSK(["wlantop.cgi"]);
+      await this._wifiOptic(this.ssid5, this.pass5, 9, "160MHz", "a,n,ac,ax");
+      onProgress("wifi5", "done");
+    } catch (e) {
+      const msg = e.message || "";
+      if (msg.includes("IOException") || msg.includes("EOFException") ||
+          msg.includes("unexpected end") || msg.includes("NullPointerException")) {
+        onProgress("wifi5", "done");
+      } else {
+        onProgress("wifi5", "error");
+        throw new Error(`WiFi 5G fallida: ${e.message}`);
+      }
+    }
+    await sleep(1500);
+
+    // INFO aquí — entre wifi5 y wifi24, sesión todavía activa
     onProgress("info", "running");
     try {
       this.deviceInfo = await this._fetchDeviceInfoOptic();
@@ -695,28 +689,42 @@ class ONUConfigurator {
     } catch (_) { onProgress("info", "done"); }
     await sleep(300);
 
-    onProgress("wifi5", "running");
-    try {
-      await this.refreshSK(["wlantop.cgi"]);
-      await this._wifiOptic(this.ssid5, this.pass5, 9, "160MHz", "a,n,ac,ax");
-      onProgress("wifi5", "done");
-    } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
-    await sleep(1500);
-
     onProgress("wifi24", "running");
     try {
       await this.refreshSK(["wlantop.cgi"]);
       await this._wifiOptic(this.ssid24, this.pass24, 1, "40MHz", "b,g,n,ax");
       onProgress("wifi24", "done");
-    } catch (e) { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
+    } catch (e) {
+      const msg = e.message || "";
+      if (msg.includes("IOException") || msg.includes("EOFException") ||
+          msg.includes("unexpected end") || msg.includes("NullPointerException")) {
+        onProgress("wifi24", "done");
+      } else {
+        onProgress("wifi24", "error");
+        throw new Error(`WiFi 2.4G fallida: ${e.message}`);
+      }
+    }
     await sleep(1500);
 
     onProgress("reboot", "running");
     try {
-      this.getCGI("reboot.cgi?onSubmit=1&reboot=1").catch(() => {});
+      await this.refreshSK(["reboot.cgi"]);
+      await this.postCGI("reboot.cgi", {
+        onSubmit: "loading",
+        sessionkey: this.sk,
+      });
+      await sleep(1000);
+      await this.refreshSK(["loading.cgi?url=reboot.cgi&waittime=60&operation=docmd"]);
+      await sleep(1000);
+      this.postCGI("reboot.cgi", {
+        onSubmit: "docmd",
+        sessionkey: this.sk,
+      }).catch(() => {});
       await sleep(3000);
       onProgress("reboot", "done");
-    } catch (_) { onProgress("reboot", "done"); }
+    } catch (_) {
+      onProgress("reboot", "done");
+    }
   }
 
   async _wifiOptic(ssid, pass, idx, bw, std) {
@@ -733,7 +741,7 @@ class ONUConfigurator {
         external_idx: String(idx), SSID: ssid,
         X_GC_HT_GuardInterval: "0", WmmEnable: "1",
         backup_external_idx: "", Backup_Enable: "0",
-        Backup_SSID: ssid + "_5G", BandEnable: idx === 9 ? "2" : "1",
+        Backup_SSID: ssid + "Wifi5", BandEnable: "1",
         KeyPassphrase_input: passB64, WEPKey: b64("12345"),
         SAEPassphrase_input: passB64,
         RadioEnabled_bt: "on", BandEnable_bt: "on",
@@ -759,6 +767,7 @@ class ONUConfigurator {
   // LANLY — BOA CGI
   // ════════════════════════════════════════════════════════
   async runLanly(onProgress) {
+    // LOGIN
     onProgress("login", "running");
     try {
       let html = await this.getCGI("net_eth_links.asp");
@@ -776,60 +785,97 @@ class ONUConfigurator {
         });
         html = await this.getCGI("net_eth_links.asp");
         tok = extractCSRF(html);
-        if (!tok && html.includes("formLogin")) throw new Error("Credenciales inválidas");
+        if (!tok && html.includes("formLogin")) 
+          throw new Error("Credenciales inválidas");
       }
       if (tok) this.csrf = tok;
       onProgress("login", "done");
-    } catch (e) { onProgress("login", "error"); throw new Error(`Login fallido: ${e.message}`); }
+    } catch (e) { 
+      onProgress("login", "error"); 
+      throw new Error(`Login fallido: ${e.message}`); 
+    }
     await sleep(300);
 
+    // WAN
     onProgress("wan", "running");
     try {
-      const html = await this.refreshCSRF("net_eth_links.asp");
+      let html = await this.refreshCSRF("net_eth_links.asp");
       const lstM = html.match(/new\s+it_nr\s*\(\s*["']([^"']+)["']/);
       const lst = lstM ? lstM[1] : null;
+
       if (lst) {
+        // DELETE — igual que referencia: lkname='0', ignorar timeout
+        try {
+          await this._lanlyPostEthernet({
+            lkname: "0",  // ← CLAVE: usa '0' no lst
+            lkmode: "1", IpProtocolType: "1", ipmode: "1",
+            PPPoEProxyMaxUser: "0", napt: "on", vlan: "on", vid: "100",
+            vprio: "1", mtu: "1500", pppUsername: "", pppPassword: "",
+            pppServiceName: "", pppCtype: "0",
+            ipAddr: "0.0.0.0", netMask: "255.255.255.0", 
+            remoteIpAddr: "0.0.0.0",
+            v4dns1: "8.8.8.8", v4dns2: "8.8.4.4",
+            applicationtype: "1", dslite_aftr_mode: "0", 
+            dslite_aftr_hostname: "::",
+            Ipv6Addr: "", Ipv6PrefixLen: "", Ipv6Gateway: "",
+            dnsv6Mode: "1", Ipv6Dns1: "", Ipv6Dns2: "",
+            cmode: "1", ipDhcp: "0", itfGroup: "543",
+            encodePppUserName: "", encodePppPassword: "",
+            lst, action: "rm",
+            "submit-url": `http://${this.ontIp}/net_eth_links.asp`,
+            acnameflag: "none", csrftoken: this.csrf,
+            chkpt: ["on","on","on","on","on","","","","","on","","","",""],
+          });
+        } catch (_) {} // ignorar error del delete
+        await sleep(1500);
+        await this.refreshCSRF("net_eth_links.asp");
+      }
+
+      // SAVE — ignorar timeout igual que referencia
+      try {
         await this._lanlyPostEthernet({
-          lkname: lst, lkmode: "1", IpProtocolType: "1", ipmode: "1",
-          PPPoEProxyMaxUser: "0", napt: "on", vlan: "on", vid: "100",
+          lkname: "new", lkmode: "1", IpProtocolType: "1", ipmode: "1",
+          PPPoEProxyMaxUser: "0", napt: "on", vlan: "on", vid: this.vlan,
           vprio: "1", mtu: "1500", pppUsername: "", pppPassword: "",
           pppServiceName: "", pppCtype: "0",
-          ipAddr: "0.0.0.0", netMask: "255.255.255.0", remoteIpAddr: "0.0.0.0",
-          v4dns1: "8.8.8.8", v4dns2: "8.8.4.4",
-          applicationtype: "1", dslite_aftr_mode: "0", dslite_aftr_hostname: "::",
+          ipAddr: this.ip, netMask: this.mascara, remoteIpAddr: this.gateway,
+          dnsMode: "0", v4dns1: this.dns1, v4dns2: this.dns2,
+          applicationtype: "1", dslite_aftr_mode: "0", 
+          dslite_aftr_hostname: "::",
           Ipv6Addr: "", Ipv6PrefixLen: "", Ipv6Gateway: "",
           dnsv6Mode: "1", Ipv6Dns1: "", Ipv6Dns2: "",
           cmode: "1", ipDhcp: "0", itfGroup: "543",
           encodePppUserName: "", encodePppPassword: "",
-          lst, action: "rm",
+          lst: "", action: "sv",
           "submit-url": `http://${this.ontIp}/net_eth_links.asp`,
           acnameflag: "none", csrftoken: this.csrf,
           chkpt: ["on","on","on","on","on","","","","","on","","","",""],
         });
-        await sleep(1500);
-        await this.refreshCSRF("net_eth_links.asp");
-      }
-      await this._lanlyPostEthernet({
-        lkname: "new", lkmode: "1", IpProtocolType: "1", ipmode: "1",
-        PPPoEProxyMaxUser: "0", napt: "on", vlan: "on", vid: this.vlan,
-        vprio: "1", mtu: "1500", pppUsername: "", pppPassword: "",
-        pppServiceName: "", pppCtype: "0",
-        ipAddr: this.ip, netMask: this.mascara, remoteIpAddr: this.gateway,
-        dnsMode: "0", v4dns1: this.dns1, v4dns2: this.dns2,
-        applicationtype: "1", dslite_aftr_mode: "0", dslite_aftr_hostname: "::",
-        Ipv6Addr: "", Ipv6PrefixLen: "", Ipv6Gateway: "",
-        dnsv6Mode: "1", Ipv6Dns1: "", Ipv6Dns2: "",
-        cmode: "1", ipDhcp: "0", itfGroup: "543",
-        encodePppUserName: "", encodePppPassword: "",
-        lst: "", action: "sv",
-        "submit-url": `http://${this.ontIp}/net_eth_links.asp`,
-        acnameflag: "none", csrftoken: this.csrf,
-        chkpt: ["on","on","on","on","on","","","","","on","","","",""],
-      });
-      onProgress("wan", "done");
-    } catch (e) { onProgress("wan", "error"); throw new Error(`WAN fallida: ${e.message}`); }
-    await sleep(800);
+      } catch (_) {} // ignorar timeout del save — es normal en este equipo
 
+      onProgress("wan", "done");
+
+      // LOOP DE ESPERA — igual que referencia, hasta 20s
+      const wanStart = Date.now();
+      let wanReady = false;
+      while (Date.now() - wanStart < 20000) {
+        await sleep(2000);
+        try {
+          const h = await this.getCGI("net_eth_links.asp");
+          if (h && h.length > 500 && !h.includes("formLogin")) {
+            wanReady = true;
+            break;
+          }
+        } catch (_) {}
+      }
+      if (!wanReady) await sleep(3000);
+
+    } catch (e) { 
+      onProgress("wan", "error"); 
+      throw new Error(`WAN fallida: ${e.message}`); 
+    }
+
+    // LAN
     onProgress("lan", "running");
     try {
       await this.refreshCSRF("net_dhcpd.asp");
@@ -842,9 +888,27 @@ class ONUConfigurator {
         csrftoken: this.csrf,
       });
       onProgress("lan", "done");
-    } catch (e) { onProgress("lan", "error"); throw new Error(`LAN fallida: ${e.message}`); }
+    } catch (e) { 
+      onProgress("lan", "error"); 
+      throw new Error(`LAN fallida: ${e.message}`); 
+    }
     await sleep(600);
 
+    // UPnP — antes de ACL, igual que referencia
+    onProgress("upnp", "running");
+    try {
+      const upnpHtml = await this.refreshCSRF("app_upnp.asp");
+      const ifIdx = upnpHtml.match(/ifIdx\s*=\s*(\d+)/);
+      const extIf = ifIdx ? ifIdx[1] : "130816";
+      await this.postCGI("boaform/admin/formUpnp", {
+        daemon: "1", ext_if: extIf, save: "Guardar",
+        "submit-url": "/app_upnp.asp", csrftoken: this.csrf,
+      });
+      onProgress("upnp", "done");
+    } catch (_) { onProgress("upnp", "done"); }
+    await sleep(400);
+
+    // ACL
     onProgress("acl", "running");
     try {
       await this.refreshCSRF("rmtacc.asp");
@@ -859,33 +923,14 @@ class ONUConfigurator {
     } catch (_) { onProgress("acl", "done"); }
     await sleep(400);
 
-    onProgress("upnp", "running");
-    try {
-      const upnpHtml = await this.refreshCSRF("app_upnp.asp");
-      const ifIdx = upnpHtml.match(/ifIdx\s*=\s*(\d+)/);
-      const extIf = ifIdx ? ifIdx[1] : "130816";
-      await this.postCGI("boaform/admin/formUpnp", {
-        daemon: "1", ext_if: extIf, save: "Guardar",
-        "submit-url": "/app_upnp.asp", csrftoken: this.csrf,
-      });
-      onProgress("upnp", "done");
-    } catch (_) { onProgress("upnp", "done"); }
-    await sleep(400);
-
-    // ── INFO aquí — sesión activa, ANTES del reboot ──────────
-    onProgress("info", "running");
-    try {
-      this.deviceInfo = await this._fetchDeviceInfoBOA();
-      onProgress("info", "done");
-    } catch (_) { onProgress("info", "done"); }
-    await sleep(300);
-
+    // WiFi 5G
     onProgress("wifi5", "running");
     try {
       await this.refreshCSRF("admin/wlbasic.asp?wlan_idx=0");
       await this.postCGI("boaform/admin/formWlanSetup", {
-        band: "75", mode: "0", ssid: this.ssid5, pskFormat: "0", pskValue: this.pass5,
-        wl_wmm_func: "ON", powerincrease: "ON", powersaving: "ON",
+        band: "75", mode: "0", ssid: this.ssid5, pskFormat: "0", 
+        pskValue: this.pass5, wl_wmm_func: "ON",
+        powerincrease: "ON", powersaving: "ON",
         chanwid: "2", ctlband: "0", chan: "153", txpower: "0",
         wl_limitstanum: "0", wl_stanum: "", regdomain_demo: "13",
         "submit-url": "/admin/wlbasic.asp", save: "Aplicar Cambios",
@@ -894,9 +939,34 @@ class ONUConfigurator {
         regDomain: "11", csrftoken: this.csrf,
       });
       onProgress("wifi5", "done");
-    } catch (e) { onProgress("wifi5", "error"); throw new Error(`WiFi 5G fallida: ${e.message}`); }
-    await sleep(3000);
+    } catch (e) {
+      const msg = e.message || "";
+      const code = e.code || "";
+      // Estos errores son NORMALES al aplicar WiFi - el servicio web se reinicia
+      if (msg.includes("Software caused connection abort") ||
+          msg.includes("SocketException") ||
+          msg.includes("connection abort") ||
+          code === "SocketException") {
+        onProgress("wifi5", "done"); // Considerar como éxito
+      } else {
+        onProgress("wifi5", "error");
+        throw new Error(`WiFi 5G fallida: ${e.message}`);
+      }
+    }
+    await sleep(3000); // ← referencia usa 600 pero 3000 es más seguro
 
+     // ✅ AGREGAR AQUÍ LA CAPTURA DE INFO
+    // INFO - capturar datos del dispositivo (SN, RX, TX)
+    onProgress("info", "running");
+    try {
+      this.deviceInfo = await this._fetchDeviceInfoBOA();
+      onProgress("info", "done");
+    } catch (_) { 
+      onProgress("info", "done"); 
+    }
+    await sleep(300);
+
+    // WiFi 2.4G
     onProgress("wifi24", "running");
     try {
       await this.refreshCSRF("admin/wlbasic.asp?wlan_idx=1");
@@ -912,15 +982,23 @@ class ONUConfigurator {
       onProgress("wifi24", "done");
     } catch (e) {
       const msg = e.message || "";
-      if (msg.includes("SocketException") || msg.includes("connection abort") ||
-          msg.includes("Software caused") || msg.includes("IOException") ||
-          msg.includes("EOFException") || msg.includes("unexpected end") ||
-          msg.includes("NullPointerException")) {
+      const code = e.code || "";
+      // Los mismos errores de conexión son normales aquí también
+      if (msg.includes("Software caused connection abort") ||
+          msg.includes("SocketException") ||
+          msg.includes("connection abort") ||
+          msg.includes("SocketTimeoutException") ||
+          msg.includes("timeout") ||
+          code === "SocketException") {
         onProgress("wifi24", "done");
-      } else { onProgress("wifi24", "error"); throw new Error(`WiFi 2.4G fallida: ${e.message}`); }
+      } else {
+        onProgress("wifi24", "error");
+        throw new Error(`WiFi 2.4G fallida: ${msg}`);
+      }
     }
     await sleep(600);
 
+    // REBOOT
     onProgress("reboot", "running");
     try {
       await this.refreshCSRF("mgm_dev_reboot.asp");
@@ -941,9 +1019,9 @@ class ONUConfigurator {
     return this.postRaw(this.url("boaform/admin/formEthernet"), params.toString());
   }
 
-  // ════════════════════════════════════════════════════════
-  // BENMUNDO — BOA CGI + postSecurityFlag
-  // ════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════
+// BENMUNDO — BOA CGI + postSecurityFlag
+// ════════════════════════════════════════════════════════
   async runBenmundo(onProgress) {
     onProgress("login", "running");
     try {
@@ -1533,6 +1611,61 @@ class ONUConfigurator {
       onProgress("reboot", "done");
     } catch (_) { onProgress("reboot", "done"); }
   }
+  // ═══════════════════════════════════════════════════════════════
+  // PARSERS ESPECÍFICOS PARA LANLY / BENMUNDO
+  // ═══════════════════════════════════════════════════════════════
+
+    _parseLanlyGpon(html) {
+      const info = {};
+      
+      // Método alternativo: buscar por posición de tabla
+      // Buscar la fila de Potencia Tx
+      const txRowMatch = html.match(/<th[^>]*>Potencia\s+Tx<\/th>\s*<td[^>]*>([^<]+)</i);
+      if (txRowMatch) {
+        const txValue = txRowMatch[1].trim().replace(/\s+dBm/, '').trim();
+        if (txValue) info.tx = txValue;
+      }
+      
+      // Buscar la fila de Potencia Rx
+      const rxRowMatch = html.match(/<th[^>]*>Potencia\s+Rx<\/th>\s*<td[^>]*>([^<]+)</i);
+      if (rxRowMatch) {
+        const rxValue = rxRowMatch[1].trim().replace(/\s+dBm/, '').trim();
+        if (rxValue) info.rx = rxValue;
+      }
+      
+      // Buscar la fila de Temperatura
+      const tempRowMatch = html.match(/<th[^>]*>Temperatura<\/th>\s*<td[^>]*>([^<]+)</i);
+      if (tempRowMatch) {
+        const tempValue = tempRowMatch[1].trim().replace(/\s+°C/, '').trim();
+        if (tempValue) info.temp = tempValue;
+      }
+      
+      console.log("RX:", info.rx, "TX:", info.tx, "Temp:", info.temp);
+      
+      return info;
+    }
+
+    _parseLanlyDeviceInfo(html) {
+      const info = {};
+      
+      // Modelo - formato: "<th>Modelo</th><td>G24AT</td>"
+      const modelMatch = html.match(/Modelo<\/th>\s*<td[^>]*>\s*([^<]+)\s*<\/td>/i);
+      if (modelMatch) info.modelo = modelMatch[1].trim();
+      
+      // GPON SN (Número de serie) - formato: "<th>Número de serie</th><td>XPON34579526</td>"
+      const gponMatch = html.match(/Número de serie<\/th>\s*<td[^>]*>\s*([^<]+)\s*<\/td>/i);
+      if (gponMatch) info.gponsn = gponMatch[1].trim();
+      
+      // Serial Number (Número Serie) - formato: "<th>Número Serie</th><td>60A434-1234560A434579526</td>"
+      const snMatch = html.match(/Número Serie<\/th>\s*<td[^>]*>\s*([^<]+)\s*<\/td>/i);
+      if (snMatch) info.sn = snMatch[1].trim();
+      
+      // Firmware - formato: "<th>Versión Firmware</th><td>V3.2.01-260121</td>"
+      const fwMatch = html.match(/Versión Firmware<\/th>\s*<td[^>]*>\s*([^<]+)\s*<\/td>/i);
+      if (fwMatch) info.fw = fwMatch[1].trim();
+      
+      return info;
+    }
 
   async run(onProgress) {
     if (this.equipo === "optic")    return this.runOptic(onProgress);
@@ -1564,8 +1697,7 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
   const [errorMsg,    setErrorMsg]    = useState("");
   const [ipDetectada, setIpDetectada] = useState("");
   const [deviceInfo,  setDeviceInfo]  = useState({});
-  const [capturedImage, setCapturedImage] = useState(null);  // 👈 NUEVO
-  const [isGeneratingImage, setIsGeneratingImage] = useState(false);  // 👈 NUEVO
+  const [sharing,     setSharing]     = useState(false);
   const shareRef = useRef(null);
 
   const modeloActual = MODELOS.find(m => m.id === modeloId);
@@ -1637,86 +1769,34 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
   };
 
   const handleShareImage = async () => {
-    if (!shareRef.current || isGeneratingImage) return;
-    setIsGeneratingImage(true);
-    setCapturedImage(null); // Limpiar imagen anterior
-    
+    if (!shareRef.current) return;
+    setSharing(true);
     try {
       const canvas = await html2canvas(shareRef.current, {
         backgroundColor: "#ffffff",
-        scale: 2.5, // Mayor resolución
+        scale: 2.5,
         useCORS: true,
         allowTaint: false,
         logging: false,
-        windowWidth: shareRef.current.scrollWidth,
-        windowHeight: shareRef.current.scrollHeight,
       });
-      
-      // Guardar imagen en estado para mostrarla
-      const imageUrl = canvas.toDataURL("image/png");
-      setCapturedImage(imageUrl);
-      
-      const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
-      if (!blob) throw new Error("No se pudo generar imagen");
-      const file = new File([blob], `ONU-${modeloActual?.nombre || "cfg"}.png`, { type: "image/png" });
-
-      // Intentar compartir nativamente
-      if (navigator.share && navigator.canShare?.({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: "Configuración ONU",
-          text: `ONU ${modeloActual?.nombre} configurada exitosamente`
-        });
-      } 
-      // Si no soporta compartir archivos, mostrar opciones
-      else {
-        const action = confirm("📸 Imagen generada\n\n¿Quieres descargar la imagen?\n(OK = Descargar | Cancelar = Copiar texto)");
-        if (action) {
-          const a = document.createElement("a");
-          a.href = imageUrl;
-          a.download = file.name;
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        } else {
-          await navigator.clipboard.writeText(buildTextoResumen());
-          alert("📋 Configuración copiada al portapapeles");
-        }
-      }
+      const base64 = canvas.toDataURL("image/png").split(",")[1];
+      const fileName = `ONU-${modeloActual?.nombre || "cfg"}-${Date.now()}.png`;
+      const saved = await Filesystem.writeFile({
+        path: fileName,
+        data: base64,
+        directory: Directory.Cache,
+      });
+      await Share.share({
+        title: `ONU ${modeloActual?.nombre} · ${ipDetectada || modeloActual?.ip}`,
+        text: `ONU ${modeloActual?.nombre} · IP: ${ipDetectada || modeloActual?.ip}`,
+        url: saved.uri,
+      });
     } catch (e) {
-      console.error("Error al generar imagen:", e);
-      alert("No se pudo generar la imagen. Se copiará el texto al portapapeles.");
-      try {
-        await navigator.clipboard.writeText(buildTextoResumen());
-        alert("📋 Configuración copiada al portapapeles");
-      } catch (_) {}
+      if (e?.message !== "Share canceled") alert("Error: " + e?.message);
     } finally {
-      setIsGeneratingImage(false);
+      setSharing(false);
     }
   };
-
-  const handleDownloadImage = () => {
-    if (!capturedImage) return;
-    const a = document.createElement("a");
-    a.download = `ONU-${modeloActual?.nombre || "configurada"}.png`;
-    a.href = capturedImage;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-  };
-
-  const buildTextoResumen = () =>
-    `📡 *ONU CONFIGURADA - ${modeloActual?.nombre}*\n\n` +
-    `🔹 Modelo: ${modeloActual?.nombre}\n` +
-    `🔹 IP ONU: ${ipDetectada}\n` +
-    (deviceInfo.sn      ? `🔹 GPON SN: ${deviceInfo.sn}\n`        : "") +
-    (deviceInfo.modelo  ? `🔹 Modelo HW: ${deviceInfo.modelo}\n`   : "") +
-    (deviceInfo.rxPower ? `🔹 RX Power: ${deviceInfo.rxPower}\n`   : "") +
-    (deviceInfo.txPower ? `🔹 TX Power: ${deviceInfo.txPower}\n`   : "") +
-    (deviceInfo.temp    ? `🔹 Temp: ${deviceInfo.temp}\n`          : "") +
-    (deviceInfo.firmware? `🔹 Firmware: ${deviceInfo.firmware}\n`  : "") +
-    `\n🌐 *WAN*\nIP: ${ip}\nMáscara: ${mascara}\nGateway: ${gateway}\nVLAN: ${vlan}\n\n` +
-    `📶 *WiFi*\n2.4G: ${ssid}\n5G: ${ssid}-5G\nClave: ${wifiPass}\n\n✅ Configuración completada`;
 
   const pasoBg = (est) => {
     if (est === "done")    return "var(--success, #16a34a)";
@@ -1956,184 +2036,135 @@ export default function TecConfigurarONU({ ordenActual, onVolver }) {
           {/* ── Resumen + botón compartir ── */}
           {estado === "done" && (
             <>
-              <div ref={shareRef} style={{ margin: "0 14px 14px", background: "#fff", borderRadius: 10, overflow: "hidden", border: "1px solid #bbf7d0" }}>
-                {/* Cabecera */}
-                <div style={{ background: modeloActual?.color || "#2563eb", padding: "12px 14px" }}>
-                  <div style={{ color: "white", fontWeight: 800, fontSize: 16 }}>
-                    ✅ ONU Configurada — {modeloActual?.nombre}
-                  </div>
-                  <div style={{ color: "rgba(255,255,255,0.8)", fontSize: 11, marginTop: 2 }}>
-                    {new Date().toLocaleDateString("es-PE", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-                    {ipDetectada && ` · ${ipDetectada}`}
+              <div ref={shareRef} style={{
+                margin: "0 14px 14px",
+                background: "#ffffff",
+                borderRadius: 10,
+                overflow: "hidden",
+                border: "1px solid #e2e8f0",
+                fontFamily: "'Segoe UI', Arial, sans-serif",
+              }}>
+                {/* Encabezado */}
+                <div style={{ background: modeloActual?.color || "#2563eb", padding: "12px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div style={{ width: 30, height: 30, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01" />
+                      </svg>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ color: "white", fontWeight: 800, fontSize: 14 }}>
+                        ONU {modeloActual?.nombre} · {modeloActual?.desc}
+                      </div>
+                      <div style={{ color: "rgba(255,255,255,0.75)", fontSize: 11, fontFamily: "monospace", marginTop: 1 }}>
+                        IP: {ipDetectada || modeloActual?.ip}
+                      </div>
+                    </div>
+                    <div style={{ background: "rgba(255,255,255,0.2)", borderRadius: 6, padding: "3px 8px", fontSize: 10, fontWeight: 700, color: "white" }}>
+                      ✔ EXITOSO
+                    </div>
                   </div>
                 </div>
 
                 {/* WAN */}
-                <div style={{ padding: "10px 14px", background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#64748b", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>🌐 WAN</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px" }}>
-                    {[["IP WAN", ip], ["Máscara", mascara], ["Gateway", gateway], ["VLAN", vlan]].map(([label, value]) => (
-                      <div key={label} style={{ display: "flex", gap: 6, alignItems: "baseline" }}>
-                        <span style={{ fontSize: 11, color: "#94a3b8", minWidth: 54 }}>{label}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#1e293b" }}>{value || "—"}</span>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 4, background: "#dbeafe", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#1d4ed8" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+                      </svg>
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#1e40af", textTransform: "uppercase", letterSpacing: 0.8 }}>WAN</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 10px" }}>
+                    {[
+                      ["IP pública",  ip],
+                      ["Máscara",     mascara],
+                      ["Gateway",     gateway],
+                      ["DNS",         "8.8.8.8 / 8.8.4.4"],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "#f8fafc", borderLeft: "3px solid #bfdbfe", padding: "5px 8px" }}>
+                        <div style={{ fontSize: 9, color: "#64748b", marginBottom: 1, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#1e293b" }}>{value || "—"}</div>
                       </div>
                     ))}
                   </div>
                 </div>
 
                 {/* WiFi */}
-                <div style={{ padding: "10px 14px", background: "#f0fdf4", borderBottom: "1px solid #dcfce7" }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>📶 WiFi</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "4px 10px" }}>
-                    {[["2.4G", ssid], ["5G", `${ssid}-5G`], ["Clave", wifiPass]].map(([label, value]) => (
-                      <div key={label} style={{ display: "contents" }}>
-                        <span style={{ fontSize: 11, color: "#4ade80" }}>{label}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#14532d" }}>{value || "—"}</span>
+                <div style={{ padding: "12px 16px", borderBottom: "1px solid #e2e8f0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 4, background: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#15803d" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01" />
+                      </svg>
+                    </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.8 }}>WiFi</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 10px" }}>
+                    {[
+                      ["2.4 GHz", ssid],
+                      ["5 GHz",   `${ssid}-5G`],
+                      ["Contraseña", wifiPass],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "#f0fdf4", borderLeft: "3px solid #86efac", padding: "5px 8px" }}>
+                        <div style={{ fontSize: 9, color: "#64748b", marginBottom: 1, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: "#14532d" }}>{value || "—"}</div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Info dispositivo */}
-                {(deviceInfo.sn || deviceInfo.rxPower || deviceInfo.txPower || deviceInfo.temp || deviceInfo.firmware || deviceInfo.modelo) && (
-                  <div style={{ padding: "10px 14px", background: "#fffbeb", borderBottom: "1px solid #fef08a" }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, color: "#92400e", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>⚡ Dispositivo</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "3px 10px" }}>
-                      {[
-                        deviceInfo.sn       && ["GPON SN",   deviceInfo.sn],
-                        deviceInfo.modelo   && ["Modelo",    deviceInfo.modelo],
-                        deviceInfo.rxPower  && ["RX Power",  deviceInfo.rxPower],
-                        deviceInfo.txPower  && ["TX Power",  deviceInfo.txPower],
-                        deviceInfo.temp     && ["Temp",      deviceInfo.temp],
-                        deviceInfo.firmware && ["Firmware",  deviceInfo.firmware],
-                      ].filter(Boolean).map(([label, value]) => (
-                        <div key={label} style={{ display: "contents" }}>
-                          <span style={{ fontSize: 10, color: "#b45309" }}>{label}</span>
-                          <span style={{ fontSize: 11, fontWeight: 700, fontFamily: "monospace", color: "#78350f" }}>{value}</span>
-                        </div>
-                      ))}
+                {/* Dispositivo */}
+                <div style={{ padding: "12px 16px" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                    <div style={{ width: 20, height: 20, borderRadius: 4, background: "#fef9c3", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="#a16207" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-.99l7-3 7 3c.6.27 1 .86 1 1.5v6z" />
+                      </svg>
                     </div>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: "#854d0e", textTransform: "uppercase", letterSpacing: 0.8 }}>Dispositivo</span>
                   </div>
-                )}
-
-                {/* Sin info */}
-                {!deviceInfo.sn && !deviceInfo.rxPower && !deviceInfo.firmware && (
-                  <div style={{ padding: "8px 14px", background: "#f8fafc" }}>
-                    <span style={{ fontSize: 11, color: "#94a3b8" }}>Info del dispositivo no disponible para este modelo</span>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "5px 10px" }}>
+                    {[
+                      ["GPON SN",   deviceInfo.sn      || "N/D"],
+                      ["Modelo",    deviceInfo.modelo  || "N/D"],
+                      ["RX Power",  deviceInfo.rxPower || "N/D"],
+                      ["TX Power",  deviceInfo.txPower || "N/D"],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ background: "#fffbeb", borderLeft: "3px solid #fde68a", padding: "5px 8px" }}>
+                        <div style={{ fontSize: 9, color: "#64748b", marginBottom: 1, textTransform: "uppercase", letterSpacing: 0.3 }}>{label}</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "monospace", color: value === "N/D" ? "#94a3b8" : "#78350f" }}>{value}</div>
+                      </div>
+                    ))}
                   </div>
-                )}
+                </div>
               </div>
 
-              {/* Mostrar la imagen generada */}
-              {capturedImage && (
-                <div style={{ margin: "0 14px 14px", textAlign: "center" }}>
-                  <div style={{ 
-                    fontSize: 12, 
-                    fontWeight: 600, 
-                    color: "#64748b", 
-                    marginBottom: 8,
-                    textTransform: "uppercase",
-                    letterSpacing: 0.5
-                  }}>
-                    📸 Vista previa de la imagen
-                  </div>
-                  <img 
-                    src={capturedImage} 
-                    alt="Configuración ONU"
-                    style={{
-                      maxWidth: "100%",
-                      borderRadius: 12,
-                      border: "1px solid #e2e8f0",
-                      boxShadow: "0 4px 6px -1px rgba(0,0,0,0.1)"
-                    }}
-                  />
-                  <button
-                    onClick={handleDownloadImage}
-                    style={{
-                      marginTop: 10,
-                      padding: "6px 12px",
-                      background: "#f1f5f9",
-                      border: "1px solid #cbd5e1",
-                      borderRadius: 6,
-                      fontSize: 12,
-                      cursor: "pointer",
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6
-                    }}
-                  >
-                    💾 Descargar imagen
-                  </button>
-                </div>
-              )}
-
-              {/* Botón compartir mejorado */}
+              {/* Botón compartir */}
               <div style={{ padding: "0 14px 14px" }}>
                 <button
                   onClick={handleShareImage}
-                  disabled={isGeneratingImage}
+                  disabled={sharing}
                   style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8,
-                    minHeight: 44,
-                    background: "#f0fdf4",
-                    border: "1px solid #bbf7d0",
-                    color: "#166534",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    borderRadius: 8,
-                    width: "100%",
-                    cursor: isGeneratingImage ? "wait" : "pointer",
-                    opacity: isGeneratingImage ? 0.6 : 1,
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    minHeight: 44, background: "#f0fdf4", border: "1px solid #bbf7d0",
+                    color: "#166534", fontSize: 14, fontWeight: 600, borderRadius: 8,
+                    width: "100%", cursor: sharing ? "wait" : "pointer",
+                    opacity: sharing ? 0.6 : 1,
                   }}
                 >
-                  {isGeneratingImage ? (
-                    <>
-                      <SpinIcon color="#166634" size={14} />
-                      Generando imagen...
-                    </>
-                  ) : capturedImage ? (
-                    <>
-                      📤
-                      Compartir imagen
-                    </>
-                  ) : (
-                    <>
-                      📸
-                      Generar y compartir imagen
-                    </>
-                  )}
+                  {sharing
+                    ? <><SpinIcon color="#166634" size={14} /> Generando imagen...</>
+                    : <>📤 Compartir reporte de configuración</>
+                  }
                 </button>
-                
-                {/* Botón para regenerar si ya hay imagen */}
-                {capturedImage && !isGeneratingImage && (
-                  <button
-                    onClick={handleShareImage}
-                    style={{
-                      marginTop: 8,
-                      padding: "6px 12px",
-                      background: "transparent",
-                      border: "1px solid #cbd5e1",
-                      borderRadius: 6,
-                      fontSize: 12,
-                      cursor: "pointer",
-                      width: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 6
-                    }}
-                  >
-                    ⟳ Regenerar imagen
-                  </button>
-                )}
               </div>
             </>
           )}
         </div>
       )}
+        
 
       {/* ── Instrucciones ── */}
       {estado === "idle" && (

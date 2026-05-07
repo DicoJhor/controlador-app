@@ -415,28 +415,40 @@ export default function TecRegistrarSalida() {
             tecnicoService.getCatalogoOnus(),
             recojosService.getMisRecuperados(),
           ]);
+          const recuperadosData = Array.isArray(rec) ? rec : [];
+          
           setInventario(inv);
           setMisOnus(onus);
           setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
-          setRecuperados(Array.isArray(rec) ? rec : []);
+          setRecuperados(recuperadosData);
+          
           await db.inventario.clear();    await db.inventario.bulkPut(inv);
           await db.mis_onus.clear();      await db.mis_onus.bulkPut(onus);
           await db.catalogo_onus.clear(); await db.catalogo_onus.bulkPut(Array.isArray(catalogo) ? catalogo : []);
+          await db.recuperados.clear();   await db.recuperados.bulkPut(recuperadosData);
         } else {
-          const [inv, onus, cat] = await Promise.all([
+          const [inv, onus, cat, rec] = await Promise.all([
             db.inventario.toArray(),
             db.mis_onus.toArray(),
             db.catalogo_onus.toArray(),
+            db.recuperados.toArray(),
           ]);
-          setInventario(inv); setMisOnus(onus); setCatalogoOnus(cat);
+          setInventario(inv);
+          setMisOnus(onus);
+          setCatalogoOnus(cat);
+          setRecuperados(rec);
         }
       } catch {
-        const [inv, onus, cat] = await Promise.all([
+        const [inv, onus, cat, rec] = await Promise.all([
           db.inventario.toArray(),
           db.mis_onus.toArray(),
           db.catalogo_onus.toArray(),
+          db.recuperados.toArray(),
         ]);
-        setInventario(inv); setMisOnus(onus); setCatalogoOnus(cat);
+        setInventario(inv);
+        setMisOnus(onus);
+        setCatalogoOnus(cat);
+        setRecuperados(rec);
       } finally { setLoading(false); }
     })();
   }, []);
@@ -469,9 +481,15 @@ export default function TecRegistrarSalida() {
         onuService.getMisOnus(),
         recojosService.getMisRecuperados(),
       ]);
+      const recuperadosData = Array.isArray(rec) ? rec : [];
+      
       setInventario(inv);
       setMisOnus(onus);
-      setRecuperados(Array.isArray(rec) ? rec : []);
+      setRecuperados(recuperadosData);
+      
+      await db.inventario.clear();  await db.inventario.bulkPut(inv);
+      await db.mis_onus.clear();    await db.mis_onus.bulkPut(onus);
+      await db.recuperados.clear(); await db.recuperados.bulkPut(recuperadosData);
     } catch {}
   };
 
@@ -531,8 +549,14 @@ export default function TecRegistrarSalida() {
         const res = await tecnicoService.completarOrden(ordenActual.id, fd);
 
         // Marcar materiales recuperados como usados
+        // Marcar materiales recuperados como usados
         await Promise.allSettled(
-          itemsRecuperados.map(i => recojosService.marcarUsado(i.recuperado_id))
+          itemsRecuperados.map(async (i) => {
+            try {
+              await recojosService.marcarUsado(i.recuperado_id);
+              await db.recuperados.delete(i.recuperado_id);
+            } catch {}
+          })
         );
 
         setSuccess(res?.codigo || "OK");

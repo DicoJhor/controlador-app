@@ -101,6 +101,7 @@ export default function TecDashboard() {
     try {
       await recojosService.enviarASede(id);
       setRecuperados(prev => prev.filter(r => r.id !== id));
+      await db.recuperados.delete(id);  // ⬅️ LÍNEA NUEVA
     } catch (err) {
       alert(err.message);
     } finally {

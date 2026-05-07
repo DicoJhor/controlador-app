@@ -21,6 +21,7 @@ const IC = {
   save:    "M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z M17 21v-8H7v8 M7 3v5h8",
   alert:   "M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01",
   server:  "M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 01-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 011-.99l7-3 7 3c.6.27 1 .86 1 1.5v6z",
+  swap:    "M16 3l4 4-4 4 M8 21l-4-4 4-4 M4 7h16 M20 17H4", // icono para cambio de ONU
 };
 
 function DetRow({ label, value, mono = false }) {
@@ -32,10 +33,28 @@ function DetRow({ label, value, mono = false }) {
   );
 }
 
-const FILTROS = [
+// FUNCIÓN para clasificar el servicio (igual que en CtrlRecojos)
+function labelServicio(s = "") {
+  const u = s.toUpperCase();
+  if (u.includes("CAMBIO DE EQUIPO")) return "Cambio ONU";
+  if (u.includes("INSTALACION"))      return "Instalación";
+  if (u.includes("AVERIA"))           return "Avería";
+  if (u.includes("RECONEXION"))       return "Reconexión";
+  return s;
+}
+
+// FILTROS de estado de IP
+const FILTROS_IP = [
   { key: "sin_ip", label: "Sin IP" },
   { key: "con_ip", label: "Con IP" },
   { key: "todas",  label: "Todas"  },
+];
+
+// FILTROS de tipo de servicio (NUEVO)
+const FILTROS_TIPO = [
+  { key: "todas",        label: "📋 Todas" },
+  { key: "instalacion",  label: "🆕 Instalaciones" },
+  { key: "cambio_onu",   label: "🔄 Cambio de ONU" },
 ];
 
 const emptyForm = { ip_local: "", mascara: "255.255.255.0", gateway: "" };
@@ -43,16 +62,17 @@ const emptyForm = { ip_local: "", mascara: "255.255.255.0", gateway: "" };
 export default function ActivacionesRed() {
   const [ordenes,       setOrdenes]       = useState([]);
   const [loading,       setLoading]       = useState(true);
-  const [filtro,        setFiltro]        = useState("sin_ip");
+  const [filtroIp,      setFiltroIp]      = useState("sin_ip");
+  const [filtroTipo,    setFiltroTipo]    = useState("todas"); // NUEVO
   const [search,        setSearch]        = useState("");
-  const [ordenSel,      setOrdenSel]      = useState(null);   // orden abierta en panel lateral
+  const [ordenSel,      setOrdenSel]      = useState(null);
   const [form,          setForm]          = useState(emptyForm);
   const [saving,        setSaving]        = useState(false);
-  const [savedId,       setSavedId]       = useState(null);   // id que acaba de guardarse (feedback visual)
+  const [savedId,       setSavedId]       = useState(null);
   const [errors,        setErrors]        = useState({});
-  const [sedes,   setSedes]   = useState([]);
-  const [sedeId,  setSedeId]  = useState("");
-  const [copied,  setCopied]  = useState(false);
+  const [sedes,         setSedes]         = useState([]);
+  const [sedeId,        setSedeId]        = useState("");
+  const [copied,        setCopied]        = useState(false);
 
   const handleCopiar = () => {
     const texto = `${ordenSel.abonado} - ${ordenSel.nro_contrato}`;
@@ -65,10 +85,7 @@ export default function ActivacionesRed() {
   const cargar = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams();
-      if (filtro !== "todas") params.append("estado", filtro);
-      if (sedeId)             params.append("sede_id", sedeId);
-      const data = await activacionRedService.getAll(filtro, sedeId);
+      const data = await activacionRedService.getAll(filtroIp, sedeId);
       console.log("DATA RECIBIDA:", data);
       setOrdenes(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -79,7 +96,7 @@ export default function ActivacionesRed() {
     }
   };
 
-  useEffect(() => { cargar(); }, [filtro, sedeId]);
+  useEffect(() => { cargar(); }, [filtroIp, sedeId]);
 
   useEffect(() => {
     sedesService.getAll().then(data => setSedes(Array.isArray(data) ? data : []));
@@ -88,7 +105,6 @@ export default function ActivacionesRed() {
   const abrirOrden = (orden) => {
     setOrdenSel(orden);
     setErrors({});
-    // Pre-llenar form si ya tiene datos de red
     setForm({
       ip_local:   orden.ip_local    || "",
       mascara:    orden.mascara     || "255.255.255.0",
@@ -117,7 +133,6 @@ export default function ActivacionesRed() {
     setSaving(true);
     try {
       const res = await activacionRedService.guardarRed(ordenSel.id, form);
-      // Actualizar la fila en la tabla local
       setOrdenes(prev => prev.map(o =>
         o.id === ordenSel.id
           ? { ...o, ...form, red_id: res.data?.id ?? o.red_id }
@@ -126,8 +141,7 @@ export default function ActivacionesRed() {
       setSavedId(ordenSel.id);
       setTimeout(() => setSavedId(null), 2500);
       cerrar();
-      // Si estamos en "sin_ip", recargar para que desaparezca la fila guardada
-      if (filtro === "sin_ip") await cargar();
+      if (filtroIp === "sin_ip") await cargar();
     } catch (err) {
       alert("Error al guardar: " + err.message);
     } finally {
@@ -135,22 +149,43 @@ export default function ActivacionesRed() {
     }
   };
 
-  const filtered = ordenes.filter(o =>
-    !search ||
-    (o.abonado      ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (o.nro_contrato ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (o.sede_nombre  ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    String(o.nro_orden).includes(search)
-  );
+  // FILTRO combinado: por IP + por tipo de servicio + búsqueda
+  const filtered = ordenes.filter(o => {
+    // 1. Filtro por tipo de servicio
+    const servicioLabel = labelServicio(o.servicio ?? "");
+    let matchTipo = true;
+    if (filtroTipo === "instalacion") {
+      matchTipo = servicioLabel === "Instalación";
+    } else if (filtroTipo === "cambio_onu") {
+      matchTipo = servicioLabel === "Cambio ONU";
+    }
+    
+    // 2. Filtro por búsqueda
+    const matchSearch = !search ||
+      (o.abonado      ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (o.nro_contrato ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (o.sede_nombre  ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      String(o.nro_orden).includes(search);
+    
+    return matchTipo && matchSearch;
+  });
 
   const inputStyle = (field) => ({
     ...inpBase,
     borderColor: errors[field] ? "var(--danger, #e53e3e)" : "var(--border)",
   });
 
+  // Obtener badge según el tipo de servicio
+  const getServicioBadge = (servicio) => {
+    const label = labelServicio(servicio);
+    if (label === "Instalación") return { text: label, className: "badge-active", icon: "🆕" };
+    if (label === "Cambio ONU") return { text: label, className: "badge-warning", icon: "🔄" };
+    return { text: label, className: "badge-blue", icon: "📋" };
+  };
+
   return (
     <>
-      {/* ── Panel lateral ────────────────────────────────────────────────── */}
+      {/* Panel lateral - igual que antes */}
       {ordenSel && (
         <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", justifyContent: "flex-end" }}>
           <div onClick={cerrar}
@@ -161,10 +196,11 @@ export default function ActivacionesRed() {
             boxShadow: "-4px 0 32px rgba(0,0,0,.15)",
             display: "flex", flexDirection: "column",
           }}>
-            {/* Header */}
             <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>Cargar datos de red</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>
+                  {labelServicio(ordenSel.servicio)} — Cargar datos de red
+                </div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
                   Orden #{ordenSel.nro_orden} · {ordenSel.nro_contrato}
                 </div>
@@ -174,16 +210,15 @@ export default function ActivacionesRed() {
               </button>
             </div>
 
-            {/* Datos del cliente (solo lectura) */}
             <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 6, background: "var(--hover, #f8f9fa)" }}>
               <DetRow label="Abonado"   value={ordenSel.abonado} />
               <DetRow label="Dirección" value={ordenSel.direccion} />
               <DetRow label="Sede"      value={ordenSel.sede_nombre} />
+              <DetRow label="Servicio"  value={labelServicio(ordenSel.servicio)} />
               <DetRow label="Tecnología" value={ordenSel.tecnologia} />
               <DetRow label="Contrato"  value={ordenSel.nro_contrato} mono />
             </div>
 
-            {/* Texto copiable */}
             <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--border)", background: "var(--hover, #f8f9fa)" }}>
               <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6, fontWeight: 600 }}>
                 Texto para copiar
@@ -211,15 +246,12 @@ export default function ActivacionesRed() {
               </div>
             </div>
 
-            {/* Formulario */}
             <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14, flex: 1 }}>
-
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
                 <Icon d={IC.server} size={15} color="var(--primary)" />
                 <span style={{ fontWeight: 700, fontSize: 13, color: "var(--primary)" }}>Datos de red</span>
               </div>
 
-              {/* IP Local */}
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">IP local *</label>
                 <input
@@ -232,7 +264,6 @@ export default function ActivacionesRed() {
                 {errors.ip_local && <span style={errStyle}>{errors.ip_local}</span>}
               </div>
 
-              {/* Máscara */}
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">Máscara de subred *</label>
                 <input
@@ -245,7 +276,6 @@ export default function ActivacionesRed() {
                 {errors.mascara && <span style={errStyle}>{errors.mascara}</span>}
               </div>
 
-              {/* Gateway */}
               <div className="form-group" style={{ margin: 0 }}>
                 <label className="form-label">Gateway *</label>
                 <input
@@ -259,7 +289,6 @@ export default function ActivacionesRed() {
               </div>
             </div>
 
-            {/* Footer */}
             <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
               <button className="btn btn-outline" onClick={cerrar} disabled={saving}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleGuardar} disabled={saving}>
@@ -271,15 +300,14 @@ export default function ActivacionesRed() {
         </div>
       )}
 
-      {/* ── Contenido principal ──────────────────────────────────────────── */}
+      {/* Contenido principal */}
       <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
-        {/* Header sección */}
         <div style={styles.sectionHeader}>
           <div>
             <div style={styles.sectionTitle}>
               <Icon d={IC.wifi} size={18} color="var(--primary)" />
-              Activaciones — Datos de red
+              Datos de red — Instalaciones y Cambios de ONU
             </div>
             <div style={styles.sectionSubtitle}>
               Cargá IP, máscara y gateway para que el técnico configure la ONU en campo
@@ -290,20 +318,39 @@ export default function ActivacionesRed() {
           </button>
         </div>
 
-        {/* Filtros + búsqueda */}
+        {/* FILAS DE FILTROS */}
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          {FILTROS.map(f => (
-            <button key={f.key} type="button" onClick={() => setFiltro(f.key)}
+          {/* Filtro por tipo de servicio (NUEVO) */}
+          {FILTROS_TIPO.map(f => (
+            <button key={f.key} type="button" onClick={() => setFiltroTipo(f.key)}
               style={{
                 padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
                 border: "1.5px solid", cursor: "pointer",
-                borderColor: filtro === f.key ? "var(--primary)" : "var(--border)",
-                background:  filtro === f.key ? "var(--primary)" : "white",
-                color:       filtro === f.key ? "white" : "var(--text-muted)",
+                borderColor: filtroTipo === f.key ? "var(--primary)" : "var(--border)",
+                background:  filtroTipo === f.key ? "var(--primary)" : "white",
+                color:       filtroTipo === f.key ? "white" : "var(--text-muted)",
               }}>
               {f.label}
             </button>
           ))}
+          
+          {/* Separador visual */}
+          <div style={{ width: 1, height: 24, background: "var(--border)", margin: "0 4px" }} />
+          
+          {/* Filtro por estado de IP */}
+          {FILTROS_IP.map(f => (
+            <button key={f.key} type="button" onClick={() => setFiltroIp(f.key)}
+              style={{
+                padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+                border: "1.5px solid", cursor: "pointer",
+                borderColor: filtroIp === f.key ? "var(--primary)" : "var(--border)",
+                background:  filtroIp === f.key ? "var(--primary)" : "white",
+                color:       filtroIp === f.key ? "white" : "var(--text-muted)",
+              }}>
+              {f.label}
+            </button>
+          ))}
+          
           <select
             value={sedeId}
             onChange={e => setSedeId(e.target.value)}
@@ -316,6 +363,7 @@ export default function ActivacionesRed() {
             <option value="">Todas las sedes</option>
             {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
           </select>
+          
           <div className="search-box">
             <Icon d={IC.search} size={15} color="var(--text-muted)" />
             <input
@@ -329,7 +377,7 @@ export default function ActivacionesRed() {
         {/* Tabla */}
         <div className="card">
           <div className="table-wrap">
-            <table>
+            <table className="table">
               <thead>
                 <tr>
                   <th>Orden</th>
@@ -337,6 +385,7 @@ export default function ActivacionesRed() {
                   <th>Abonado</th>
                   <th>Dirección</th>
                   <th>Sede</th>
+                  <th>Servicio</th>
                   <th>Tecnología</th>
                   <th>IP local</th>
                   <th>Gateway</th>
@@ -346,51 +395,55 @@ export default function ActivacionesRed() {
               </thead>
               <tbody>
                 {loading ? (
-                  <tr><td colSpan={10} style={{ textAlign: "center", padding: 28, color: "var(--text-muted)" }}>Cargando...</td></tr>
+                  <tr><td colSpan={11} style={{ textAlign: "center", padding: 28, color: "var(--text-muted)" }}>Cargando...</td></tr>
                 ) : filtered.length === 0 ? (
-                  <tr><td colSpan={10} style={{ textAlign: "center", padding: 36, color: "var(--text-muted)" }}>
+                  <tr><td colSpan={11} style={{ textAlign: "center", padding: 36, color: "var(--text-muted)" }}>
                     {ordenes.length === 0
-                      ? "No hay órdenes de instalación."
+                      ? "No hay órdenes de instalación o cambio de ONU."
                       : "Sin resultados para la búsqueda."}
                   </td></tr>
-                ) : filtered.map(o => (
-                  <tr key={o.id}
-                    style={{
-                      background: savedId === o.id ? "rgba(34,197,94,0.07)" : undefined,
-                      transition: "background 0.6s",
-                    }}>
-                    <td className="mono text-sm">#{o.nro_orden}</td>
-                    <td className="mono text-sm" style={{ color: "var(--primary)", fontWeight: 600 }}>{o.nro_contrato}</td>
-                    <td className="fw-600">{o.abonado}</td>
-                    <td className="text-sm text-muted">{o.direccion}</td>
-                    <td className="text-sm">{o.sede_nombre ?? "—"}</td>
-                    <td className="text-sm">{o.tecnologia ?? "—"}</td>
-                    <td>
-                      {o.ip_local
-                        ? <span className="mono text-sm" style={{ color: "var(--success, #16a34a)", fontWeight: 600 }}>{o.ip_local}</span>
-                        : <span className="text-muted text-sm">—</span>}
-                    </td>
-                    <td>
-                      {o.gateway
-                        ? <span className="mono text-sm">{o.gateway}</span>
-                        : <span className="text-muted text-sm">—</span>}
-                    </td>
-                    <td>
-                      {o.red_id
-                        ? <span className="badge badge-active">IP cargada</span>
-                        : <span className="badge badge-warning">Sin IP</span>}
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-outline btn-sm"
-                        onClick={() => abrirOrden(o)}
-                        title={o.red_id ? "Editar datos de red" : "Cargar IP"}>
-                        <Icon d={o.red_id ? IC.edit : IC.wifi} size={13} />
-                        {o.red_id ? "Editar" : "Cargar IP"}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                ) : filtered.map(o => {
+                  const badge = getServicioBadge(o.servicio);
+                  return (
+                    <tr key={o.id}
+                      style={{
+                        background: savedId === o.id ? "rgba(34,197,94,0.07)" : undefined,
+                        transition: "background 0.6s",
+                      }}>
+                      <td className="mono text-sm">#{o.nro_orden}</td>
+                      <td className="mono text-sm" style={{ color: "var(--primary)", fontWeight: 600 }}>{o.nro_contrato}</td>
+                      <td className="fw-600">{o.abonado}</td>
+                      <td className="text-sm text-muted">{o.direccion}</td>
+                      <td className="text-sm">{o.sede_nombre ?? "—"}</td>
+                      <td><span className={`badge ${badge.className}`}>{badge.icon} {badge.text}</span></td>
+                      <td className="text-sm">{o.tecnologia ?? "—"}</td>
+                      <td>
+                        {o.ip_local
+                          ? <span className="mono text-sm" style={{ color: "var(--success, #16a34a)", fontWeight: 600 }}>{o.ip_local}</span>
+                          : <span className="text-muted text-sm">—</span>}
+                      </td>
+                      <td>
+                        {o.gateway
+                          ? <span className="mono text-sm">{o.gateway}</span>
+                          : <span className="text-muted text-sm">—</span>}
+                      </td>
+                      <td>
+                        {o.red_id
+                          ? <span className="badge badge-active">IP cargada</span>
+                          : <span className="badge badge-warning">Sin IP</span>}
+                      </td>
+                      <td>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          onClick={() => abrirOrden(o)}
+                          title={o.red_id ? "Editar datos de red" : "Cargar IP"}>
+                          <Icon d={o.red_id ? IC.edit : IC.wifi} size={13} />
+                          {o.red_id ? "Editar" : "Cargar IP"}
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
