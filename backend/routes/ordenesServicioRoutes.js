@@ -537,4 +537,117 @@ function generarCodigo(prefijo) {
   return `${prefijo}-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 }
 
+/* ── SUPERADMIN: Obtener órdenes de activaciones red (Instalación + Cambio de ONU) ── */
+router.get(
+  "/superadmin/activaciones-red",
+  authMiddleware,
+  requireRol(["admin", "superadmin", "controlador"]),
+  async (req, res) => {
+    try {
+      const { estado, sede_id } = req.query;
+      const rol = req.user.rol;
+      const miSede = req.user.sede_id;
+
+      let sql = `
+        SELECT o.*, s.nombre AS sede_nombre, 
+               r.ip_local, r.mascara, r.gateway, r.id as red_id
+        FROM ordenes_servicio o
+        LEFT JOIN sedes s ON o.sede_id = s.id
+        LEFT JOIN activacion_red r ON o.id = r.orden_id
+        WHERE (o.servicio LIKE '%INSTALACION%' OR o.servicio LIKE '%CAMBIO DE EQUIPO%')
+      `;
+      const params = [];
+
+      if (rol === "controlador") {
+        sql += " AND o.sede_id = ?";
+        params.push(miSede);
+      } else if (sede_id) {
+        sql += " AND o.sede_id = ?";
+        params.push(sede_id);
+      }
+
+      if (estado === "sin_ip") {
+        sql += " AND (r.ip_local IS NULL OR r.ip_local = '')";
+      } else if (estado === "con_ip") {
+        sql += " AND r.ip_local IS NOT NULL AND r.ip_local != ''";
+      }
+
+      sql += " ORDER BY o.created_at DESC";
+      const [rows] = await db.execute(sql, params);
+      res.json(rows);
+    } catch (err) {
+      console.error("Error GET /superadmin/activaciones-red:", err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/* ── SUPERADMIN: Guardar datos de red (IP, máscara, gateway) ── */
+router.post(
+  "/superadmin/activaciones-red/:id",
+  authMiddleware,
+  requireRol(["admin", "superadmin", "controlador"]),
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { ip_local, mascara, gateway } = req.body;
+
+      if (!ip_local || !mascara || !gateway) {
+        return res.status(400).json({ error: "Faltan datos de red" });
+      }
+
+      const [existe] = await db.execute(
+        "SELECT id FROM activacion_red WHERE orden_id = ?",
+        [id]
+      );
+
+      if (existe.length > 0) {
+        await db.execute(
+          `UPDATE activacion_red SET ip_local = ?, mascara = ?, gateway = ? WHERE orden_id = ?`,
+          [ip_local, mascara, gateway, id]
+        );
+      } else {
+        await db.execute(
+          `INSERT INTO activacion_red (orden_id, ip_local, mascara, gateway) VALUES (?, ?, ?, ?)`,
+          [id, ip_local, mascara, gateway]
+        );
+      }
+
+      res.json({ ok: true, message: "Datos de red guardados correctamente" });
+    } catch (err) {
+      console.error("Error POST /superadmin/activaciones-red:", err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+/* ── TECNICO: Obtener datos de red de su orden asignada ── */
+router.get(
+  "/tecnico/ordenes/:id/red",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const tecnicoId = req.user.id;
+
+      const [rows] = await db.execute(
+        `SELECT r.ip_local, r.mascara, r.gateway
+         FROM ordenes_servicio o
+         LEFT JOIN activacion_red r ON o.id = r.orden_id
+         WHERE o.id = ? AND o.tecnico_id = ?`,
+        [id, tecnicoId]
+      );
+      
+      if (rows.length === 0 || !rows[0].ip_local) {
+        return res.json({ ip_local: null, mascara: null, gateway: null });
+      }
+      
+      res.json(rows[0]);
+    } catch (err) {
+      console.error("Error GET /tecnico/ordenes/:id/red:", err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 module.exports = router;
