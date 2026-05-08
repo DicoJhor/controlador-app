@@ -1,9 +1,9 @@
 const express = require("express");
-const XLSX    = require("xlsx");
-const router  = express.Router();
-const db      = require("../config/db");
+const XLSX = require("xlsx");
+const router = express.Router();
+const db = require("../config/db");
 const { authMiddleware, requireRol } = require("../middleware/authMiddleware");
-const upload  = require("../middleware/uploadMiddleware");
+const upload = require("../middleware/uploadMiddleware");
 const { moverYGuardarFotos } = require("../helpers/fotos");
 
 function limpiar(val) {
@@ -11,7 +11,7 @@ function limpiar(val) {
 }
 
 function parsearExcel(buffer) {
-  const wb    = XLSX.read(buffer, { type: "buffer" });
+  const wb = XLSX.read(buffer, { type: "buffer" });
   const sheet = wb.Sheets[wb.SheetNames[0]];
   const rawRows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
 
@@ -20,26 +20,26 @@ function parsearExcel(buffer) {
   );
   if (headerRowIdx === -1) throw new Error("Formato de Excel no reconocido: no se encontraron los encabezados.");
 
-  const headers  = rawRows[headerRowIdx];
+  const headers = rawRows[headerRowIdx];
   const dataRows = rawRows.slice(headerRowIdx + 1);
 
   const COL = {
-    "Sector":              "sector",
-    "Via":                 "via",
-    "Direccion":           "direccion",
-    "Referencia":          "referencia",
-    "Nº de Orden":         "nro_orden",
-    "Estado Orden":        "estado_orden",
-    "Servicio":            "servicio",
-    "Tecnologia":          "tecnologia",
-    "Fecha Crea":          "fecha_crea",
-    "Tecnico Jefe":        "tecnico_jefe",
-    "Tecnico Asistente":   "tecnico_asistente",
-    "Abonado":             "abonado",
-    "Doc. Identidad":      "doc_identidad",
-    "Telefono":            "telefono",
-    "Nº Contrato":         "nro_contrato",
-    "Estado Contrato":     "estado_contrato",
+    "Sector": "sector",
+    "Via": "via",
+    "Direccion": "direccion",
+    "Referencia": "referencia",
+    "Nº de Orden": "nro_orden",
+    "Estado Orden": "estado_orden",
+    "Servicio": "servicio",
+    "Tecnologia": "tecnologia",
+    "Fecha Crea": "fecha_crea",
+    "Tecnico Jefe": "tecnico_jefe",
+    "Tecnico Asistente": "tecnico_asistente",
+    "Abonado": "abonado",
+    "Doc. Identidad": "doc_identidad",
+    "Telefono": "telefono",
+    "Nº Contrato": "nro_contrato",
+    "Estado Contrato": "estado_contrato",
     "Observacion Inicial": "observacion",
   };
 
@@ -73,7 +73,7 @@ router.post(
     }
 
     const sedeId = req.user.sede_id;
-    const conn   = await db.getConnection();
+    const conn = await db.getConnection();
     const resumen = { insertadas: 0, actualizadas: 0, duplicadas: [] };
 
     try {
@@ -108,16 +108,18 @@ router.post(
           }
         }
 
+        // Buscar duplicado por CONTRATO + FECHA (sin nro_orden)
         const [dup] = await conn.execute(
           `SELECT id, estado_app
            FROM ordenes_servicio
-           WHERE nro_contrato = ? AND nro_orden = ? AND fecha_crea = ? AND sede_id = ?`,
-          [nro_contrato, nro_orden, fecha_crea, sedeId]
+           WHERE nro_contrato = ? AND fecha_crea = ? AND sede_id = ?`,
+          [nro_contrato, fecha_crea, sedeId]
         );
 
         if (dup.length > 0) {
+          // ES DUPLICADO detectado por SELECT
           resumen.duplicadas.push({
-            orden_id:   dup[0].id,
+            orden_id: dup[0].id,
             estado_app: dup[0].estado_app,
             nro_contrato, nro_orden, abonado, fecha_crea,
             servicio, tecnologia, estado_orden,
@@ -125,31 +127,56 @@ router.post(
             doc_identidad, telefono, observacion,
             tecnico_jefe, tecnico_asistente,
           });
-          continue;
+        } else {
+          try {
+            await conn.execute(
+              `INSERT INTO ordenes_servicio
+                (nro_orden, nro_contrato, cliente_id, abonado, doc_identidad, telefono,
+                  servicio, tecnologia, estado_orden,
+                  sector, via, direccion, referencia,
+                  observacion, tecnico_jefe, tecnico_asistente,
+                  fecha_crea, sede_id)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              [
+                nro_orden, nro_contrato, clienteId, abonado, doc_identidad || null, telefono || null,
+                servicio, tecnologia || null, estado_orden,
+                sector || null, via || null, direccion || null, referencia || null,
+                observacion || null, tecnico_jefe || null, tecnico_asistente || null,
+                fecha_crea || null, sedeId,
+              ]
+            );
+            resumen.insertadas++;
+          } catch (insertErr) {
+            if (insertErr.code === "ER_DUP_ENTRY") {
+              const [dupTardio] = await conn.execute(
+                `SELECT id, estado_app
+                 FROM ordenes_servicio
+                 WHERE nro_contrato = ? AND fecha_crea = ? AND sede_id = ?`,
+                [nro_contrato, fecha_crea, sedeId]
+              );
+              resumen.duplicadas.push({
+                orden_id: dupTardio[0]?.id ?? null,
+                estado_app: dupTardio[0]?.estado_app ?? null,
+                nro_contrato, nro_orden, abonado, fecha_crea,
+                servicio, tecnologia, estado_orden,
+                sector, via, direccion, referencia,
+                doc_identidad, telefono, observacion,
+                tecnico_jefe, tecnico_asistente,
+              });
+            } else {
+              throw insertErr;
+            }
+          }
         }
 
-        await conn.execute(
-          `INSERT INTO ordenes_servicio
-             (nro_orden, nro_contrato, cliente_id, abonado, doc_identidad, telefono,
-              servicio, tecnologia, estado_orden,
-              sector, via, direccion, referencia,
-              observacion, tecnico_jefe, tecnico_asistente,
-              fecha_crea, sede_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [
-            nro_orden, nro_contrato, clienteId, abonado, doc_identidad || null, telefono || null,
-            servicio, tecnologia || null, estado_orden,
-            sector || null, via || null, direccion || null, referencia || null,
-            observacion || null, tecnico_jefe || null, tecnico_asistente || null,
-            fecha_crea || null, sedeId,
-          ]
-        );
-        resumen.insertadas++;
-      }
+      }  // ← cierra el fo
 
+      // TODO el proceso fue bien, hacemos COMMIT
       await conn.commit();
       res.json({ ok: true, resumen });
+
     } catch (err) {
+      // Si algo falló, hacemos ROLLBACK
       await conn.rollback();
       console.error(err);
       res.status(500).json({ error: "Error al procesar el Excel." });
@@ -165,8 +192,21 @@ router.post(
   authMiddleware,
   requireRol(["admin", "superadmin", "controlador"]),
   async (req, res) => {
+    console.log("BODY RECIBIDO:", JSON.stringify(req.body));
     const { orden_id, datos } = req.body;
-    if (!orden_id || !datos) return res.status(400).json({ error: "Faltan datos." });
+    if (!datos) return res.status(400).json({ error: "Faltan datos." });
+    
+    // Si orden_id es null, buscar el registro existente
+    let resolvedOrdenId = orden_id;
+    if (!resolvedOrdenId && datos.nro_contrato && datos.fecha_crea) {
+      const [found] = await db.execute(
+        "SELECT id FROM ordenes_servicio WHERE nro_contrato = ? AND fecha_crea = ?",
+        [datos.nro_contrato, datos.fecha_crea]
+      );
+      if (found.length === 0) return res.status(404).json({ error: "Orden no encontrada." });
+      resolvedOrdenId = found[0].id;
+    }
+    if (!resolvedOrdenId) return res.status(400).json({ error: "No se pudo identificar la orden." });
 
     try {
       await db.execute(
@@ -177,18 +217,22 @@ router.post(
            observacion=?, tecnico_jefe=?, tecnico_asistente=?,
            fecha_crea=?, estado_app='pendiente',
            averia_id=NULL, activacion_id=NULL,
-           tecnico_id=NULL, completada_en=NULL
+           tecnico_id=NULL, completada_en=NULL,
+           sede_id=?
          WHERE id=?`,
         [
           datos.nro_orden, datos.servicio, datos.tecnologia ?? null, datos.estado_orden,
           datos.sector ?? null, datos.via ?? null, datos.direccion ?? null, datos.referencia ?? null,
           datos.abonado, datos.doc_identidad ?? null, datos.telefono ?? null,
           datos.observacion ?? null, datos.tecnico_jefe ?? null, datos.tecnico_asistente ?? null,
-          datos.fecha_crea ?? null, orden_id,
+          datos.fecha_crea ?? null,
+          req.user.sede_id,
+          resolvedOrdenId,
         ]
       );
       res.json({ ok: true });
     } catch (err) {
+      console.error("Error confirmando duplicado:", err);
       res.status(500).json({ error: err.message });
     }
   }
@@ -201,12 +245,10 @@ router.get(
   requireRol(["admin", "superadmin", "controlador"]),
   async (req, res) => {
     const { estado, sede_id } = req.query;
-    const rol    = req.user.rol;
+    const rol = req.user.rol;
     const miSede = req.user.sede_id;
 
-    // superadmin y admin pueden filtrar por sede o ver todas
-    // controlador siempre ve solo su sede
-    const where  = ["1=1"];
+    const where = ["1=1"];
     const params = [];
 
     if (rol === "controlador") {
@@ -229,13 +271,14 @@ router.get(
                 c.nombre AS cliente_nombre,
                 u.nombre AS tecnico_nombre
          FROM ordenes_servicio o
-         LEFT JOIN sedes s    ON o.sede_id    = s.id
+         LEFT JOIN sedes s ON o.sede_id = s.id
          LEFT JOIN clientes c ON o.cliente_id = c.id
          LEFT JOIN usuarios u ON o.tecnico_id = u.id
          WHERE ${where.join(" AND ")}
          ORDER BY o.created_at DESC`,
         params
       );
+      console.log("Órdenes enviadas:", rows.length);
       res.json(rows);
     } catch (err) {
       console.error("Error GET /admin/ordenes:", err);
@@ -251,17 +294,16 @@ router.get(
   requireRol(["admin", "superadmin", "controlador"]),
   async (req, res) => {
     const { id } = req.params;
-    const rol    = req.user.rol;
+    const rol = req.user.rol;
     const miSede = req.user.sede_id;
 
-    // controlador solo puede ver órdenes de su sede
     const sedeWhere = rol === "controlador" ? "AND o.sede_id = ?" : "";
-    const params    = rol === "controlador" ? [id, miSede] : [id];
+    const params = rol === "controlador" ? [id, miSede] : [id];
 
     const [[orden]] = await db.execute(
       `SELECT o.*, s.nombre AS sede_nombre, u.nombre AS tecnico_nombre
        FROM ordenes_servicio o
-       LEFT JOIN sedes s    ON o.sede_id    = s.id
+       LEFT JOIN sedes s ON o.sede_id = s.id
        LEFT JOIN usuarios u ON o.tecnico_id = u.id
        WHERE o.id = ? ${sedeWhere}`,
       params
@@ -269,7 +311,7 @@ router.get(
     if (!orden) return res.status(404).json({ error: "Orden no encontrada." });
 
     let materiales = [];
-    let fotos      = [];
+    let fotos = [];
 
     if (orden.activacion_id) {
       const [mats] = await db.execute(
@@ -285,7 +327,7 @@ router.get(
         [orden.activacion_id]
       );
       materiales = mats;
-      fotos      = fts;
+      fotos = fts;
     } else if (orden.averia_id) {
       const [mats] = await db.execute(
         `SELECT p.nombre, p.unidad, am.cantidad
@@ -300,16 +342,16 @@ router.get(
         [orden.averia_id]
       );
       materiales = mats;
-      fotos      = fts;
+      fotos = fts;
     }
 
     res.json({ ...orden, materiales, fotos });
   }
 );
 
-/* ── GET /tecnico/ordenes-pendientes ────────────────────────────────────── */
+/* ── GET /tecnico/ordenes-recojos ────────────────────────────────────────── */
 router.get(
-  "/tecnico/ordenes-pendientes",
+  "/tecnico/ordenes-recojos",
   authMiddleware,
   async (req, res) => {
     const sedeId = req.user.sede_id;
@@ -320,6 +362,7 @@ router.get(
               observacion, fecha_crea, estado_app
        FROM ordenes_servicio
        WHERE sede_id = ? AND estado_app = 'pendiente'
+         AND servicio LIKE '%RETIRO DE EQUIPO%'
        ORDER BY fecha_crea DESC, nro_orden ASC`,
       [sedeId]
     );
@@ -327,16 +370,37 @@ router.get(
   }
 );
 
+router.get(
+  "/tecnico/catalogo-productos",
+  authMiddleware,
+  async (req, res) => {
+    try {
+      const [rows] = await db.execute(
+        `SELECT id, nombre, categoria, unidad
+         FROM productos
+         WHERE estado = 1
+         ORDER BY categoria, nombre ASC`
+      );
+      res.json(rows);
+    } catch (err) {
+      console.error("Error catalogo-productos:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
 /* ── POST /tecnico/ordenes/:id/completar ─────────────────────────────────── */
 router.post(
   "/tecnico/ordenes/:id/completar",
   authMiddleware,
   upload.array("fotos", 5),
   async (req, res) => {
-    const ordenId   = req.params.id;
+    const ordenId = req.params.id;
     const tecnicoId = req.user.id;
-    const sedeId    = req.user.sede_id;
-    const body      = req.body || {};
+    const sedeId = req.user.sede_id;
+    const body = req.body || {};
+    console.log("=== DEBUG COMPLETAR ORDEN ===");
+    console.log("BODY:", JSON.stringify(body));
+    console.log("onu_recogida_codigo_pon:", body.onu_recogida_codigo_pon);
 
     const [[orden]] = await db.execute(
       "SELECT * FROM ordenes_servicio WHERE id = ? AND estado_app = 'pendiente'",
@@ -348,16 +412,16 @@ router.post(
     const u = (orden.servicio ?? "").toUpperCase();
     const esCambioOnu = u.includes("CAMBIO DE EQUIPO");
     const esRetiroEquipo = u.includes("RETIRO DE EQUIPO");
-    const esAveria    = u.includes("AVERIA") || esCambioOnu;
+    const esAveria = u.includes("AVERIA") || esCambioOnu;
 
     let items = [];
     try {
       if (body.items) items = typeof body.items === "string" ? JSON.parse(body.items) : body.items;
     } catch (e) { console.error("Error parseando items:", e); }
 
-    const comentario          = body.comentario || null;
-    const onuId               = body.onu_id ? Number(body.onu_id) : null;
-    const onuRecogidaPon      = body.onu_recogida_codigo_pon || null;
+    const comentario = body.comentario || null;
+    const onuId = body.onu_id ? Number(body.onu_id) : null;
+    const onuRecogidaPon = body.onu_recogida_codigo_pon || null;
     const onuRecogidaProductoId = body.onu_recogida_producto_id ? Number(body.onu_recogida_producto_id) : null;
 
     const conn = await db.getConnection();
@@ -366,7 +430,7 @@ router.post(
       await conn.beginTransaction();
 
       let registroId = null;
-      let codigo     = null;
+      let codigo = null;
 
       if (esAveria) {
         codigo = `AV-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
@@ -377,7 +441,7 @@ router.post(
               cliente, direccion, comentario, onu_id)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [codigo, orden.nro_orden, orden.nro_contrato, orden.cliente_id || null,
-           Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
+          Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
         );
         registroId = ins.insertId;
 
@@ -400,38 +464,38 @@ router.post(
           console.log("2. onuRecogidaProductoId:", onuRecogidaProductoId);
           console.log("3. tecnicoId:", tecnicoId);
           console.log("4. sedeId:", sedeId);
-          
+
           const codigoRecojo = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
           console.log("5. codigoRecojo generado:", codigoRecojo);
-          
+
           const [recojoIns] = await conn.execute(
             `INSERT INTO recojos
               (codigo, tecnico_id, cliente, direccion, tipo_equipo, codigo_pon,
                 producto_id, estado, registrado_por)
-            VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'pendiente', ?)`,
+            VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'recogido', ?)`,
             [codigoRecojo, tecnicoId, orden.abonado || null, orden.direccion || null,
             onuRecogidaPon, onuRecogidaProductoId || null, tecnicoId]
           );
-          
+
           console.log("6. recojoIns:", JSON.stringify(recojoIns));
           console.log("7. recojoIns.insertId:", recojoIns.insertId);
-          
+
           const recojoId = recojoIns.insertId;
           console.log("8. recojoId:", recojoId);
-          
+
           if (!recojoId) {
             console.error("❌ ERROR: recojoId es null o undefined");
             throw new Error("No se pudo crear el registro de recojo");
           }
-          
+
           console.log("9. Intentando insertar en onus_recicladas...");
           const [result] = await conn.execute(
             `INSERT INTO onus_recicladas
-              (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, onu_id)
-            VALUES (?, 'ONU', ?, ?, ?, 'revision', ?)`,
+              (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, estado_tecnico, onu_id)
+            VALUES (?, 'ONU', ?, ?, ?, 'revision', 'en_mano', ?)`,
             [recojoId, onuRecogidaPon, onuRecogidaProductoId, sedeId, onuId]
           );
-          
+
           console.log("10. Resultado insert onus_recicladas:", result);
           console.log("========== FIN DEBUG ==========");
         }
@@ -449,7 +513,7 @@ router.post(
               cliente, direccion, comentario, onu_id)
            VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [codigo, orden.nro_orden, orden.nro_contrato, orden.cliente_id || null,
-           Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
+          Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
         );
         registroId = ins.insertId;
 
@@ -529,7 +593,7 @@ router.post(
 function clasificarServicio(s = "") {
   const u = s.toUpperCase();
   if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia", tipoAveria: "cambio_onu" };
-  if (u.includes("AVERIA"))           return { tab: "averia", tipoAveria: "comun" };
+  if (u.includes("AVERIA")) return { tab: "averia", tipoAveria: "comun" };
   return { tab: "activacion", tipoAveria: null };
 }
 
@@ -637,15 +701,118 @@ router.get(
          WHERE o.id = ? AND o.tecnico_id = ?`,
         [id, tecnicoId]
       );
-      
+
       if (rows.length === 0 || !rows[0].ip_local) {
         return res.json({ ip_local: null, mascara: null, gateway: null });
       }
-      
+
       res.json(rows[0]);
     } catch (err) {
       console.error("Error GET /tecnico/ordenes/:id/red:", err);
       res.status(500).json({ error: err.message });
+    }
+  }
+);
+/* ── POST /tecnico/ordenes/:id/completar-recojo ─────────────────────────── */
+router.post(
+  "/tecnico/ordenes/:id/completar-recojo",
+  authMiddleware,
+  upload.array("fotos", 5),
+  async (req, res) => {
+    const ordenId   = req.params.id;
+    const tecnicoId = req.user.id;
+    const sedeId    = req.user.sede_id;
+    const body      = req.body || {};
+
+    const [[orden]] = await db.execute(
+      "SELECT * FROM ordenes_servicio WHERE id = ? AND estado_app = 'pendiente'",
+      [ordenId]
+    );
+    if (!orden)
+      return res.status(404).json({ error: "Orden no encontrada o ya completada." });
+
+    let items = [];
+    try {
+      if (body.items) items = typeof body.items === "string" ? JSON.parse(body.items) : body.items;
+    } catch (e) { console.error("Error parseando items:", e); }
+
+    const comentario = body.comentario || null;
+    const conn = await db.getConnection();
+
+    try {
+      await conn.beginTransaction();
+
+      const codigo = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+
+      // Insertar en averias para registrar el trabajo
+      const [ins] = await conn.execute(
+        `INSERT INTO averias
+           (codigo, nro_orden, nro_contrato, cliente_id, orden_id, tecnico_id,
+            cliente, direccion, comentario, onu_id)
+         VALUES (?,?,?,?,?,?,?,?,?,NULL)`,
+        [codigo, orden.nro_orden, orden.nro_contrato, orden.cliente_id || null,
+         Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario]
+      );
+      const averiaId = ins.insertId;
+
+      // Registrar cada equipo recogido
+      for (const item of items) {
+        if (!item.producto_id) continue;
+
+        // Insertar en recojos
+        const codigoRecojo = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`;
+        const [recojoIns] = await conn.execute(
+          `INSERT INTO recojos
+             (codigo, tecnico_id, cliente, direccion, tipo_equipo, codigo_pon,
+              producto_id, estado, registrado_por)
+           VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'recogido', ?)`,
+          [codigoRecojo, tecnicoId, orden.abonado || null, orden.direccion || null,
+           item.codigo_pon || null, item.producto_id, tecnicoId]
+        );
+        const recojoId = recojoIns.insertId;
+
+        // Buscar onu_id si tiene codigo_pon
+        let onuId = null;
+        if (item.codigo_pon) {
+          const [[onuExistente]] = await conn.execute(
+            "SELECT id FROM onus WHERE codigo_pon = ?", [item.codigo_pon]
+          );
+          onuId = onuExistente?.id ?? null;
+        }
+
+        // Insertar en onus_recicladas para que aparezca en dashboard del técnico
+        await conn.execute(
+          `INSERT INTO onus_recicladas
+             (recojo_id, tipo_equipo, onu_id, codigo_pon, producto_id,
+              sede_id, estado, estado_tecnico)
+           VALUES (?, 'ONU', ?, ?, ?, ?, 'revision', 'en_mano')`,
+          [recojoId, onuId, item.codigo_pon || null, item.producto_id, sedeId]
+        );
+      }
+
+      // Fotos
+      await moverYGuardarFotos(conn, {
+        tipo: "averia", registro_id: averiaId, sede_id: sedeId,
+        cliente: orden.abonado || null, archivos: req.files || [],
+      });
+
+      // Completar la orden
+      await conn.execute(
+        `UPDATE ordenes_servicio
+         SET estado_app = 'completada', tecnico_id = ?, completada_en = NOW(),
+             averia_id = ?
+         WHERE id = ?`,
+        [tecnicoId, averiaId, ordenId]
+      );
+
+      await conn.commit();
+      res.json({ ok: true, codigo });
+    } catch (err) {
+      await conn.rollback();
+      console.error("Error completando recojo:", err);
+      res.status(500).json({ error: err.message });
+    } finally {
+      conn.release();
     }
   }
 );

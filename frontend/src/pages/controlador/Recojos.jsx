@@ -36,20 +36,44 @@ const IC = {
 // DESPUÉS (agrega justo ANTES de esa línea)
 function labelServicio(s = "") {
   const u = s.toUpperCase();
+  // RETIRO DE EQUIPO (antes "RECOJO")
+  if (u.includes("RETIRO DE EQUIPO")) return "Retiro equipo";
   if (u.includes("CAMBIO DE EQUIPO")) return "Cambio ONU";
   if (u.includes("INSTALACION"))      return "Instalación";
   if (u.includes("AVERIA"))           return "Avería";
   if (u.includes("RECONEXION"))       return "Reconexión";
-  if (u.includes("RECOJO"))           return "Recojo";
+  // Nuevos agregados
+  if (u.includes("ALTA DE SERVICIO")) return "Alta servicio";
+  if (u.includes("BAJA DE SERVICIO")) return "Baja servicio";
+  if (u.includes("ANTENCION NOC"))    return "Atención NOC";
+  if (u.includes("CAMBIO DE CONTRASEÑA")) return "Cambio contraseña";
+  if (u.includes("CAMBIO DE DOMICILIO")) return "Cambio domicilio";
+  if (u.includes("CAMBIO DE PLAN"))   return "Cambio plan";
+  if (u.includes("CAMBIO DE TITULAR")) return "Cambio titular";
+  if (u.includes("CORTE A SOLICITUD")) return "Corte voluntario";
+  if (u.includes("CORTE POR DEUDA"))  return "Corte por deuda";
+  if (u.includes("TRASLADO"))         return "Traslado";
   return s;
 }
+
 function badgeServicio(s = "") {
   const u = s.toUpperCase();
-  if (u.includes("CAMBIO DE EQUIPO")) return "badge-warning";
-  if (u.includes("INSTALACION"))      return "badge-active";
-  if (u.includes("AVERIA"))           return "badge-danger";
-  if (u.includes("RECONEXION"))       return "badge-blue";
-  if (u.includes("RECOJO"))           return "badge-purple";
+  if (u.includes("RETIRO DE EQUIPO")) return "badge-purple";   // morado
+  if (u.includes("CAMBIO DE EQUIPO")) return "badge-warning";  // amarillo
+  if (u.includes("INSTALACION"))      return "badge-active";   // verde
+  if (u.includes("AVERIA"))           return "badge-danger";   // rojo
+  if (u.includes("RECONEXION"))       return "badge-blue";     // azul
+  // Nuevos agregados con sus colores sugeridos
+  if (u.includes("ALTA DE SERVICIO")) return "badge-success";   // verde claro
+  if (u.includes("BAJA DE SERVICIO")) return "badge-dark";      // gris oscuro
+  if (u.includes("ANTENCION NOC"))    return "badge-info";      // celeste
+  if (u.includes("CAMBIO DE CONTRASEÑA")) return "badge-cyan";  // cyan
+  if (u.includes("CAMBIO DE DOMICILIO")) return "badge-warning"; // amarillo
+  if (u.includes("CAMBIO DE PLAN"))   return "badge-info";      // celeste
+  if (u.includes("CAMBIO DE TITULAR")) return "badge-warning";  // amarillo
+  if (u.includes("CORTE A SOLICITUD")) return "badge-orange";   // naranja
+  if (u.includes("CORTE POR DEUDA"))  return "badge-error";     // rojo oscuro
+  if (u.includes("TRASLADO"))         return "badge-blue";      // azul
   return "badge-blue";
 }
 
@@ -83,6 +107,7 @@ export default function CtrlRecojos() {
     setLoadingOrdenes(true);
     try {
       const data = await ordenesService.getAll(filtroEstado);
+      console.log("Órdenes recibidas:", data);
       setOrdenes(Array.isArray(data) ? data : []);
     } catch (err) {
       console.error("Error cargando órdenes:", err);
@@ -112,11 +137,14 @@ export default function CtrlRecojos() {
     } finally { setSubiendoExcel(false); }
   };
 
-  const confirmarDuplicado = async (ordenId, datos) => {
+  const confirmarDuplicado = async (index, ordenId, datos) => {
     try {
       await ordenesService.confirmarDuplicado(ordenId, datos);
-      setDuplicados(prev => prev.filter(d => d.orden_id !== ordenId));
-      await cargarOrdenes();
+      const restantes = duplicados.filter((_, i) => i !== index);
+      setDuplicados(restantes);
+      if (restantes.length === 0) {
+        await cargarOrdenes();
+      }
     } catch (err) { alert(err.message); }
   };
 
@@ -162,7 +190,7 @@ export default function CtrlRecojos() {
                   <div style={{ fontSize:11, color:"var(--text-muted)", fontFamily:"monospace" }}>{d.nro_contrato}</div>
                   <div style={{ fontSize:11, color:"var(--text-muted)" }}>Orden #{d.nro_orden} · {d.fecha_crea}</div>
                 </div>
-                <button className="btn btn-warning btn-sm" onClick={() => confirmarDuplicado(d.orden_id, d)}>Reemplazar</button>
+                <button className="btn btn-warning btn-sm" onClick={() => confirmarDuplicado(i, d.orden_id, d)}>Reemplazar</button>
               </div>
             ))}
           </div>
@@ -217,7 +245,7 @@ export default function CtrlRecojos() {
             </button>
           ))}
           <div style={{ display:"flex", gap:6, flexWrap:"wrap", width:"100%", marginTop:4 }}>
-            {["todas","Instalación","Avería","Reconexión","Cambio ONU","Recojo"].map(t => (
+            {["todas","Instalación","Avería","Reconexión","Cambio ONU","Retiro equipo"].map(t => (
               <button key={t} type="button" onClick={() => setFiltroTipo(t)}
                 style={{ padding:"4px 14px", borderRadius:20, fontSize:12, fontWeight:600, border:"1.5px solid", cursor:"pointer",
                   borderColor: filtroTipo===t ? "var(--primary)" : "var(--border)",

@@ -34,22 +34,49 @@ export default function TecHistorial() {
   const [filterMotivo, setFilterMotivo] = useState("todos");
 
   useEffect(() => {
-    tecnicoService.getMiHistorial()
-      .then(data => { setHistorial(data); setLoading(false); })
-      .catch(() => { setError("No se pudo cargar el historial"); setLoading(false); });
+    const cargarHistorial = async () => {
+      try {
+        if (navigator.onLine) {
+          // ONLINE: obtener del servidor y guardar caché
+          const data = await tecnicoService.getMiHistorial();
+          const datos = Array.isArray(data) ? data : [];
+          setHistorial(datos);
+          await db.historial.clear();
+          await db.historial.bulkPut(datos);
+        } else {
+          // OFFLINE: cargar desde caché local
+          const data = await db.historial.toArray();
+          setHistorial(data);
+        }
+      } catch (error) {
+        // Error de red: usar caché como fallback
+        const data = await db.historial.toArray();
+        setHistorial(data);
+        if (data.length === 0) {
+          setError("No se pudo cargar el historial");
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    cargarHistorial();
   }, []);
 
   const filtered = historial.filter(m => {
-    const matchSearch = (m.item ?? "").toLowerCase().includes(search.toLowerCase());
-    const matchMotivo = filterMotivo === "todos" || m.motivo === filterMotivo;
-    return matchSearch && matchMotivo;
-  });
+    const matchSearch =
+      (m.cliente  ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (m.codigo   ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (m.nro_orden ?? "").toLowerCase().includes(search.toLowerCase())
+    const matchMotivo = filterMotivo === "todos" || m.tipo === filterMotivo
+    return matchSearch && matchMotivo
+  })
 
   const resumen = {
     total:      historial.length,
-    nuevaConex: historial.filter(m => m.motivo === "instalacion").length,
-    averias:    historial.filter(m => m.motivo === "averia").length,
-  };
+    nuevaConex: historial.filter(m => m.tipo === "activacion").length,
+    averias:    historial.filter(m => m.tipo === "averia").length,
+  }
 
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando historial...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
@@ -91,8 +118,8 @@ export default function TecHistorial() {
           style={{ fontSize: 15, minWidth: 140 }}
         >
           <option value="todos">Todos</option>
-          <option value="instalacion">Instalación</option>
-          <option value="averia">Avería</option>
+          <option value="activacion">Instalaciones / Cambios</option>
+          <option value="averia">Averías / Retiros</option>
         </select>
       </div>
 
@@ -146,23 +173,37 @@ export default function TecHistorial() {
           {/* Cards para mobile */}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             {filtered.map(m => (
-              <div key={m.id} style={hs.mCard}>
+              <div key={`${m.tipo}-${m.id}`} style={hs.mCard}>
                 <div style={hs.mCardTop}>
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>{m.item}</div>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{m.cliente || "—"}</div>
                     <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                      {m.direccion}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
                       {formatDate(m.fecha)}
                     </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 16 }}>
-                      {formatCantidad(m.cantidad, m.es_medible)}
+                    <div style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: "var(--primary)" }}>
+                      {m.codigo}
                     </div>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{m.unidad}</div>
+                    {m.nro_orden && (
+                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Orden #{m.nro_orden}</div>
+                    )}
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-                  <MotivoBadge motivo={m.motivo} />
+                  <span style={{
+                    fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 20,
+                    background: m.tipo === "activacion" ? "#d1fae5" : "#fee2e2",
+                    color:      m.tipo === "activacion" ? "#065f46" : "#991b1b",
+                    border:     `1px solid ${m.tipo === "activacion" ? "#6ee7b7" : "#fca5a5"}`,
+                  }}>
+                    {m.tipo === "activacion"
+                      ? (m.servicio?.toUpperCase().includes("CAMBIO") ? "Cambio ONU" : "Instalación")
+                      : (m.servicio?.toUpperCase().includes("RETIRO") ? "Retiro" : "Avería")}
+                  </span>
                   {m.comentario && (
                     <span style={{ fontSize: 12, color: "var(--text-secondary)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                       {m.comentario}

@@ -43,7 +43,7 @@ router.get(
       LEFT JOIN sedes s           ON o.sede_id = s.id
       LEFT JOIN activacion_red ar ON ar.orden_id = o.id
       LEFT JOIN usuarios u        ON ar.cargado_por = u.id
-      WHERE o.servicio LIKE 'INSTALACION%'
+      WHERE (o.servicio LIKE 'INSTALACION%' OR o.servicio LIKE '%CAMBIO DE EQUIPO%')
       ${whereExtra}
       ORDER BY o.created_at DESC`
     );
@@ -74,8 +74,9 @@ router.post(
       [ordenId]
     );
     if (!orden) return res.status(404).json({ error: "Orden no encontrada." });
-    if (!orden.servicio.toUpperCase().includes("INSTALACION"))
-      return res.status(400).json({ error: "Solo se pueden cargar datos de red en órdenes de instalación." });
+    const s = orden.servicio.toUpperCase();
+    if (!s.includes("INSTALACION") && !s.includes("CAMBIO DE EQUIPO"))
+      return res.status(400).json({ error: "Solo se pueden cargar datos de red en órdenes de instalación o cambio de equipo." });
 
     await db.execute(
       `INSERT INTO activacion_red

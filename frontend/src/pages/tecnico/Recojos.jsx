@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
-import recojosService from "../../services/recojosService";
-import api from "../../services/api";
 import { db } from "../../db/localDB";
 import { fileToBase64 } from "../../services/syncService";
 import { useOnlineStatus } from "../../hooks/useOnlineStatus";
+import ordenesService from "../../services/ordenesService";
+import tecnicoService from "../../services/tecnicoService";
 
 const BASE_URL = import.meta.env.VITE_API_URL?.replace("/api", "") ?? "";
 
@@ -117,7 +117,7 @@ function EquipoRecojoRow({ item, catalogo, onChange, onRemove }) {
   const [busqueda, setBusqueda] = useState("");
   const [abierto, setAbierto] = useState(false);
 
-  const productoSel = catalogo.find(p => p.id === item.producto_id);
+  const productoSel = catalogo.find(p => (p.id ?? p.producto_id) === item.producto_id);
   const esOnu = productoSel?.categoria?.toLowerCase() === "onu";
 
   const resultados = busqueda.trim()
@@ -175,8 +175,8 @@ function EquipoRecojoRow({ item, catalogo, onChange, onRemove }) {
                 {resultados.length === 0 ? (
                   <div style={{ padding: "12px 14px", fontSize: 13, color: "var(--text-muted)" }}>Sin resultados</div>
                 ) : resultados.map(p => (
-                  <div key={p.id}
-                    onClick={() => { onChange({ ...item, producto_id: p.id, codigo_pon: "" }); setAbierto(false); setBusqueda(""); }}
+                  <div key={p.id ?? p.producto_id}
+                    onClick={() => { onChange({ ...item, producto_id: p.id ?? p.producto_id, codigo_pon: "" }); setAbierto(false); setBusqueda(""); }}
                     style={{ padding: "9px 14px", cursor: "pointer", fontSize: 13, borderBottom: "1px solid var(--border)" }}
                     onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
                     onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
@@ -274,13 +274,13 @@ export default function TecRecojos() {
       try {
         if (navigator.onLine) {
           const [ords, cat] = await Promise.all([
-            recojosService.getMisRecojos(),
-            api.get("/productos"),
+            ordenesService.getOrdenesRecojos(),
+            tecnicoService.getCatalogoProductos(),
           ]);
           setOrdenes(Array.isArray(ords) ? ords : []);
           setCatalogo(Array.isArray(cat) ? cat : []);
           await db.recojos.clear();
-          await db.recojos.bulkAdd(Array.isArray(ords) ? ords : []);
+          await db.recojos.bulkPut(Array.isArray(ords) ? ords : []);
         } else {
           const ords = await db.recojos.toArray();
           setOrdenes(ords);
@@ -299,8 +299,8 @@ export default function TecRecojos() {
     cargar();
   }, []);
 
-  const pendientes  = ordenes.filter(o => o.estado === "pendiente");
-  const completados = ordenes.filter(o => o.estado !== "pendiente");
+  const pendientes  = ordenes.filter(o => (o.estado_app ?? o.estado) === "pendiente");
+  const completados = ordenes.filter(o => (o.estado_app ?? o.estado) !== "pendiente");
 
   const ordenesFiltradas = pendientes.filter(o => {
     const q = busqueda.toLowerCase();
@@ -365,11 +365,11 @@ export default function TecRecojos() {
 
       if (navigator.onLine) {
         const fd = new FormData();
-        fd.append("equipos",    JSON.stringify(equiposPayload));
+        fd.append("items",      JSON.stringify(equiposPayload));
         fd.append("comentario", comentario || "");
         fotos.forEach(f => fd.append("fotos", f.file));
 
-        const res = await recojosService.confirmarRecojo(ordenActual.id, fd);
+        const res = await tecnicoService.completarRecojo(ordenActual.id, fd);
         setSuccess(res?.codigo || "OK");
       } else {
         const localId = await db.recojos_pendientes.add({

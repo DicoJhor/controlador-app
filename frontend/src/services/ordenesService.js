@@ -15,6 +15,7 @@ const ordenesService = {
     api.post("/admin/ordenes/upload/confirmar-duplicada", { orden_id: ordenId, datos }),
 
   getDetalle: (id) => api.get(`/admin/ordenes/${id}`),
+  getOrdenesRecojos: () => api.get("/tecnico/ordenes-recojos"),
 };
 
 export default ordenesService;

@@ -82,23 +82,36 @@ exports.getMiInventario = async (req, res) => {
 exports.getMiHistorial = async (req, res) => {
   try {
     const tecnico_id = req.user.id
-    const [rows] = await db.query(`
+
+    const [activaciones] = await db.query(`
       SELECT
-        ct.id, ct.fecha,
-        p.nombre AS item, p.unidad, p.es_medible,
-        ct.cantidad, ct.motivo,
-        ct.descripcion AS comentario
-      FROM consumo_tecnico ct
-      JOIN productos p ON ct.producto_id = p.id
-      WHERE ct.tecnico_id = ?
-      ORDER BY ct.fecha DESC
+        a.id, a.fecha, a.codigo, a.cliente, a.direccion,
+        a.nro_orden, a.comentario,
+        o.servicio,
+        'activacion' AS tipo
+      FROM activaciones a
+      LEFT JOIN ordenes_servicio o ON o.id = a.orden_id
+      WHERE a.tecnico_id = ?
+      ORDER BY a.fecha DESC
     `, [tecnico_id])
 
-    res.json(rows.map(r => ({
-      ...r,
-      cantidad:   parseFloat(r.cantidad),
-      es_medible: Boolean(r.es_medible),
-    })))
+    const [averias] = await db.query(`
+      SELECT
+        av.id, av.fecha, av.codigo, av.cliente, av.direccion,
+        av.nro_orden, av.comentario,
+        o.servicio,
+        'averia' AS tipo
+      FROM averias av
+      LEFT JOIN ordenes_servicio o ON o.id = av.orden_id
+      WHERE av.tecnico_id = ?
+      ORDER BY av.fecha DESC
+    `, [tecnico_id])
+
+    // Combinar y ordenar por fecha desc
+    const historial = [...activaciones, ...averias]
+      .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+
+    res.json(historial)
   } catch (err) {
     console.error("❌ getMiHistorial:", err.message)
     res.status(500).json({ message: "Error al obtener historial", error: err.message })
@@ -245,13 +258,10 @@ exports.registrarSalidaMultiple = async (req, res) => {
         [tecnico_id, item.producto_id, item.cantidad, comentario || null]
       )
     }
-
-    // ── Vincular ONU a la avería y al cliente ──────────────────────────────
+    // Vincular ONU a la avería y al cliente
     if (onuId) {
       await conn.query(
-        `UPDATE onus
-         SET averia_id = ?, cliente = ?, tecnico_id = NULL
-         WHERE id = ?`,
+        `UPDATE onus SET averia_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?`,
         [averia_id, cliente || null, onuId]
       )
 
@@ -432,10 +442,11 @@ exports.completarOrden = async (req, res) => {
       return res.status(404).json({ message: "Orden no encontrada o ya completada" })
     }
 
-    const itemsParsed = typeof req.body.items === "string"
+    const itemsParsed    = typeof req.body.items === "string"
       ? JSON.parse(req.body.items) : (req.body.items || [])
-    const onuId       = req.body.onu_id ? Number(req.body.onu_id) : null
-    const comentario  = req.body.comentario || null
+    const onuId          = req.body.onu_id ? Number(req.body.onu_id) : null
+    const comentario     = req.body.comentario || null
+    const esCambioEquipo = (orden.servicio ?? "").toUpperCase().includes("CAMBIO DE EQUIPO")
 
     // Verificar ONU si viene
     if (onuId) {
@@ -506,8 +517,8 @@ exports.completarOrden = async (req, res) => {
       )
     }
 
-    // Vincular ONU
-    if (onuId) {
+    // Vincular ONU (solo instalaciones — cambio de equipo lo maneja más abajo)
+    if (onuId && !esCambioEquipo) {
       await conn.query(
         `UPDATE onus SET activacion_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?`,
         [activacion_id, orden.abonado, onuId]
@@ -520,12 +531,11 @@ exports.completarOrden = async (req, res) => {
         )
         await conn.query(
           `INSERT INTO consumo_tecnico (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
-           VALUES (?, ?, 1, 'activacion', ?, NOW())`,
+          VALUES (?, ?, 1, 'activacion', ?, NOW())`,
           [tecnico_id, onuProd.producto_id, `Activación ${codigo} — ${orden.abonado}`]
         )
       }
     }
-
     // Guardar fotos
     await moverYGuardarFotos(conn, {
       tipo:        "activacion",
@@ -536,15 +546,66 @@ exports.completarOrden = async (req, res) => {
     })
 
     // ONU recogida (cambio de equipo)
-    const onuRecogidaPon       = req.body.onu_recogida_codigo_pon || null
+    const onuRecogidaPon        = req.body.onu_recogida_codigo_pon || null
     const onuRecogidaProductoId = req.body.onu_recogida_producto_id
       ? Number(req.body.onu_recogida_producto_id) : null
-    if (onuRecogidaPon && onuRecogidaProductoId) {
-      await conn.query(
-        `INSERT INTO onus_recicladas (tipo_equipo, codigo_pon, producto_id, sede_id, estado)
-         VALUES ('ONU', ?, ?, ?, 'revision')`,
-        [onuRecogidaPon, onuRecogidaProductoId, req.user.sede_id]
+
+    if (onuRecogidaPon) {
+      // 1. Crear recojo y reciclado de la ONU vieja
+      const codigoRecojo = `REC-${Math.random().toString(36).substring(2, 10).toUpperCase()}`
+      const [recojoIns] = await conn.query(
+        `INSERT INTO recojos
+          (codigo, tecnico_id, cliente, direccion, tipo_equipo, codigo_pon,
+            producto_id, estado, registrado_por)
+        VALUES (?, ?, ?, ?, 'ONU', ?, ?, 'recogido', ?)`,
+        [codigoRecojo, tecnico_id, orden.abonado || null, orden.direccion || null,
+        onuRecogidaPon, onuRecogidaProductoId || null, tecnico_id]
       )
+      const recojoId = recojoIns.insertId
+
+      await conn.query(
+        `INSERT INTO onus_recicladas
+          (recojo_id, tipo_equipo, codigo_pon, producto_id, sede_id, estado, estado_tecnico)
+        VALUES (?, 'ONU', ?, ?, ?, 'revision', 'en_mano')`,
+        [recojoId, onuRecogidaPon, onuRecogidaProductoId || null, req.user.sede_id]
+      )
+
+      // 2. Desvincular ONU vieja del cliente
+      await conn.query(
+        `UPDATE onus
+        SET activacion_id = NULL, averia_id = NULL, cliente = NULL, tecnico_id = NULL
+        WHERE codigo_pon = ?`,
+        [onuRecogidaPon]
+      )
+    }
+
+    // 3. Si es cambio de equipo y hay ONU nueva, actualizar la activación recién creada
+    if (esCambioEquipo && onuId) {
+      await conn.query(
+        `UPDATE activaciones SET onu_id = ? WHERE id = ?`,
+        [onuId, activacion_id]
+      )
+      // Vincular ONU nueva al cliente y a la activación
+      await conn.query(
+        `UPDATE onus SET activacion_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?`,
+        [activacion_id, orden.abonado, onuId]
+      )
+      // Descontar del inventario del técnico
+      const [[onuProd]] = await conn.query(
+        "SELECT producto_id FROM onus WHERE id = ?", [onuId]
+      )
+      if (onuProd) {
+        await conn.query(
+          `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
+          WHERE tecnico_id = ? AND producto_id = ?`,
+          [tecnico_id, onuProd.producto_id]
+        )
+        await conn.query(
+          `INSERT INTO consumo_tecnico (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+          VALUES (?, ?, 1, 'instalacion', ?, NOW())`,
+          [tecnico_id, onuProd.producto_id, `Cambio ONU orden #${orden.nro_orden} — ${orden.abonado}`]
+        )
+      }
     }
 
     // Marcar orden como completada

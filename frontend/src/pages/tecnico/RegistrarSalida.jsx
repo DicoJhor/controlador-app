@@ -84,8 +84,9 @@ function BtnWhatsApp({ telefono, servicio, abonado }) {
 
 function clasificarServicio(s = "") {
   const u = s.toUpperCase();
-  if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia", tipoAveria: "cambio_onu" };
-  if (u.includes("AVERIA"))           return { tab: "averia", tipoAveria: "comun" };
+  if (u.includes("RETIRO DE EQUIPO")) return { tab: "recojo",  tipoAveria: null };
+  if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia",  tipoAveria: "cambio_onu" };
+  if (u.includes("AVERIA"))           return { tab: "averia",  tipoAveria: "comun" };
   return { tab: "activacion", tipoAveria: null };
 }
 
@@ -493,12 +494,20 @@ export default function TecRegistrarSalida() {
     } catch {}
   };
 
-  const seleccionar = (orden) => {
+  const seleccionar = async (orden) => {
     setOrdenActual(orden);
     setVistaOnu(false);
     setItems([]); setFotos([]); setComentario("");
     setOnuRecogidaPon(""); setOnuRecogidaProducto("");
     setErrors({});
+
+    const u = (orden.servicio ?? "").toUpperCase();
+    if (u.includes("INSTALACION") || u.includes("CAMBIO DE EQUIPO")) {
+      try {
+        const red = await tecnicoService.getOrdenRed(orden.id);
+        if (red?.ip_local) setOrdenActual({ ...orden, ...red });
+      } catch {}
+    }
   };
   const volver = () => { setOrdenActual(null); setErrors({}); };
 
@@ -601,13 +610,14 @@ export default function TecRegistrarSalida() {
   };
 
   const ordenesFiltradas = ordenes.filter(o => {
+    const c = clasificarServicio(o.servicio);
+    if (c.tab === "recojo") return false; // ← las de retiro van a TecRecojos
     const q = busqueda.toLowerCase();
     const matchQ = !q ||
       o.abonado?.toLowerCase().includes(q) ||
       o.direccion?.toLowerCase().includes(q) ||
       o.nro_contrato?.toLowerCase().includes(q) ||
       String(o.nro_orden).includes(q);
-    const c = clasificarServicio(o.servicio);
     const matchT =
       filtroTipo === "todos" ||
       (filtroTipo === "averia"     && c.tab === "averia"  && c.tipoAveria !== "cambio_onu") ||
@@ -788,7 +798,7 @@ export default function TecRegistrarSalida() {
         </div>
 
         {/* Datos de red */}
-        {!esAveria && (
+        {(!esAveria || esCambioOnu) && (
           <div style={{ padding: "12px 16px", background: "#f0fdf4", borderBottom: "1px solid #bbf7d0" }}>
             <div style={{ fontSize: 11, fontWeight: 700, color: "#166534", textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
               <Icon d={IC.server} size={12} color="#166534" /> Datos de red
@@ -818,7 +828,7 @@ export default function TecRegistrarSalida() {
 
         {/* Formulario */}
         <div style={{ padding: 16 }}>
-          {!esAveria && ordenActual.ip_local && (
+          {(!esAveria || esCambioOnu) && ordenActual.ip_local && (
             <div style={{ marginBottom: 16 }}>
               <button type="button" className="btn btn-outline btn-full"
                 onClick={() => setVistaOnu(true)}

@@ -16,6 +16,9 @@ const tecnicoService = {
   buscarCliente: (q) => api.get(`/tecnico/buscar-cliente?q=${encodeURIComponent(q)}`),
   getOrdenesPendientes: () => api.get("/tecnico/ordenes-pendientes"),
   completarOrden: (id, formData) => api.postForm(`/tecnico/ordenes/${id}/completar`, formData),
+  getCatalogoProductos: () => api.get("/tecnico/catalogo-productos"),
+  getOrdenRed: (id) => api.get(`/tecnico/ordenes/${id}/red`),
+  completarRecojo: (id, formData) => api.postForm(`/tecnico/ordenes/${id}/completar-recojo`, formData),
 }
 
 export default tecnicoService
