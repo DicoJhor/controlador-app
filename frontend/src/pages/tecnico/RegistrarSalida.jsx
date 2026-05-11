@@ -724,26 +724,34 @@ export default function TecRegistrarSalida() {
         setSuccess("OFFLINE");
       }
 
+      // Eliminar solo la orden recién completada (no la otra del duo)
       setOrdenes(prev => prev.filter(o => o.id !== ordenActual.id));
 
       if (duoActual) {
         const nuevasCompletadas = [...duoCompletadas, ordenActual.id];
         setDuoCompletadas(nuevasCompletadas);
         try { await db.duo_estado.put({ clave: duoActual.clave, completadas: nuevasCompletadas }); } catch {}
-        const otraOrden = duoActual.internet.id === ordenActual.id ? duoActual.cable : duoActual.internet;
-        const ambasListas = nuevasCompletadas.includes(duoActual.internet.id) && nuevasCompletadas.includes(duoActual.cable.id);
+
+        const ambasListas = nuevasCompletadas.includes(duoActual.internet.id) &&
+                            nuevasCompletadas.includes(duoActual.cable.id);
+
         if (ambasListas) {
+          // Las dos órdenes del duo completas → cerrar todo
           setDuoActual(null);
           setDuoCompletadas([]);
           try { await db.duo_estado.delete(duoActual.clave); } catch {}
-        } else {
           setOrdenActual(null);
           setItems([]); setFotos([]); setComentario("");
           setOnuRecogidaPon(""); setOnuRecogidaProducto("");
-          await seleccionarDesdeDuo(otraOrden);
-          setTimeout(() => setSuccess(null), 6000);
-          return;
+        } else {
+          // Solo una completada → volver al selector del duo para que el técnico elija la otra
+          setItems([]); setFotos([]); setComentario("");
+          setOnuRecogidaPon(""); setOnuRecogidaProducto("");
+          setOrdenActual(null); // duoActual sigue seteado → vuelve a la pantalla del duo
         }
+
+        setTimeout(() => setSuccess(null), 6000);
+        return;
       }
 
       setOrdenActual(null);

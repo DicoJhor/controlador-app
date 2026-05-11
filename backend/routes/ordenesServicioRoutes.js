@@ -388,6 +388,36 @@ router.get(
     }
   }
 );
+
+/* ── GET /tecnico/ordenes/:id/red ────────────────────────────────────────── */
+router.get(
+  "/tecnico/ordenes/:id/red",
+  authMiddleware,
+  async (req, res) => {
+    const ordenId = req.params.id;
+    const sedeId  = req.user.sede_id;
+    try {
+      const [[orden]] = await db.execute(
+        "SELECT id FROM ordenes_servicio WHERE id = ? AND sede_id = ?",
+        [ordenId, sedeId]
+      );
+      if (!orden) return res.status(404).json({ error: "Orden no encontrada." });
+
+      const [[red]] = await db.execute(
+        `SELECT ip_local, mascara, gateway, modelo_onu, perfil_onu, notas
+         FROM activacion_red WHERE orden_id = ?`,
+        [ordenId]
+      );
+      if (!red) return res.status(404).json({ error: "Sin datos de red." });
+
+      res.json(red);
+    } catch (err) {
+      console.error("Error GET /tecnico/ordenes/:id/red:", err);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
 /* ── POST /tecnico/ordenes/:id/completar ─────────────────────────────────── */
 router.post(
   "/tecnico/ordenes/:id/completar",

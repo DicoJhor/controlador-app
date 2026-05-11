@@ -120,6 +120,8 @@ exports.getMiHistorial = async (req, res) => {
 
 // ── Registrar salida simple ────────────────────────────────────────────────
 
+const MOTIVOS_VALIDOS = ['averia', 'instalacion', 'activacion', 'reconexion', 'cambio_onu']
+
 exports.registrarSalida = async (req, res) => {
   try {
     const tecnico_id = req.user.id
@@ -127,6 +129,9 @@ exports.registrarSalida = async (req, res) => {
 
     if (!producto_id || !cantidad || !motivo)
       return res.status(400).json({ message: "Faltan campos obligatorios" })
+
+    if (!MOTIVOS_VALIDOS.includes(motivo))
+      return res.status(400).json({ message: `Motivo inválido: ${motivo}. Válidos: ${MOTIVOS_VALIDOS.join(', ')}` })
 
     const [[asignacion]] = await db.query(
       "SELECT cantidad FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ?",

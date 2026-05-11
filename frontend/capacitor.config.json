@@ -4,7 +4,7 @@
   "webDir": "dist",
   "server": {
     "androidScheme": "http",
-    "allowNavigation": ["192.168.1.1", "192.168.101.1"],
+    "allowNavigation": ["192.168.1.1", "192.168.101.1", "*.nip.io", "38.224.68.30"],
     "cleartext": true
   },
   "android": {
