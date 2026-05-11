@@ -103,13 +103,24 @@ const navConfig = {
       ],
     },
   ],
+
+  [ROLES.SECRETARIA]: [
+    {
+      section: "Servicios",
+      items: [
+        { to: "/secretaria/servicios", label: "Servicios", icon: IC.audit },
+      ],
+    },
+  ],
 };
+
 
 const roleInfo = {
   [ROLES.SUPERADMIN]:  { label: "Super Admin",   color: "#DC2626", bg: "#FEF2F2" },
   [ROLES.ADMIN]:       { label: "Admin General", color: "#7C3AED", bg: "#F5F3FF" },
   [ROLES.CONTROLADOR]: { label: "Controlador",   color: "#0891B2", bg: "#ECFEFF" },
   [ROLES.TECNICO]:     { label: "Técnico",        color: "#059669", bg: "#ECFDF5" },
+  [ROLES.SECRETARIA]:  { label: "Secretaria",     color: "#D97706", bg: "#FFFBEB" },
 };
 
 /**

@@ -36,23 +36,24 @@ const IC = {
 // DESPUÉS (agrega justo ANTES de esa línea)
 function labelServicio(s = "") {
   const u = s.toUpperCase();
-  // RETIRO DE EQUIPO (antes "RECOJO")
-  if (u.includes("RETIRO DE EQUIPO")) return "Retiro equipo";
-  if (u.includes("CAMBIO DE EQUIPO")) return "Cambio ONU";
-  if (u.includes("INSTALACION"))      return "Instalación";
-  if (u.includes("AVERIA"))           return "Avería";
-  if (u.includes("RECONEXION"))       return "Reconexión";
-  // Nuevos agregados
-  if (u.includes("ALTA DE SERVICIO")) return "Alta servicio";
-  if (u.includes("BAJA DE SERVICIO")) return "Baja servicio";
-  if (u.includes("ANTENCION NOC"))    return "Atención NOC";
+  if (u.includes("ALTA DE SERVICIO"))     return "Alta servicio";
+  if (u.includes("ANTENCION NOC"))        return "Atención NOC";
+  if (u.includes("AVERIA"))              return "Avería";
+  if (u.includes("BAJA DE SERVICIO"))    return "Baja servicio";
   if (u.includes("CAMBIO DE CONTRASEÑA")) return "Cambio contraseña";
   if (u.includes("CAMBIO DE DOMICILIO")) return "Cambio domicilio";
-  if (u.includes("CAMBIO DE PLAN"))   return "Cambio plan";
-  if (u.includes("CAMBIO DE TITULAR")) return "Cambio titular";
-  if (u.includes("CORTE A SOLICITUD")) return "Corte voluntario";
-  if (u.includes("CORTE POR DEUDA"))  return "Corte por deuda";
-  if (u.includes("TRASLADO"))         return "Traslado";
+  if (u.includes("CAMBIO DE EQUIPO"))    return "Cambio ONU";
+  if (u.includes("CAMBIO DE PLAN"))      return "Cambio plan";
+  if (u.includes("CAMBIO DE TITULAR"))   return "Cambio titular";
+  if (u.includes("CORTE A SOLICITUD"))   return "Corte voluntario";
+  if (u.includes("CORTE POR DEUDA"))     return "Corte por deuda";
+  if (u.includes("INSTALACION DE ANEXO")) return "Instalación anexo";
+  if (u.includes("INSTALACION"))         return "Instalación";
+  if (u.includes("MIGRACION"))           return "Migración FTTH";
+  if (u.includes("RECONEXION"))          return "Reconexión";
+  if (u.includes("RETIRO DE EQUIPO"))    return "Retiro equipo";
+  if (u.includes("SUPERVICION"))         return "Supervisión";
+  if (u.includes("TRASLADO"))            return "Traslado";
   return s;
 }
 
@@ -60,6 +61,7 @@ function badgeServicio(s = "") {
   const u = s.toUpperCase();
   if (u.includes("RETIRO DE EQUIPO")) return "badge-purple";   // morado
   if (u.includes("CAMBIO DE EQUIPO")) return "badge-warning";  // amarillo
+  if (u.includes("INSTALACION DE ANEXO"))      return "badge-active";   // verde
   if (u.includes("INSTALACION"))      return "badge-active";   // verde
   if (u.includes("AVERIA"))           return "badge-danger";   // rojo
   if (u.includes("RECONEXION"))       return "badge-blue";     // azul
@@ -98,7 +100,9 @@ export default function CtrlRecojos() {
   const [duplicados,     setDuplicados]     = useState([]);
   const [ordenDetalle,   setOrdenDetalle]   = useState(null);
   const [loadingDetalle, setLoadingDetalle] = useState(false);
-  const [filtroTipo,     setFiltroTipo]     = useState("todas")
+  const [filtroTipo, setFiltroTipo] = useState("todas");
+  const [filtroRed,  setFiltroRed]  = useState("todas");
+  const [openDD,     setOpenDD]     = useState(null);
   const fileInputRef = useRef();
 
   
@@ -161,14 +165,33 @@ export default function CtrlRecojos() {
     }
   };
 
-  const filteredOrdenes = ordenes.filter(o => {
-  const matchSearch = !searchOrdenes ||
+const filteredOrdenes = ordenes.filter(o => {
+  const serv = (o.servicio ?? "").toUpperCase();
+
+  const matchRed =
+    filtroRed === "todas" ||
+    (filtroRed === "internet" && serv.includes("(I)")) ||
+    (filtroRed === "cable"    && serv.includes("(C)"));
+
+  const matchTipo =
+    filtroTipo === "todas" ||
+    labelServicio(o.servicio ?? "") === filtroTipo;
+
+  const matchSearch =
+    !searchOrdenes ||
     (o.abonado ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
     (o.nro_contrato ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
     String(o.nro_orden).includes(searchOrdenes);
-  const matchTipo = filtroTipo === "todas" || labelServicio(o.servicio ?? "") === filtroTipo;
-  return matchSearch && matchTipo;
+
+  return matchRed && matchTipo && matchSearch;
 });
+
+  const SERVICIOS_POR_RED = {
+    internet: ["Instalación","Avería","Alta servicio","Baja servicio","Atención NOC","Cambio contraseña","Cambio domicilio","Cambio ONU","Cambio plan","Cambio titular","Corte voluntario","Corte por deuda","Reconexión","Retiro equipo","Traslado"],
+    cable:    ["Instalación","Avería","Alta servicio","Cambio domicilio","Cambio plan","Cambio titular","Corte voluntario","Corte por deuda","Instalación anexo","Migración FTTH","Reconexión","Retiro equipo","Supervisión","Traslado"],
+    todas:    ["Alta servicio","Atención NOC","Avería","Baja servicio","Cambio contraseña","Cambio domicilio","Cambio ONU","Cambio plan","Cambio titular","Corte voluntario","Corte por deuda","Instalación anexo","Instalación","Migración FTTH","Reconexión","Retiro equipo","Supervisión","Traslado"],
+  };
+  const tiposDisponibles = SERVICIOS_POR_RED[filtroRed] ?? SERVICIOS_POR_RED.todas;
 
   return (<>
     {/* Modal duplicados */}
@@ -234,34 +257,110 @@ export default function CtrlRecojos() {
           </div>
         )}
 
-        <div style={{ display:"flex", gap:8, marginBottom:12, flexWrap:"wrap", alignItems:"center" }}>
-          {[{key:"pendiente",label:"Pendientes"},{key:"completada",label:"Completadas"},{key:"todas",label:"Todas"}].map(f => (
-            <button key={f.key} type="button" onClick={() => setFiltroEstado(f.key)}
-              style={{ padding:"4px 14px", borderRadius:20, fontSize:12, fontWeight:600, border:"1.5px solid", cursor:"pointer",
-                borderColor: filtroEstado===f.key ? "var(--primary)" : "var(--border)",
-                background:  filtroEstado===f.key ? "var(--primary)" : "white",
-                color:       filtroEstado===f.key ? "white" : "var(--text-muted)" }}>
-              {f.label}
-            </button>
-          ))}
-          <div style={{ display:"flex", gap:6, flexWrap:"wrap", width:"100%", marginTop:4 }}>
-            {["todas","Instalación","Avería","Reconexión","Cambio ONU","Retiro equipo"].map(t => (
-              <button key={t} type="button" onClick={() => setFiltroTipo(t)}
-                style={{ padding:"4px 14px", borderRadius:20, fontSize:12, fontWeight:600, border:"1.5px solid", cursor:"pointer",
-                  borderColor: filtroTipo===t ? "var(--primary)" : "var(--border)",
-                  background:  filtroTipo===t ? "var(--primary)" : "white",
-                  color:       filtroTipo===t ? "white" : "var(--text-muted)" }}>
-                {t === "todas" ? "Todos los tipos" : t}
-              </button>
-            ))}
-          </div>
-          <div className="search-box" style={{ marginLeft:"auto" }}>
+        <div style={{ display:"flex", gap:8, marginBottom:12, alignItems:"center", flexWrap:"wrap" }}
+          onClick={() => setOpenDD(null)}>
+
+          {/* DROPDOWN ESTADO */}
+          {(() => {
+            const opts = [{key:"pendiente",label:"Pendientes"},{key:"completada",label:"Completadas"},{key:"todas",label:"Todas"}];
+            const current = opts.find(o => o.key === filtroEstado)?.label ?? "Pendientes";
+            return (
+              <div style={{ position:"relative" }} onClick={e => e.stopPropagation()}>
+                <button type="button" onClick={() => setOpenDD(openDD==="estado" ? null : "estado")}
+                  style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"7px 12px", borderRadius:8, border:"0.5px solid var(--border)", fontSize:13, fontWeight:500, cursor:"pointer", background:"white", color:"var(--text)" }}>
+                  <span style={{ color:"var(--text-muted)", fontWeight:400 }}>Estado</span>
+                  {current}
+                  <Icon d="M6 9l6 6 6-6" size={14} color="var(--text-muted)" />
+                </button>
+                {openDD==="estado" && (
+                  <div style={{ position:"absolute", top:"calc(100% + 6px)", left:0, zIndex:50, background:"white", border:"0.5px solid var(--border)", borderRadius:8, boxShadow:"0 4px 16px rgba(0,0,0,.08)", minWidth:160, overflow:"hidden" }}>
+                    {opts.map(o => (
+                      <div key={o.key} onClick={() => { setFiltroEstado(o.key); setOpenDD(null); }}
+                        style={{ padding:"8px 14px", fontSize:13, cursor:"pointer", fontWeight: filtroEstado===o.key ? 500 : 400, color: filtroEstado===o.key ? "var(--primary)" : "var(--text)", background: filtroEstado===o.key ? "#EEF4FF" : "white" }}>
+                        {o.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          <div style={{ width:1, height:22, background:"var(--border)", flexShrink:0 }} />
+
+          {/* DROPDOWN RED */}
+          {(() => {
+            const opts = [
+              { key:"todas",    label:"Todos",    dot:"#888780" },
+              { key:"internet", label:"Internet", dot:"#0ea5e9" },
+              { key:"cable",    label:"Cable",    dot:"#f59e0b" },
+            ];
+            const current = opts.find(o => o.key === filtroRed) ?? opts[0];
+            return (
+              <div style={{ position:"relative" }} onClick={e => e.stopPropagation()}>
+                <button type="button" onClick={() => setOpenDD(openDD==="red" ? null : "red")}
+                  style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"7px 12px", borderRadius:8, border:"0.5px solid var(--border)", fontSize:13, fontWeight:500, cursor:"pointer", background:"white", color:"var(--text)" }}>
+                  <span style={{ color:"var(--text-muted)", fontWeight:400 }}>Red</span>
+                  <span style={{ width:8, height:8, borderRadius:"50%", background:current.dot, display:"inline-block" }} />
+                  {current.label}
+                  <Icon d="M6 9l6 6 6-6" size={14} color="var(--text-muted)" />
+                </button>
+                {openDD==="red" && (
+                  <div style={{ position:"absolute", top:"calc(100% + 6px)", left:0, zIndex:50, background:"white", border:"0.5px solid var(--border)", borderRadius:8, boxShadow:"0 4px 16px rgba(0,0,0,.08)", minWidth:160, overflow:"hidden" }}>
+                    {opts.map(o => (
+                      <div key={o.key} onClick={() => { setFiltroRed(o.key); setFiltroTipo("todas"); setOpenDD(null); }}
+                        style={{ padding:"8px 14px", fontSize:13, cursor:"pointer", display:"flex", alignItems:"center", gap:8, fontWeight: filtroRed===o.key ? 500 : 400, color: filtroRed===o.key ? "var(--primary)" : "var(--text)", background: filtroRed===o.key ? "#EEF4FF" : "white" }}>
+                        <span style={{ width:8, height:8, borderRadius:"50%", background:o.dot, display:"inline-block", flexShrink:0 }} />
+                        {o.label}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          <div style={{ width:1, height:22, background:"var(--border)", flexShrink:0 }} />
+
+          {/* DROPDOWN TIPO */}
+          {(() => {
+            const current = filtroTipo === "todas" ? "Todos los tipos" : filtroTipo;
+            return (
+              <div style={{ position:"relative" }} onClick={e => e.stopPropagation()}>
+                <button type="button" onClick={() => setOpenDD(openDD==="tipo" ? null : "tipo")}
+                  style={{ display:"inline-flex", alignItems:"center", gap:6, padding:"7px 12px", borderRadius:8, border:"0.5px solid var(--border)", fontSize:13, fontWeight:500, cursor:"pointer", background:"white", color:"var(--text)" }}>
+                  <span style={{ color:"var(--text-muted)", fontWeight:400 }}>Tipo</span>
+                  {current}
+                  <Icon d="M6 9l6 6 6-6" size={14} color="var(--text-muted)" />
+                </button>
+                {openDD==="tipo" && (
+                  <div style={{ position:"absolute", top:"calc(100% + 6px)", left:0, zIndex:50, background:"white", border:"0.5px solid var(--border)", borderRadius:8, boxShadow:"0 4px 16px rgba(0,0,0,.08)", minWidth:200, maxHeight:280, overflowY:"auto" }}>
+                    <div onClick={() => { setFiltroTipo("todas"); setOpenDD(null); }}
+                      style={{ padding:"8px 14px", fontSize:13, cursor:"pointer", fontWeight: filtroTipo==="todas" ? 500 : 400, color: filtroTipo==="todas" ? "var(--primary)" : "var(--text)", background: filtroTipo==="todas" ? "#EEF4FF" : "white" }}>
+                      Todos los tipos
+                    </div>
+                    {tiposDisponibles.map(t => (
+                      <div key={t} onClick={() => { setFiltroTipo(t); setOpenDD(null); }}
+                        style={{ padding:"8px 14px", fontSize:13, cursor:"pointer", fontWeight: filtroTipo===t ? 500 : 400, color: filtroTipo===t ? "var(--primary)" : "var(--text)", background: filtroTipo===t ? "#EEF4FF" : "white" }}>
+                        {t}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* BUSCADOR + REFRESH */}
+          <div className="search-box" style={{ flex:1, minWidth:180 }}>
             <Icon d={IC.search} size={15} color="var(--text-muted)" />
             <input placeholder="Buscar cliente, contrato u orden..." value={searchOrdenes} onChange={e => setSearchOrdenes(e.target.value)} />
           </div>
-          <button type="button" onClick={cargarOrdenes} style={{ padding:"5px 10px", borderRadius:20, fontSize:12, border:"1.5px solid var(--border)", background:"white", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
-            <Icon d={IC.refresh} size={12} />
+          <button type="button" onClick={cargarOrdenes}
+            style={{ padding:"7px 10px", borderRadius:8, fontSize:12, border:"0.5px solid var(--border)", background:"white", cursor:"pointer", display:"flex", alignItems:"center", gap:4 }}>
+            <Icon d={IC.refresh} size={13} />
           </button>
+
         </div>
 
         <div className="card">

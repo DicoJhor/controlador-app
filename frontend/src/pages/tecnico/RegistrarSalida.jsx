@@ -108,6 +108,49 @@ function badgeStyle(s = "") {
   return { bg: "var(--hover)", color: "var(--text)", border: "var(--border)", icon: IC.list };
 }
 
+function detectarRed(s = "") {
+  const u = s.toUpperCase();
+  if (u.includes("(I)")) return "internet";
+  if (u.includes("(C)")) return "cable";
+  return null;
+}
+
+function esDuo(o = {}) {
+  return (o.observacion ?? "").toUpperCase().includes("DUO");
+}
+
+function claveDuo(o = {}) {
+  return `${o.doc_identidad}__${o.fecha_crea}`;
+}
+
+function agruparDuos(lista = []) {
+  const grupos = {};
+  const simples = [];
+
+  lista.forEach(o => {
+    if (!esDuo(o) || !o.doc_identidad || o.doc_identidad === "0") {
+      simples.push(o);
+      return;
+    }
+    const clave = claveDuo(o);
+    if (!grupos[clave]) grupos[clave] = [];
+    grupos[clave].push(o);
+  });
+
+  const resultado = [];
+  Object.entries(grupos).forEach(([clave, ords]) => {
+    const internet = ords.find(o => o.servicio?.toUpperCase().includes("(I)"));
+    const cable    = ords.find(o => o.servicio?.toUpperCase().includes("(C)"));
+    if (internet && cable) {
+      resultado.push({ _esDuo: true, clave, internet, cable, abonado: internet.abonado, direccion: internet.direccion });
+    } else {
+      ords.forEach(o => simples.push(o));
+    }
+  });
+
+  return [...resultado, ...simples];
+}
+
 function MultiPhotoUploader({ fotos, onChange, maxFotos = 5 }) {
   const handleAdd = (e) => {
     const files  = Array.from(e.target.files);
@@ -343,6 +386,54 @@ function ItemSelector({ inventario, misOnus, recuperados = [], items, onChange }
   );
 }
 
+function DuoCard({ duo, onSeleccionar }) {
+  return (
+    <div onClick={() => onSeleccionar(duo)}
+      style={{ padding: "14px 16px", borderRadius: 12, border: "1.5px solid #c4b5fd", background: "var(--card-bg,white)", cursor: "pointer", transition: "all .15s", marginBottom: 10, display: "flex", gap: 12, alignItems: "flex-start" }}
+      onMouseEnter={e => { e.currentTarget.style.borderColor = "#7c3aed"; e.currentTarget.style.boxShadow = "0 2px 12px rgba(124,58,237,.12)"; }}
+      onMouseLeave={e => { e.currentTarget.style.borderColor = "#c4b5fd"; e.currentTarget.style.boxShadow = "none"; }}>
+      <div style={{ width: 40, height: 40, borderRadius: 10, background: "#ede9fe", border: "1px solid #c4b5fd", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        <Icon d="M21 12a9 9 0 11-18 0 9 9 0 0118 0M3.6 9h16.8M3.6 15h16.8" size={18} color="#7c3aed" />
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4, flexWrap: "wrap" }}>
+          <span style={{ fontWeight: 700, fontSize: 14 }}>{duo.abonado}</span>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: "#ede9fe", color: "#5b21b6", border: "1px solid #c4b5fd" }}>
+            DUO
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: "#d1e7dd", color: "#0a3622", border: "1px solid #198754" }}>
+            Instalación
+          </span>
+          <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>
+            #{duo.internet.nro_orden} / #{duo.cable.nro_orden}
+          </span>
+        </div>
+        <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+          <Icon d={IC.mapPin} size={11} color="var(--text-muted)" />
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{duo.direccion}</span>
+        </div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ flex: 1, background: "#f0f9ff", borderRadius: 7, padding: "6px 10px", border: "1px solid #bae6fd" }}>
+            <div style={{ fontSize: 10, color: "#0369a1", fontWeight: 700, marginBottom: 2 }}>
+              <Icon d={IC.wifi} size={10} color="#0369a1" /> INTERNET
+            </div>
+            <div style={{ fontSize: 11, fontFamily: "monospace", color: "#0369a1" }}>{duo.internet.nro_contrato}</div>
+          </div>
+          <div style={{ flex: 1, background: "#fffbeb", borderRadius: 7, padding: "6px 10px", border: "1px solid #fde68a" }}>
+            <div style={{ fontSize: 10, color: "#92400e", fontWeight: 700, marginBottom: 2 }}>
+              📺 CABLE/TV
+            </div>
+            <div style={{ fontSize: 11, fontFamily: "monospace", color: "#92400e" }}>{duo.cable.nro_contrato}</div>
+          </div>
+        </div>
+      </div>
+      <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth={2} style={{ flexShrink: 0, marginTop: 12 }}>
+        <path d="M9 18l6-6-6-6" />
+      </svg>
+    </div>
+  );
+}
+
 function OrdenCard({ orden, onSeleccionar }) {
   const bs    = badgeStyle(orden.servicio);
   const label = labelServicio(orden.servicio);
@@ -360,6 +451,16 @@ function OrdenCard({ orden, onSeleccionar }) {
           <span style={{ fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 20, background: bs.bg, color: bs.color, border: `1px solid ${bs.border}` }}>
             {label}
           </span>
+          {detectarRed(orden.servicio) === "internet" && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#e0f2fe", color: "#0369a1", border: "1px solid #bae6fd", display: "flex", alignItems: "center", gap: 4 }}>
+              <Icon d={IC.wifi} size={10} color="#0369a1" /> Internet
+            </span>
+          )}
+          {detectarRed(orden.servicio) === "cable" && (
+            <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 20, background: "#fef3c7", color: "#92400e", border: "1px solid #fde68a" }}>
+              📺 Cable/TV
+            </span>
+          )}
           <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: "auto" }}>#{orden.nro_orden}</span>
         </div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 2, display: "flex", alignItems: "center", gap: 4 }}>
@@ -398,11 +499,15 @@ export default function TecRegistrarSalida() {
   const [onuRecogidaPon,      setOnuRecogidaPon]      = useState("");
   const [onuRecogidaProducto, setOnuRecogidaProducto] = useState("");
 
+  const [duoActual,      setDuoActual]      = useState(null);
+  const [duoCompletadas, setDuoCompletadas] = useState([]);
+
   const [saving,     setSaving]     = useState(false);
   const [errors,     setErrors]     = useState({});
   const [success,    setSuccess]    = useState(null);
   const [busqueda,   setBusqueda]   = useState("");
   const [filtroTipo, setFiltroTipo] = useState("todos");
+  const [filtroRed,  setFiltroRed]  = useState("todas");
   const [vistaOnu,   setVistaOnu]   = useState(false);
 
   // ── Carga inventario + recuperados ──────────────────────────────────────────
@@ -494,13 +599,34 @@ export default function TecRegistrarSalida() {
     } catch {}
   };
 
-  const seleccionar = async (orden) => {
-    setOrdenActual(orden);
+  const seleccionar = async (item) => {
+    if (item._esDuo) {
+      setDuoActual(item);
+      setOrdenActual(null);
+      return;
+    }
+    setOrdenActual(item);
+    setDuoActual(null);
     setVistaOnu(false);
     setItems([]); setFotos([]); setComentario("");
     setOnuRecogidaPon(""); setOnuRecogidaProducto("");
     setErrors({});
 
+    const u = (item.servicio ?? "").toUpperCase();
+    if (u.includes("INSTALACION") || u.includes("CAMBIO DE EQUIPO")) {
+      try {
+        const red = await tecnicoService.getOrdenRed(item.id);
+        if (red?.ip_local) setOrdenActual({ ...item, ...red });
+      } catch {}
+    }
+  };
+
+  const seleccionarDesdeDuo = async (orden) => {
+    setOrdenActual(orden);
+    setVistaOnu(false);
+    setItems([]); setFotos([]); setComentario("");
+    setOnuRecogidaPon(""); setOnuRecogidaProducto("");
+    setErrors({});
     const u = (orden.servicio ?? "").toUpperCase();
     if (u.includes("INSTALACION") || u.includes("CAMBIO DE EQUIPO")) {
       try {
@@ -599,6 +725,27 @@ export default function TecRegistrarSalida() {
       }
 
       setOrdenes(prev => prev.filter(o => o.id !== ordenActual.id));
+
+      if (duoActual) {
+        const nuevasCompletadas = [...duoCompletadas, ordenActual.id];
+        setDuoCompletadas(nuevasCompletadas);
+        try { await db.duo_estado.put({ clave: duoActual.clave, completadas: nuevasCompletadas }); } catch {}
+        const otraOrden = duoActual.internet.id === ordenActual.id ? duoActual.cable : duoActual.internet;
+        const ambasListas = nuevasCompletadas.includes(duoActual.internet.id) && nuevasCompletadas.includes(duoActual.cable.id);
+        if (ambasListas) {
+          setDuoActual(null);
+          setDuoCompletadas([]);
+          try { await db.duo_estado.delete(duoActual.clave); } catch {}
+        } else {
+          setOrdenActual(null);
+          setItems([]); setFotos([]); setComentario("");
+          setOnuRecogidaPon(""); setOnuRecogidaProducto("");
+          await seleccionarDesdeDuo(otraOrden);
+          setTimeout(() => setSuccess(null), 6000);
+          return;
+        }
+      }
+
       setOrdenActual(null);
       setItems([]); setFotos([]); setComentario("");
       setOnuRecogidaPon(""); setOnuRecogidaProducto("");
@@ -612,21 +759,131 @@ export default function TecRegistrarSalida() {
   const ordenesFiltradas = ordenes.filter(o => {
     const c = clasificarServicio(o.servicio);
     if (c.tab === "recojo") return false; // ← las de retiro van a TecRecojos
+
+    const red = detectarRed(o.servicio);
+    const matchRed =
+      filtroRed === "todas" ||
+      (filtroRed === "internet" && red === "internet") ||
+      (filtroRed === "cable"    && red === "cable");
+
     const q = busqueda.toLowerCase();
     const matchQ = !q ||
       o.abonado?.toLowerCase().includes(q) ||
       o.direccion?.toLowerCase().includes(q) ||
       o.nro_contrato?.toLowerCase().includes(q) ||
       String(o.nro_orden).includes(q);
+
     const matchT =
       filtroTipo === "todos" ||
       (filtroTipo === "averia"     && c.tab === "averia"  && c.tipoAveria !== "cambio_onu") ||
       (filtroTipo === "cambio_onu" && c.tipoAveria === "cambio_onu") ||
       (filtroTipo === "activacion" && c.tab === "activacion");
-    return matchQ && matchT;
+
+    return matchRed && matchQ && matchT;
   });
 
+  useEffect(() => {
+    (async () => {
+      if (!duoActual) return;
+      try {
+        const saved = await db.duo_estado.get(duoActual.clave);
+        if (saved?.completadas) setDuoCompletadas(saved.completadas);
+      } catch {}
+    })();
+  }, [duoActual?.clave]);
+
+  const ordenesParaMostrar = agruparDuos(ordenesFiltradas);
+
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando...</div>;
+
+  // ══ SELECTOR DUO ══
+  if (duoActual && !ordenActual) {
+    const internetLista = duoCompletadas.includes(duoActual.internet.id);
+    const cableLista    = duoCompletadas.includes(duoActual.cable.id);
+    return (
+      <div style={{ maxWidth: 600, margin: "0 auto" }}>
+        <button type="button" className="btn btn-outline btn-sm"
+          onClick={() => { setDuoActual(null); setDuoCompletadas([]); }}
+          style={{ marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+          <Icon d={IC.arrowLeft} size={14} /> Volver al listado
+        </button>
+
+        {success && (
+          <div className="alert alert-success" style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+            <Icon d={IC.check} size={16} color="var(--success)" />
+            <div>
+              <strong>Registrado correctamente</strong>
+              <div style={{ fontSize: 13, marginTop: 2 }}>Ahora registrá el siguiente servicio</div>
+            </div>
+          </div>
+        )}
+
+        <div className="card">
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid var(--border)", background: "#faf5ff", borderRadius: "12px 12px 0 0" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 38, height: 38, borderRadius: 9, background: "white", border: "1px solid #c4b5fd", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <Icon d="M21 12a9 9 0 11-18 0 9 9 0 0118 0M3.6 9h16.8M3.6 15h16.8" size={17} color="#7c3aed" />
+              </div>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15, color: "#5b21b6" }}>
+                  Instalación DUO — {duoActual.abonado}
+                </div>
+                <div style={{ fontSize: 12, color: "#7c3aed", opacity: 0.8 }}>
+                  {duoActual.direccion}
+                  {(internetLista || cableLista) && (
+                    <span style={{ marginLeft: 8, fontWeight: 600 }}>
+                      · {internetLista && cableLista ? "2" : "1"}/2 completada{internetLista && cableLista ? "s" : ""}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            {(internetLista || cableLista) && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ height: 4, background: "#ede9fe", borderRadius: 2, overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: internetLista && cableLista ? "100%" : "50%", background: "#7c3aed", borderRadius: 2, transition: "width .4s" }} />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {[
+            { orden: duoActual.internet, lista: internetLista, label: "Internet FTTH", bg: "#f0f9ff", border: "#bae6fd", color: "#0369a1", icon: IC.wifi },
+            { orden: duoActual.cable,    lista: cableLista,    label: "Cable/TV",      bg: "#fffbeb", border: "#fde68a", color: "#92400e", icon: IC.repeat },
+          ].map(({ orden, lista, label, bg, border, color, icon }) => (
+            <div key={orden.id} style={{
+              padding: "14px 16px", borderBottom: "1px solid var(--border)",
+              display: "flex", alignItems: "center", gap: 12,
+              opacity: lista ? 0.55 : 1,
+            }}>
+              <div style={{ width: 36, height: 36, borderRadius: 9, background: bg, border: `1px solid ${border}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                {lista
+                  ? <Icon d={IC.check} size={16} color="#065f46" />
+                  : <Icon d={icon} size={16} color={color} />
+                }
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: lista ? "var(--text-muted)" : "var(--text)" }}>{label}</div>
+                <div style={{ fontSize: 11, fontFamily: "monospace", color: "var(--text-muted)" }}>
+                  {orden.nro_contrato} · Orden #{orden.nro_orden}
+                </div>
+              </div>
+              {lista
+                ? <span style={{ fontSize: 11, fontWeight: 600, padding: "3px 10px", borderRadius: 20, background: "#d1fae5", color: "#065f46", border: "1px solid #6ee7b7" }}>
+                    <Icon d={IC.check} size={10} color="#065f46" /> Listo
+                  </span>
+                : <button className="btn btn-primary btn-sm"
+                    onClick={() => seleccionarDesdeDuo(orden)}
+                    style={{ minWidth: 90 }}>
+                    Empezar
+                  </button>
+              }
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   // ══ LISTADO ══
   if (!ordenActual) return (
@@ -682,6 +939,19 @@ export default function TecRegistrarSalida() {
       </div>
 
       <div style={{ display: "flex", gap: 6, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Filtro red */}
+        <div style={{ display: "flex", gap: 4, padding: "3px", borderRadius: 22, background: "var(--hover)", border: "1px solid var(--border)" }}>
+          {[
+            { key: "todas",    label: "Todas"      },
+            { key: "internet", label: "🌐 Internet" },
+            { key: "cable",    label: "📺 Cable"    },
+          ].map(f => (
+            <button key={f.key} type="button" onClick={() => setFiltroRed(f.key)}
+              style={{ padding: "4px 12px", borderRadius: 18, fontSize: 12, fontWeight: 600, border: "none", background: filtroRed === f.key ? "white" : "transparent", color: filtroRed === f.key ? "var(--text)" : "var(--text-muted)", cursor: "pointer", transition: "all .15s", boxShadow: filtroRed === f.key ? "0 1px 4px rgba(0,0,0,.1)" : "none" }}>
+              {f.label}
+            </button>
+          ))}
+        </div>
         {[
           { key: "todos",      label: "Todos"         },
           { key: "averia",     label: "Averías"       },
@@ -710,9 +980,11 @@ export default function TecRegistrarSalida() {
               : "No hay resultados para esa búsqueda."}
           </div>
         </div>
-      ) : ordenesFiltradas.map(o => (
-        <OrdenCard key={o.id} orden={o} onSeleccionar={seleccionar} />
-      ))}
+      ) : ordenesParaMostrar.map(o =>
+        o._esDuo
+          ? <DuoCard key={o.clave} duo={o} onSeleccionar={seleccionar} />
+          : <OrdenCard key={o.id} orden={o} onSeleccionar={seleccionar} />
+      )}
     </div>
   );
 

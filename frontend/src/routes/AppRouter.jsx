@@ -29,6 +29,9 @@ import CtrlRecojos   from "../pages/controlador/Recojos";
 import CtrlOnusRecicladas  from "../pages/controlador/EquiposReciclados";
 import CtrlClientes  from "../pages/controlador/Clientes";
 
+//Secretaria
+import ServiciosList from "../pages/secretaria/ServiciosList";
+
 
 
 // Técnico
@@ -40,6 +43,7 @@ import TecConfigurarONU from "../pages/tecnico/TecConfigurarONU";
 import TecLayout          from "../components/layout/TecLayout";
 
 
+
 /**
  * Redirige al dashboard correcto según el rol del usuario logueado.
  */
@@ -49,6 +53,7 @@ function RoleRedirect() {
   if (role === ROLES.ADMIN)        return <Navigate to="/admin/dashboard"       replace />;
   if (role === ROLES.CONTROLADOR)  return <Navigate to="/controlador/dashboard" replace />;
   if (role === ROLES.TECNICO)      return <Navigate to="/tecnico/dashboard"     replace />;
+  if (role === ROLES.SECRETARIA)  return <Navigate to="/secretaria/servicios"   replace />;
   return <Navigate to="/login" replace />;
 }
 
@@ -104,6 +109,15 @@ export default function AppRouter() {
             <Route path="/tecnico/historial"        element={<TecHistorial />} />
             <Route path="/tecnico/recojos"        element={<TecRecojos />} />
             <Route path="/tecnico/configurar-onu" element={<TecConfigurarONU />} />
+
+
+          </Route>
+        </Route>
+
+        {/* ── Secretaria ── */}
+        <Route element={<ProtectedRoute allowedRoles={[ROLES.SECRETARIA]} />}>
+          <Route element={<MainLayout />}>
+            <Route path="/secretaria/servicios" element={<ServiciosList />} />
 
 
           </Route>

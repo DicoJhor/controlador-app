@@ -134,7 +134,7 @@ export default function AdminUsuarios() {
     onChange: (e) => setForm(prev => ({ ...prev, [key]: e.target.value })),
   });
 
-  const needsSede = form.rol === ROLES.CONTROLADOR || form.rol === ROLES.TECNICO;
+  const needsSede = form.rol === ROLES.CONTROLADOR || form.rol === ROLES.TECNICO || form.rol === ROLES.SECRETARIA;
 
   const getNombreSede = (sede_id) => {
     const sede = sedes.find(s => s.id === sede_id);
@@ -163,6 +163,7 @@ export default function AdminUsuarios() {
           {!isSuperadmin && <option value={ROLES.ADMIN}>Admin</option>}
           <option value={ROLES.CONTROLADOR}>Controlador</option>
           <option value={ROLES.TECNICO}>Técnico</option>
+          <option value={ROLES.SECRETARIA}>Secretaria</option>
         </select>
         <button className="btn btn-primary" onClick={openCrear}>
           <Icon d={IC.plus} size={15} />
@@ -264,6 +265,7 @@ export default function AdminUsuarios() {
                 {isSuperadmin && <option value={ROLES.ADMIN}>Admin</option>}
                 <option value={ROLES.CONTROLADOR}>Controlador</option>
                 <option value={ROLES.TECNICO}>Técnico</option>
+                <option value={ROLES.SECRETARIA}>Secretaria</option>
               </select>
             </div>
             {needsSede && (
