@@ -18,7 +18,11 @@ const verificarToken = (req, res, next) => {
 
 const requireRol = (roles) => (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: "No autenticado" })
-    if (!roles.includes(req.user.rol)) {
+
+    console.log("ROL RECIBIDO:", req.user.rol)       // ← agrega esto
+    console.log("ROLES PERMITIDOS:", roles) 
+
+    if (!roles.includes(req.user.rol?.toLowerCase())) {
         return res.status(403).json({ message: "No tienes permisos para esto" })
     }
     next()
