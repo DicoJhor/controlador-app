@@ -426,6 +426,7 @@ const filteredOrdenes = ordenes.filter(o => {
                 <DetRow label="Fecha"      value={ordenDetalle.fecha_crea} />
                 <DetRow label="Técnico"    value={ordenDetalle.tecnico_nombre} />
                 <DetRow label="Comentario" value={ordenDetalle.comentario} />
+                {console.log("lat/lng:", ordenDetalle.lat, ordenDetalle.lng)}
                 {ordenDetalle.lat && ordenDetalle.lng && (
                   <div style={{ display:"flex", gap:8, fontSize:13 }}>
                     <span style={{ color:"var(--text-muted)", minWidth:90 }}>Ubicación</span>
