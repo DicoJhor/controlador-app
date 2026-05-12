@@ -244,6 +244,7 @@ router.get(
   authMiddleware,
   requireRol(["admin", "superadmin", "controlador", "secretaria"]),
   async (req, res) => {
+    console.log("🔍 GET /admin/ordenes - user:", req.user)
     const { estado, sede_id } = req.query;
     const rol = req.user.rol;
     const miSede = req.user.sede_id;
