@@ -463,6 +463,8 @@ router.post(
     const onuId = body.onu_id ? Number(body.onu_id) : null;
     const lat = body.lat ? parseFloat(body.lat) : null;
     const lng = body.lng ? parseFloat(body.lng) : null;
+    console.log("📍 lat:", body.lat, "→", lat, "| lng:", body.lng, "→", lng);
+
     const onuRecogidaPon = body.onu_recogida_codigo_pon || null;
     const onuRecogidaProductoId = body.onu_recogida_producto_id ? Number(body.onu_recogida_producto_id) : null;
 
