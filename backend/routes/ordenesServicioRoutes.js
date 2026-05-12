@@ -59,7 +59,7 @@ function parsearExcel(buffer) {
 router.post(
   "/admin/ordenes/upload",
   authMiddleware,
-  requireRol(["admin", "superadmin", "controlador", "secretaria"),
+  requireRol(["admin", "superadmin", "controlador", "secretaria"]),
   upload.single("archivo"),
   async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No se recibió ningún archivo." });
