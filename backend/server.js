@@ -51,6 +51,13 @@ app.use(cors({
 // Procesar JSON
 app.use(express.json())
 
+// ── LOG GLOBAL DE REQUESTS ─────────────────────────────
+app.use((req, res, next) => {
+  console.log("➡️  REQUEST:", req.method, req.originalUrl)
+  next()
+})
+
+
 // ── Rutas API ─────────────────────────────────────────
 app.use("/uploads", express.static(path.join(__dirname, 'uploads')))
 app.use("/api/auth", authRoutes)

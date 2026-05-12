@@ -434,6 +434,9 @@ router.post(
   authMiddleware,
   upload.array("fotos", 5),
   async (req, res) => {
+    console.log("🚀 ENTRÓ AL HANDLER");
+    console.log("📦 RAW BODY COMPLETO:", JSON.stringify(req.body));
+    console.log("📁 FILES:", req.files?.length ?? 0, "archivos");
     const ordenId = req.params.id;
     const tecnicoId = req.user.id;
     const sedeId = req.user.sede_id;

@@ -613,12 +613,19 @@ exports.completarOrden = async (req, res) => {
       }
     }
 
+    // Leer coordenadas del body
+    const lat = req.body.lat ? parseFloat(req.body.lat) : null
+    const lng = req.body.lng ? parseFloat(req.body.lng) : null
+
+    console.log("📍 lat:", req.body.lat, "→", lat, "| lng:", req.body.lng, "→", lng)
+
     // Marcar orden como completada
     await conn.query(
       `UPDATE ordenes_servicio
-      SET estado_app = 'completada', tecnico_id = ?, activacion_id = ?, completada_en = NOW()
+      SET estado_app = 'completada', tecnico_id = ?, activacion_id = ?, completada_en = NOW(),
+          lat = ?, lng = ?
       WHERE id = ?`,
-      [tecnico_id, activacion_id, orden_id]
+      [tecnico_id, activacion_id, lat, lng, orden_id]  // ← agregá lat y lng acá
     )
 
     await conn.commit()
