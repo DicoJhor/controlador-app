@@ -20,6 +20,7 @@ function Icon({ d, size = 16, color = "currentColor" }) {
 
 const IC = {
   plus:   "M12 5v14 M5 12h14",
+  mapPin: "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z M12 7a3 3 0 100 6 3 3 0 000-6",
   search: "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
   check:  "M20 6L9 17l-5-5",
   image:  "M21 19V5a2 2 0 00-2-2H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2z M8.5 10a1.5 1.5 0 100-3 1.5 1.5 0 000 3z M21 15l-5-5L5 19",
@@ -425,6 +426,23 @@ const filteredOrdenes = ordenes.filter(o => {
                 <DetRow label="Fecha"      value={ordenDetalle.fecha_crea} />
                 <DetRow label="Técnico"    value={ordenDetalle.tecnico_nombre} />
                 <DetRow label="Comentario" value={ordenDetalle.comentario} />
+                {ordenDetalle.lat && ordenDetalle.lng && (
+                  <div style={{ display:"flex", gap:8, fontSize:13 }}>
+                    <span style={{ color:"var(--text-muted)", minWidth:90 }}>Ubicación</span>
+                    <a
+                      href={`https://www.google.com/maps?q=${ordenDetalle.lat},${ordenDetalle.lng}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{
+                        display: "flex", alignItems: "center", gap: 5,
+                        color: "var(--primary)", fontWeight: 600, textDecoration: "none",
+                        fontSize: 13,
+                      }}>
+                      <Icon d={IC.mapPin} size={13} color="var(--primary)" />
+                      {Number(ordenDetalle.lat).toFixed(6)}, {Number(ordenDetalle.lng).toFixed(6)}
+                    </a>
+                  </div>
+                )}
               </div>
 
               <div>
