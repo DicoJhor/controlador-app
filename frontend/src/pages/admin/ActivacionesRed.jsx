@@ -59,6 +59,22 @@ const FILTROS_TIPO = [
 
 const emptyForm = { ip_local: "", mascara: "255.255.255.0", gateway: "" };
 
+const ZONA_LABELS = {
+  "ZONA 01": "Porvenir",
+  "ZONA 05": "Río Seco",
+  "ZONA 08": "Pesqueda",
+  "ZONA 11": "Alto",
+  "ZONA 17": "Florencia",
+};
+
+function formatSector(sector) {
+  if (!sector) return null;
+  const key = sector.trim().toUpperCase().replace(/ZONA (\d)$/, "ZONA 0$1");
+  return ZONA_LABELS[key] ?? sector;
+}
+
+
+
 export default function ActivacionesRed() {
   const [ordenes,       setOrdenes]       = useState([]);
   const [loading,       setLoading]       = useState(true);
@@ -414,7 +430,14 @@ export default function ActivacionesRed() {
                       <td className="mono text-sm" style={{ color: "var(--primary)", fontWeight: 600 }}>{o.nro_contrato}</td>
                       <td className="fw-600">{o.abonado}</td>
                       <td className="text-sm text-muted">{o.direccion}</td>
-                      <td className="text-sm">{o.sede_nombre ?? "—"}</td>
+                      <td className="text-sm">
+                        {o.sede_nombre ?? "—"}
+                        {o.sector && o.sede_nombre?.toLowerCase().includes("porvenir") && (
+                          <span style={{ color: "var(--text-muted)", fontSize: 11, marginLeft: 4 }}>
+                            · {formatSector(o.sector)}
+                          </span>
+                        )}
+                      </td>
                       <td><span className={`badge ${badge.className}`}>{badge.icon} {badge.text}</span></td>
                       <td className="text-sm">{o.tecnologia ?? "—"}</td>
                       <td>

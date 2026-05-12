@@ -153,6 +153,8 @@ export default function CtrlInventario() {
   const [activoSelected, setActivoSelected] = useState(null);
   const [activoForm,     setActivoForm]     = useState(emptyActivoForm);
 
+  const [busquedaItem, setBusquedaItem] = useState("");
+
   useEffect(() => { cargarDatos(); }, []);
 
   const cargarDatos = () =>
@@ -393,7 +395,7 @@ export default function CtrlInventario() {
     }
   };
 
-  const salidaValida = salida.tecnico_id && salida.motivo &&
+  const salidaValida = salida.tecnico_id &&
     salida.items.length > 0 &&
     salida.items.every(i => {
       if (!i.producto_id) return false;
@@ -402,51 +404,43 @@ export default function CtrlInventario() {
         return (onusSeleccionadas[i.producto_id] ?? []).length > 0;
       }
       if (!i.cantidad || Number(i.cantidad) <= 0) return false;
-      if (prod?.es_medible && (!i.metros || Number(i.metros) <= 0)) return false;
       return true;
     });
 
   const handleSalida = async () => {
     setSaving(true);
     try {
-      // Separar items ONU de items normales
-      const itemsNormales = salida.items.filter(i => {
-        const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
-        return prod?.categoria !== "onu";
-      });
-      const itemsOnu = salida.items.filter(i => {
-        const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
-        return prod?.categoria === "onu";
-      });
+      const todasLasOnus = Object.values(onusSeleccionadas).flat();
 
-      // Registrar items normales
-      if (itemsNormales.length > 0) {
-        await stockService.registrarSalidaMultiple({
-          tecnico_id: Number(salida.tecnico_id),
-          motivo:     salida.motivo,
-          comentario: salida.comentario || null,
-          items:      itemsNormales.map(i => ({
+      const itemsNormales = salida.items
+        .filter(i => {
+          const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+          return prod?.categoria !== "onu";
+        })
+        .map(i => {
+          const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+          const metros = prod?.es_medible && prod?.metros_por_unidad
+            ? Number(i.cantidad) * prod.metros_por_unidad
+            : undefined;
+          return {
             producto_id: Number(i.producto_id),
             cantidad:    Number(i.cantidad),
-            metros:      i.metros !== "" ? Number(i.metros) : undefined,
-          }))
+            metros,
+          };
         });
-      }
+      await stockService.asignarCompleto({
+        tecnico_id: Number(salida.tecnico_id),
+        comentario: salida.comentario || null,
+        items:      itemsNormales,
+        onu_ids:    todasLasOnus,
+      });
 
-      // Asignar ONUs específicas
-      for (const item of itemsOnu) {
-        const seleccionadas = onusSeleccionadas[item.producto_id] ?? [];
-        if (seleccionadas.length > 0) {
-          await onuService.asignarTecnico({
-            tecnico_id: Number(salida.tecnico_id),
-            onu_ids:    seleccionadas,
-          });
-        }
-      }
       const data = await stockService.getStock();
       setStock(data);
       setModal(false);
+      setBusquedaItem("");
       setSalida(emptySalida);
+      setOnusSeleccionadas({});
       setSuccess("salida");
       setTimeout(() => setSuccess(null), 3500);
     } catch (err) {
@@ -733,7 +727,7 @@ export default function CtrlInventario() {
           onClose={() => setModal(false)}
           footer={
             <>
-              <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-outline" onClick={() => { setModal(false); setBusquedaItem(""); }} disabled={saving}>Cancelar</button>
               <button className="btn btn-primary" onClick={handleCrearProducto}
                 disabled={saving || !productoForm.nombre}>
                 {saving ? "Creando..." : "Crear producto"}
@@ -1213,52 +1207,99 @@ export default function CtrlInventario() {
                 {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nombre}</option>)}
               </select>
             </div>
-            <div className="form-group">
-              <label className="form-label">Motivo</label>
-              <select className="form-input" value={salida.motivo}
-                onChange={e => setSalida(prev => ({ ...prev, motivo: e.target.value }))}>
-                <option value="">Seleccionar...</option>
-                <option value={MOTIVOS_SALIDA.NUEVA_CONEXION}>Nueva conexión</option>
-                <option value={MOTIVOS_SALIDA.AVERIA}>Avería</option>
-                <option value={MOTIVOS_SALIDA.MANTENIMIENTO}>Mantenimiento</option>
-              </select>
-            </div>
           </div>
 
           <div className="form-group">
             <label className="form-label">Ítems a asignar</label>
-            {salida.items.length === 0 && (
-              <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13 }}>
-                Agregá al menos un ítem.
+
+            {/* Buscador */}
+            <div className="search-box" style={{ marginBottom: 8 }}>
+              <Icon d={IC.search} size={16} color="var(--text-muted)" />
+              <input
+                placeholder="Buscar ítem por nombre o código..."
+                value={busquedaItem}
+                onChange={e => setBusquedaItem(e.target.value)}
+              />
+            </div>
+
+            {/* Resultados del buscador */}
+            {busquedaItem.length > 0 && (
+              <div style={{
+                border: "1px solid var(--border)", borderRadius: 8,
+                marginBottom: 8, maxHeight: 200, overflowY: "auto",
+                background: "white", boxShadow: "0 4px 12px rgba(0,0,0,.08)"
+              }}>
+                {stock
+                  .filter(s =>
+                    (s.producto.toLowerCase().includes(busquedaItem.toLowerCase()) ||
+                    (s.codigo ?? "").toLowerCase().includes(busquedaItem.toLowerCase())) &&
+                    !productosYaAgregados.includes(String(s.producto_id))
+                  )
+                  .map(s => (
+                    <div key={s.producto_id}
+                      onClick={() => {
+                        setSalida(prev => ({ ...prev, items: [...prev.items, { ...emptyItem, producto_id: String(s.producto_id) }] }));
+                        if (s.categoria === "onu") {
+                          onuService.getDisponibles(s.producto_id).then(data => {
+                            setOnusDisponibles(prev => ({ ...prev, [s.producto_id]: data }));
+                            setOnusSeleccionadas(prev => ({ ...prev, [s.producto_id]: [] }));
+                          }).catch(() => {});
+                        }
+                        setBusquedaItem("");
+                      }}
+                      style={{
+                        padding: "9px 14px", cursor: "pointer", fontSize: 13,
+                        borderBottom: "1px solid var(--border)",
+                        display: "flex", justifyContent: "space-between", alignItems: "center",
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "white"}
+                    >
+                      <div>
+                        <span style={{ fontWeight: 600 }}>{s.producto}</span>
+                        {s.codigo && <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>{s.codigo}</span>}
+                        {s.categoria && <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>· {s.categoria}</span>}
+                      </div>
+                      <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", marginLeft: 12 }}>
+                        disp: <strong>{s.cantidad}</strong>
+                      </span>
+                    </div>
+                  ))
+                }
+                {stock.filter(s =>
+                  (s.producto.toLowerCase().includes(busquedaItem.toLowerCase()) ||
+                  (s.codigo ?? "").toLowerCase().includes(busquedaItem.toLowerCase())) &&
+                  !productosYaAgregados.includes(String(s.producto_id))
+                ).length === 0 && (
+                  <div style={{ padding: "12px 14px", color: "var(--text-muted)", fontSize: 13 }}>
+                    Sin resultados
+                  </div>
+                )}
               </div>
             )}
-            {salida.items.map((item, idx) => {
-              const productoInfo = stock.find(s => String(s.producto_id) === String(item.producto_id));
-              const esMedible    = !!productoInfo?.es_medible;
-              const esOnu        = productoInfo?.categoria === "onu";
-              const disponibles  = onusDisponibles[item.producto_id] ?? [];
-              const seleccionadas = onusSeleccionadas[item.producto_id] ?? [];
-              
-              return (
-                <div key={idx} style={{ marginBottom: 8}}>
-                  <div style={styles.itemRow}>
-                    <div style={{ flex: 2}}>
-                      <select className="form-input" value={item.producto_id}
-                        onChange={e => updateItem(idx, "producto_id", e.target.value)}>
-                        <option value="">Seleccionar ítem...</option>
-                        {stock.map(s => (
-                          <option key={s.producto_id} value={s.producto_id}
-                            disabled={productosYaAgregados.includes(String(s.producto_id)) && String(s.producto_id) !== String(item.producto_id)}>
-                            {s.producto} — disp: {s.cantidad}
-                            {s.es_medible
-                              ? ` (${(s.metros_disponibles ?? s.cantidad * (s.metros_por_unidad ?? 0))}m)`
-                              : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
 
-                  {/* Si NO es ONU → input cantidad normal */}
+            {/* Lista de ítems agregados */}
+            {salida.items.length === 0 && busquedaItem.length === 0 && (
+              <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13 }}>
+                Buscá y seleccioná los ítems a asignar.
+              </div>
+            )}
+
+            {salida.items.map((item, idx) => {
+              const productoInfo  = stock.find(s => String(s.producto_id) === String(item.producto_id));
+              const esMedible     = !!productoInfo?.es_medible;
+              const esOnu         = productoInfo?.categoria === "onu";
+              const disponibles   = onusDisponibles[item.producto_id] ?? [];
+              const seleccionadas = onusSeleccionadas[item.producto_id] ?? [];
+
+              return (
+                <div key={idx} style={{ marginBottom: 8 }}>
+                  <div style={styles.itemRow}>
+                    <div style={{ flex: 2, fontSize: 13, fontWeight: 600 }}>
+                      {productoInfo?.producto ?? "—"}
+                      {productoInfo?.codigo && <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>{productoInfo.codigo}</span>}
+                    </div>
+
                     {!esOnu && (
                       <div style={{ flex: 1 }}>
                         <input className="form-input" type="number" min="1"
@@ -1268,86 +1309,75 @@ export default function CtrlInventario() {
                           onChange={e => updateItem(idx, "cantidad", e.target.value)} />
                       </div>
                     )}
-                   
-                  {esMedible && (
-                    <div style={{ flex: 1 }}>
-                      <input className="form-input" type="number" min="1"
-                        max={productoInfo?.metros_disponibles ?? undefined}
-                        placeholder="Metros"
-                        value={item.metros}
-                        onChange={e => updateItem(idx, "metros", e.target.value)}
-                        style={{ borderColor: "var(--info)" }} />
-                    </div>
-                  )}
 
-
-                  <button className="btn btn-danger-outline btn-sm btn-icon"
-                    onClick={() => removeItem(idx)} type="button">
-                    <Icon d={IC.trash} size={13} />
-                  </button>
-                </div>
-
-                  {/* Sub-panel ONUs disponibles */}
-                  {esOnu && item.producto_id && (
+                    {esMedible && item.cantidad && (
                       <div style={{
-                        marginTop: 6, padding: "10px 12px",
-                        background: "var(--hover)", borderRadius: 8,
-                        border: "1px solid var(--border)",
+                        fontSize: 12, color: "var(--info)", fontWeight: 600,
+                        whiteSpace: "nowrap", padding: "0 4px"
                       }}>
-                        <div style={{
-                          fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
-                          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
-                        }}>
-                          Seleccionar ONUs a asignar ({seleccionadas.length} seleccionadas)
-                        </div>
-                        {disponibles.length === 0 ? (
-                          <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                            Sin ONUs con PON-SN disponibles en esta sede
-                          </div>
-                        ) : (
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                            {disponibles.map(onu => {
-                              const seleccionada = seleccionadas.includes(onu.id);
-                              return (
-                                <button
-                                  key={onu.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setOnusSeleccionadas(prev => {
-                                      const actual = prev[item.producto_id] ?? [];
-                                      const nuevas = seleccionada
-                                        ? actual.filter(id => id !== onu.id)
-                                        : [...actual, onu.id];
-                                      return { ...prev, [item.producto_id]: nuevas };
-                                    });
-                                  }}
-                                  style={{
-                                    padding: "4px 10px", borderRadius: 6,
-                                    fontSize: 12, fontFamily: "monospace",
-                                    cursor: "pointer", fontWeight: 600,
-                                    border: "1px solid",
-                                    borderColor: seleccionada ? "var(--primary)" : "var(--border)",
-                                    background:  seleccionada ? "var(--primary)" : "white",
-                                    color:       seleccionada ? "white" : "var(--text)",
-                                    transition: "all .15s",
-                                  }}
-                                >
-                                  {onu.codigo_pon}
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
+                        = {(Number(item.cantidad) * (productoInfo?.metros_por_unidad ?? 0)).toLocaleString()}m
                       </div>
                     )}
+
+                    <button className="btn btn-danger-outline btn-sm btn-icon"
+                      onClick={() => removeItem(idx)} type="button">
+                      <Icon d={IC.trash} size={13} />
+                    </button>
+                  </div>
+
+                  {esOnu && item.producto_id && (
+                    <div style={{
+                      marginTop: 6, padding: "10px 12px",
+                      background: "var(--hover)", borderRadius: 8,
+                      border: "1px solid var(--border)",
+                    }}>
+                      <div style={{
+                        fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
+                        textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+                      }}>
+                        Seleccionar ONUs a asignar ({seleccionadas.length} seleccionadas)
+                      </div>
+                      {disponibles.length === 0 ? (
+                        <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                          Sin ONUs con PON-SN disponibles en esta sede
+                        </div>
+                      ) : (
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                          {disponibles.map(onu => {
+                            const seleccionada = seleccionadas.includes(onu.id);
+                            return (
+                              <button key={onu.id} type="button"
+                                onClick={() => {
+                                  setOnusSeleccionadas(prev => {
+                                    const actual = prev[item.producto_id] ?? [];
+                                    const nuevas = seleccionada
+                                      ? actual.filter(id => id !== onu.id)
+                                      : [...actual, onu.id];
+                                    return { ...prev, [item.producto_id]: nuevas };
+                                  });
+                                }}
+                                style={{
+                                  padding: "4px 10px", borderRadius: 6,
+                                  fontSize: 12, fontFamily: "monospace",
+                                  cursor: "pointer", fontWeight: 600,
+                                  border: "1px solid",
+                                  borderColor: seleccionada ? "var(--primary)" : "var(--border)",
+                                  background:  seleccionada ? "var(--primary)" : "white",
+                                  color:       seleccionada ? "white" : "var(--text)",
+                                  transition: "all .15s",
+                                }}
+                              >
+                                {onu.codigo_pon}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}
-            <button className="btn btn-outline btn-sm" style={{ marginTop: 8 }}
-              onClick={agregarItem} type="button">
-              <Icon d={IC.plus} size={14} />
-              Agregar ítem
-            </button>
           </div>
 
           <div className="form-group">

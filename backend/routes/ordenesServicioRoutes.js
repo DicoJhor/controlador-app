@@ -75,6 +75,8 @@ router.post(
     const sedeId = req.user.sede_id;
     const conn = await db.getConnection();
     const resumen = { insertadas: 0, actualizadas: 0, duplicadas: [] };
+    console.log("🔍 sedeId del usuario:", sedeId, "| rol:", req.user.rol, "| user_id:", req.user.id); // ← ACÁ
+
 
     try {
       await conn.beginTransaction();
@@ -107,6 +109,7 @@ router.post(
             clienteId = ins.insertId;
           }
         }
+        console.log("Buscando duplicado:", { nro_contrato, fecha_crea, sedeId });
 
         // Buscar duplicado por CONTRATO + FECHA (sin nro_orden)
         const [dup] = await conn.execute(
@@ -115,6 +118,8 @@ router.post(
            WHERE nro_contrato = ? AND fecha_crea = ? AND sede_id = ?`,
           [nro_contrato, fecha_crea, sedeId]
         );
+
+        console.log("Resultado dup:", dup); // ← Y ACÁ
 
         if (dup.length > 0) {
           // ES DUPLICADO detectado por SELECT
@@ -146,7 +151,10 @@ router.post(
               ]
             );
             resumen.insertadas++;
+
+            console.log("✅ Insertada:", nro_contrato); // ← ACÁ
           } catch (insertErr) {
+            console.error("❌ Error insertando:", nro_contrato, insertErr.code, insertErr.message); // ← ACÁ
             if (insertErr.code === "ER_DUP_ENTRY") {
               const [dupTardio] = await conn.execute(
                 `SELECT id, estado_app
@@ -200,8 +208,8 @@ router.post(
     let resolvedOrdenId = orden_id;
     if (!resolvedOrdenId && datos.nro_contrato && datos.fecha_crea) {
       const [found] = await db.execute(
-        "SELECT id FROM ordenes_servicio WHERE nro_contrato = ? AND fecha_crea = ?",
-        [datos.nro_contrato, datos.fecha_crea]
+        "SELECT id FROM ordenes_servicio WHERE nro_contrato = ? AND fecha_crea = ? AND sede_id = ?",
+        [datos.nro_contrato, datos.fecha_crea, req.user.sede_id]
       );
       if (found.length === 0) return res.status(404).json({ error: "Orden no encontrada." });
       resolvedOrdenId = found[0].id;
@@ -211,15 +219,15 @@ router.post(
     try {
       await db.execute(
         `UPDATE ordenes_servicio SET
-           nro_orden=?, servicio=?, tecnologia=?, estado_orden=?,
-           sector=?, via=?, direccion=?, referencia=?,
-           abonado=?, doc_identidad=?, telefono=?,
-           observacion=?, tecnico_jefe=?, tecnico_asistente=?,
-           fecha_crea=?, estado_app='pendiente',
-           averia_id=NULL, activacion_id=NULL,
-           tecnico_id=NULL, completada_en=NULL,
-           sede_id=?
-         WHERE id=?`,
+          nro_orden=?, servicio=?, tecnologia=?, estado_orden=?,
+          sector=?, via=?, direccion=?, referencia=?,
+          abonado=?, doc_identidad=?, telefono=?,
+          observacion=?, tecnico_jefe=?, tecnico_asistente=?,
+          fecha_crea=?, estado_app='pendiente',
+          averia_id=NULL, activacion_id=NULL,
+          tecnico_id=NULL, completada_en=NULL,
+          sede_id=?
+        WHERE id=? AND sede_id=?`,
         [
           datos.nro_orden, datos.servicio, datos.tecnologia ?? null, datos.estado_orden,
           datos.sector ?? null, datos.via ?? null, datos.direccion ?? null, datos.referencia ?? null,
@@ -228,6 +236,7 @@ router.post(
           datos.fecha_crea ?? null,
           req.user.sede_id,
           resolvedOrdenId,
+          req.user.sede_id,  // ← nuevo
         ]
       );
       res.json({ ok: true });
@@ -452,6 +461,8 @@ router.post(
 
     const comentario = body.comentario || null;
     const onuId = body.onu_id ? Number(body.onu_id) : null;
+    const lat = body.lat ? parseFloat(body.lat) : null;
+    const lng = body.lng ? parseFloat(body.lng) : null;
     const onuRecogidaPon = body.onu_recogida_codigo_pon || null;
     const onuRecogidaProductoId = body.onu_recogida_producto_id ? Number(body.onu_recogida_producto_id) : null;
 
@@ -602,9 +613,10 @@ router.post(
 
       await conn.execute(
         `UPDATE ordenes_servicio
-         SET estado_app = 'completada', tecnico_id = ?, completada_en = NOW()
-         WHERE id = ?`,
-        [tecnicoId, ordenId]
+        SET estado_app = 'completada', tecnico_id = ?, completada_en = NOW(),
+            lat = ?, lng = ?
+        WHERE id = ?`,
+        [tecnicoId, lat, lng, ordenId]
       );
 
       await conn.commit();

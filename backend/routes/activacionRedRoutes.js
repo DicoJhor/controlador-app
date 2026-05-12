@@ -26,6 +26,7 @@ router.get(
         o.nro_contrato,
         o.abonado,
         o.direccion,
+        o.sector,
         o.servicio,
         o.tecnologia,
         o.fecha_crea,

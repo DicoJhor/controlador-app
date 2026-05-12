@@ -502,7 +502,9 @@ export default function TecRegistrarSalida() {
   const [duoActual,      setDuoActual]      = useState(null);
   const [duoCompletadas, setDuoCompletadas] = useState([]);
 
-  const [saving,     setSaving]     = useState(false);
+  const [saving,       setSaving]       = useState(false);
+  const [ubicacion,    setUbicacion]    = useState(null);
+  const [loadingUbic,  setLoadingUbic]  = useState(false);
   const [errors,     setErrors]     = useState({});
   const [success,    setSuccess]    = useState(null);
   const [busqueda,   setBusqueda]   = useState("");
@@ -635,7 +637,7 @@ export default function TecRegistrarSalida() {
       } catch {}
     }
   };
-  const volver = () => { setOrdenActual(null); setErrors({}); };
+  const volver = () => { setOrdenActual(null); setErrors({}); setUbicacion(null); };
 
   const clasificacion = ordenActual ? clasificarServicio(ordenActual.servicio) : null;
   const esAveria    = clasificacion?.tab === "averia";
@@ -657,6 +659,19 @@ export default function TecRegistrarSalida() {
     return e;
   };
 
+  const capturarUbicacion = async () => {
+    setLoadingUbic(true);
+    try {
+      const { Geolocation } = await import("@capacitor/geolocation");
+      const pos = await Geolocation.getCurrentPosition({ timeout: 10000 });
+      setUbicacion({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+    } catch (err) {
+      alert("No se pudo obtener la ubicación: " + err.message);
+    } finally {
+      setLoadingUbic(false);
+    }
+  };
+
   const handleRegistrar = async () => {
     const e = validate();
     if (Object.keys(e).length > 0) { setErrors(e); return; }
@@ -675,6 +690,10 @@ export default function TecRegistrarSalida() {
         fd.append("items",      JSON.stringify(itemsNormales));
         fd.append("comentario", comentario || "");
         if (onuId) fd.append("onu_id", onuId);
+        if (ubicacion) {
+          fd.append("lat", ubicacion.lat);
+          fd.append("lng", ubicacion.lng);
+        }
         if (esCambioOnu) {
           fd.append("onu_recogida_codigo_pon",  onuRecogidaPon.trim());
           fd.append("onu_recogida_producto_id", onuRecogidaProducto || "");
@@ -736,18 +755,19 @@ export default function TecRegistrarSalida() {
                             nuevasCompletadas.includes(duoActual.cable.id);
 
         if (ambasListas) {
-          // Las dos órdenes del duo completas → cerrar todo
           setDuoActual(null);
           setDuoCompletadas([]);
           try { await db.duo_estado.delete(duoActual.clave); } catch {}
           setOrdenActual(null);
           setItems([]); setFotos([]); setComentario("");
           setOnuRecogidaPon(""); setOnuRecogidaProducto("");
+          setUbicacion(null);
         } else {
           // Solo una completada → volver al selector del duo para que el técnico elija la otra
           setItems([]); setFotos([]); setComentario("");
           setOnuRecogidaPon(""); setOnuRecogidaProducto("");
-          setOrdenActual(null); // duoActual sigue seteado → vuelve a la pantalla del duo
+          setUbicacion(null);
+          setOrdenActual(null);
         }
 
         setTimeout(() => setSuccess(null), 6000);
@@ -1173,6 +1193,35 @@ export default function TecRegistrarSalida() {
               Fotos <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(hasta 5)</span>
             </label>
             <MultiPhotoUploader fotos={fotos} onChange={setFotos} />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">
+              Ubicación <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>(opcional)</span>
+            </label>
+            {ubicacion ? (
+              <div style={{
+                padding: "8px 12px", borderRadius: 8,
+                background: "#f0fdf4", border: "1px solid #bbf7d0",
+                display: "flex", alignItems: "center", gap: 8,
+              }}>
+                <Icon d={IC.mapPin} size={14} color="#16a34a" />
+                <span style={{ fontSize: 12, fontFamily: "monospace", color: "#166534", flex: 1 }}>
+                  {ubicacion.lat.toFixed(6)}, {ubicacion.lng.toFixed(6)}
+                </span>
+                <button type="button" onClick={() => setUbicacion(null)}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                  <Icon d={IC.x} size={13} color="#16a34a" />
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="btn btn-outline btn-full"
+                onClick={capturarUbicacion} disabled={loadingUbic}
+                style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 44 }}>
+                <Icon d={IC.mapPin} size={15} />
+                {loadingUbic ? "Obteniendo ubicación..." : "Registrar mi ubicación actual"}
+              </button>
+            )}
           </div>
 
           <button className="btn btn-primary btn-lg btn-full"

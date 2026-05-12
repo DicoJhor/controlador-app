@@ -146,7 +146,7 @@ export default function TecHistorial() {
                 </thead>
                 <tbody>
                   {filtered.map(m => (
-                    <tr key={m.id}>
+                    <tr key={`${m.tipo}-${m.id}`}>
                       <td style={{ whiteSpace: "nowrap", fontSize: 13, color: "var(--text-muted)" }}>
                         {formatDate(m.fecha)}
                       </td>

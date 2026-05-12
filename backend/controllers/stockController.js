@@ -293,3 +293,103 @@ exports.auditoriaControlador = async (req, res) => {
     res.status(500).json({ message: "Error al obtener auditoría", error: err.message })
   }
 }
+
+// ASIGNACIÓN COMPLETA (items normales + ONUs) en una sola transacción
+exports.asignarCompleto = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const { tecnico_id, motivo, comentario, items, onu_ids } = req.body
+    const sede_id        = req.user.sede_id
+    const registrado_por = req.user.id
+
+    if (!tecnico_id)
+      return res.status(400).json({ message: "Faltan campos obligatorios" })
+
+    // ── Items normales ──────────────────────────────────────────────────
+    for (const item of (items ?? [])) {
+      const [[stockActual]] = await conn.query(
+        "SELECT cantidad FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
+        [sede_id, item.producto_id]
+      )
+      if (!stockActual || stockActual.cantidad < item.cantidad) {
+        await conn.rollback()
+        return res.status(400).json({ message: `Stock insuficiente para producto ID ${item.producto_id}` })
+      }
+
+      await conn.query(
+        "INSERT INTO entregas_tecnicos (producto_id, tecnico_id, cantidad, fecha, registrado_por) VALUES (?, ?, ?, NOW(), ?)",
+        [item.producto_id, tecnico_id, item.cantidad, registrado_por]
+      )
+      await conn.query(
+        "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+        [item.cantidad, sede_id, item.producto_id]
+      )
+
+      const [asig] = await conn.query(
+        "SELECT id FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
+        [tecnico_id, item.producto_id, sede_id]
+      )
+      if (asig.length > 0) {
+        await conn.query(
+          "UPDATE asignaciones_tecnicos SET cantidad = cantidad + ? WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
+          [item.cantidad, tecnico_id, item.producto_id, sede_id]
+        )
+      } else {
+        await conn.query(
+          "INSERT INTO asignaciones_tecnicos (tecnico_id, producto_id, sede_id, cantidad, fecha) VALUES (?, ?, ?, ?, NOW())",
+          [tecnico_id, item.producto_id, sede_id, item.cantidad]
+        )
+      }
+    }
+
+    // ── ONUs ────────────────────────────────────────────────────────────
+    for (const onu_id of (onu_ids ?? [])) {
+      const [[onu]] = await conn.query(
+        "SELECT id, producto_id FROM onus WHERE id = ? AND sede_id = ? AND tecnico_id IS NULL AND activacion_id IS NULL",
+        [onu_id, sede_id]
+      )
+      if (!onu) {
+        await conn.rollback()
+        return res.status(400).json({ message: `ONU ID ${onu_id} no disponible` })
+      }
+
+      await conn.query("UPDATE onus SET tecnico_id = ? WHERE id = ?", [tecnico_id, onu_id])
+
+      await conn.query(
+        "INSERT INTO entregas_tecnicos (producto_id, tecnico_id, cantidad, fecha, registrado_por) VALUES (?, ?, 1, NOW(), ?)",
+        [onu.producto_id, tecnico_id, registrado_por]
+      )
+      await conn.query(
+        "UPDATE stock_sede SET cantidad = cantidad - 1 WHERE sede_id = ? AND producto_id = ?",
+        [sede_id, onu.producto_id]
+      )
+
+      const [asig] = await conn.query(
+        "SELECT id FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
+        [tecnico_id, onu.producto_id, sede_id]
+      )
+      if (asig.length > 0) {
+        await conn.query(
+          "UPDATE asignaciones_tecnicos SET cantidad = cantidad + 1 WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
+          [tecnico_id, onu.producto_id, sede_id]
+        )
+      } else {
+        await conn.query(
+          "INSERT INTO asignaciones_tecnicos (tecnico_id, producto_id, sede_id, cantidad, fecha) VALUES (?, ?, ?, 1, NOW())",
+          [tecnico_id, onu.producto_id, sede_id]
+        )
+      }
+    }
+
+    await conn.commit()
+    res.json({ message: "Asignación registrada correctamente" })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ Error asignarCompleto:", err.message)
+    res.status(500).json({ message: "Error al registrar asignación", error: err.message })
+  } finally {
+    conn.release()
+  }
+}

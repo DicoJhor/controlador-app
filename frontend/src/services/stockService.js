@@ -7,6 +7,7 @@ const stockService = {
   registrarEntrada:       (data) => api.post("/stock/entrada", data),
   registrarSalida:        (data) => api.post("/stock/salida", data),
   registrarSalidaMultiple:(data) => api.post("/stock/salida-multiple", data),
+  asignarCompleto: (data) => api.post("/stock/asignar-completo", data),
 }
 
 export default stockService
