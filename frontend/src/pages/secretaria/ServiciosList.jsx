@@ -78,7 +78,7 @@ function badgeServicio(s = "") {
 function formatMateriales(materiales = []) {
   if (!materiales.length) return "Sin materiales";
   return materiales
-    .map(m => `${m.nombre}: ${m.cantidad} ${m.unidad ?? ""}`.trim())
+    .map(m => `${m.nombre}${m.codigo_pon ? ` (${m.codigo_pon})` : ""}: ${m.cantidad} ${m.unidad ?? ""}`.trim())
     .join(" // ");
 }
 
@@ -156,7 +156,7 @@ export default function ServiciosList() {
       `Técnico: ${ordenDetalle.tecnico_nombre || "—"}`,
       `Fecha: ${ordenDetalle.fecha_crea || "—"}`,
       `Observación: ${ordenDetalle.observacion || "—"}`,
-      `Comentario: ${ordenDetalle.comentario || "—"}`,
+      `Comentario técnico: ${ordenDetalle.comentario_tecnico || "—"}`,
       `Materiales: ${mats}`,
     ].join("\n");
     navigator.clipboard.writeText(texto).catch(() => {});
@@ -395,7 +395,7 @@ export default function ServiciosList() {
                 <DetRow label="Técnico"    value={ordenDetalle.tecnico_nombre} />
                 <DetRow label="Fecha"      value={ordenDetalle.fecha_crea} />
                 <DetRow label="Observación" value={ordenDetalle.observacion} />
-                <DetRow label="Comentario" value={ordenDetalle.comentario} />
+                <DetRow label="Comentario técnico" value={ordenDetalle.comentario_tecnico} />
               </div>
 
               {/* Materiales */}
@@ -407,7 +407,7 @@ export default function ServiciosList() {
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
                     {ordenDetalle.materiales.map((m, i) => (
                       <span key={i} style={styles.matChip}>
-                        {m.nombre}: {m.cantidad} {m.unidad ?? ""}
+                        {m.nombre}{m.codigo_pon ? ` · ${m.codigo_pon}` : ""}: {m.cantidad} {m.unidad ?? ""}
                       </span>
                     ))}
                   </div>

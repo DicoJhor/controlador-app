@@ -494,6 +494,30 @@ exports.completarOrden = async (req, res) => {
       }
     }
 
+    // Validar stock de ONU antes de descontar
+    if (onuId) {
+      const [[onuProd]] = await conn.query(
+        "SELECT producto_id FROM onus WHERE id = ?", [onuId]
+      )
+      if (onuProd) {
+        const [[asigOnu]] = await conn.query(
+          "SELECT cantidad FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ?",
+          [tecnico_id, onuProd.producto_id]
+        )
+        const [[{ consumidoOnu }]] = await conn.query(
+          "SELECT COALESCE(SUM(cantidad), 0) AS consumidoOnu FROM consumo_tecnico WHERE tecnico_id = ? AND producto_id = ?",
+          [tecnico_id, onuProd.producto_id]
+        )
+        const disponibleOnu = parseFloat(asigOnu?.cantidad ?? 0) - parseFloat(consumidoOnu)
+        if (disponibleOnu < 1) {
+          await conn.rollback()
+          return res.status(400).json({
+            message: `Sin stock de ONUs disponibles. Disponible: ${disponibleOnu}`
+          })
+        }
+      }
+    }
+
     // Generar código de activación
     const codigo = await generarCodigo(conn, "ACT", "activaciones")
 
@@ -530,6 +554,10 @@ exports.completarOrden = async (req, res) => {
       )
       const [[onuProd]] = await conn.query("SELECT producto_id FROM onus WHERE id = ?", [onuId])
       if (onuProd) {
+        await conn.query(
+          "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?,?,1)",
+          [activacion_id, onuProd.producto_id]
+        )
         await conn.query(
           `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1 WHERE tecnico_id = ? AND producto_id = ?`,
           [tecnico_id, onuProd.producto_id]
@@ -590,16 +618,18 @@ exports.completarOrden = async (req, res) => {
         `UPDATE activaciones SET onu_id = ? WHERE id = ?`,
         [onuId, activacion_id]
       )
-      // Vincular ONU nueva al cliente y a la activación
       await conn.query(
         `UPDATE onus SET activacion_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?`,
         [activacion_id, orden.abonado, onuId]
       )
-      // Descontar del inventario del técnico
       const [[onuProd]] = await conn.query(
         "SELECT producto_id FROM onus WHERE id = ?", [onuId]
       )
       if (onuProd) {
+        await conn.query(
+          "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?,?,1)",
+          [activacion_id, onuProd.producto_id]
+        )
         await conn.query(
           `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
           WHERE tecnico_id = ? AND producto_id = ?`,

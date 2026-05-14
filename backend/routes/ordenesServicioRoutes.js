@@ -322,13 +322,22 @@ router.get(
 
     let materiales = [];
     let fotos = [];
+    let comentario_tecnico = null;
 
     if (orden.activacion_id) {
+      const [[act]] = await db.execute(
+        "SELECT comentario FROM activaciones WHERE id = ?",
+        [orden.activacion_id]
+      );
       const [mats] = await db.execute(
-        `SELECT p.nombre, p.unidad, am.cantidad
-         FROM activacion_materiales am
-         JOIN productos p ON am.producto_id = p.id
-         WHERE am.activacion_id = ?`,
+        `SELECT p.nombre, p.unidad, am.cantidad,
+                o.codigo_pon
+        FROM activacion_materiales am
+        JOIN productos p ON am.producto_id = p.id
+        LEFT JOIN onus o ON o.activacion_id = am.activacion_id
+                  AND o.producto_id = am.producto_id
+                  AND p.categoria = 'onu'
+        WHERE am.activacion_id = ?`,
         [orden.activacion_id]
       );
       const [fts] = await db.execute(
@@ -338,12 +347,17 @@ router.get(
       );
       materiales = mats;
       fotos = fts;
+      comentario_tecnico = act?.comentario || null;
     } else if (orden.averia_id) {
+      const [[av]] = await db.execute(
+        "SELECT comentario FROM averias WHERE id = ?",
+        [orden.averia_id]
+      );
       const [mats] = await db.execute(
         `SELECT p.nombre, p.unidad, am.cantidad
-         FROM averia_materiales am
-         JOIN productos p ON am.producto_id = p.id
-         WHERE am.averia_id = ?`,
+        FROM averia_materiales am
+        JOIN productos p ON am.producto_id = p.id
+        WHERE am.averia_id = ?`,
         [orden.averia_id]
       );
       const [fts] = await db.execute(
@@ -353,9 +367,10 @@ router.get(
       );
       materiales = mats;
       fotos = fts;
+      comentario_tecnico = av?.comentario || null;
     }
 
-    res.json({ ...orden, materiales, fotos });
+    res.json({ ...orden, materiales, fotos, comentario_tecnico });
   }
 );
 
@@ -546,6 +561,33 @@ router.post(
           console.log("10. Resultado insert onus_recicladas:", result);
           console.log("========== FIN DEBUG ==========");
         }
+        if (esCambioOnu && onuId) {
+          const [[onuProd]] = await conn.execute(
+            "SELECT producto_id FROM onus WHERE id = ?", [onuId]
+          );
+          if (onuProd) {
+            await conn.execute(
+              "INSERT INTO averia_materiales (averia_id, producto_id, cantidad) VALUES (?,?,1)",
+              [registroId, onuProd.producto_id]
+            );
+            await conn.execute(
+              "UPDATE onus SET averia_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?",
+              [registroId, orden.abonado || null, onuId]
+            );
+            await conn.execute(
+              `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
+              WHERE tecnico_id = ? AND producto_id = ?`,
+              [tecnicoId, onuProd.producto_id]
+            );
+            await conn.execute(
+              `INSERT INTO consumo_tecnico
+                (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+              VALUES (?, ?, 1, 'cambio_onu', ?, NOW())`,
+              [tecnicoId, onuProd.producto_id, `Orden #${orden.nro_orden} — ${orden.abonado || ""}`]
+            );
+          }
+        }
+
         await conn.execute(
           "UPDATE ordenes_servicio SET averia_id = ? WHERE id = ?",
           [registroId, ordenId]
@@ -556,14 +598,15 @@ router.post(
 
         const [ins] = await conn.execute(
           `INSERT INTO activaciones
-             (codigo, nro_orden, nro_contrato, cliente_id, orden_id, tecnico_id,
+            (codigo, nro_orden, nro_contrato, cliente_id, orden_id, tecnico_id,
               cliente, direccion, comentario, onu_id)
-           VALUES (?,?,?,?,?,?,?,?,?,?)`,
+          VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [codigo, orden.nro_orden, orden.nro_contrato, orden.cliente_id || null,
           Number(ordenId), tecnicoId, orden.abonado || null, orden.direccion || null, comentario, onuId]
         );
         registroId = ins.insertId;
 
+        // Materiales normales
         for (const item of items) {
           if (!item.producto_id || !item.cantidad) continue;
           await conn.execute(
@@ -572,16 +615,35 @@ router.post(
           );
           await conn.execute(
             `UPDATE asignaciones_tecnicos SET cantidad = cantidad - ?
-             WHERE tecnico_id = ? AND producto_id = ?`,
+            WHERE tecnico_id = ? AND producto_id = ?`,
             [Number(item.cantidad), tecnicoId, Number(item.producto_id)]
           );
         }
 
+        // ONU
         if (onuId) {
           const [[onuProd]] = await conn.execute(
             "SELECT producto_id FROM onus WHERE id = ?", [onuId]
           );
           if (onuProd) {
+            // Validar stock antes de descontar
+            const [[asigOnu]] = await conn.execute(
+              "SELECT cantidad FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ?",
+              [tecnicoId, onuProd.producto_id]
+            );
+            const [[{ consumidoOnu }]] = await conn.execute(
+              "SELECT COALESCE(SUM(cantidad), 0) AS consumidoOnu FROM consumo_tecnico WHERE tecnico_id = ? AND producto_id = ?",
+              [tecnicoId, onuProd.producto_id]
+            );
+            const disponibleOnu = parseFloat(asigOnu?.cantidad ?? 0) - parseFloat(consumidoOnu);
+            if (disponibleOnu < 1) {
+              await conn.rollback();
+              return res.status(400).json({
+                error: `Sin stock de ONUs disponibles. Disponible: ${disponibleOnu}`
+              });
+            }
+
+            // Registrar ONU en activacion_materiales
             await conn.execute(
               "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?,?,1)",
               [registroId, onuProd.producto_id]
@@ -592,13 +654,13 @@ router.post(
             );
             await conn.execute(
               `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
-               WHERE tecnico_id = ? AND producto_id = ?`,
+              WHERE tecnico_id = ? AND producto_id = ?`,
               [tecnicoId, onuProd.producto_id]
             );
             await conn.execute(
               `INSERT INTO consumo_tecnico
-                 (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
-               VALUES (?, ?, 1, 'instalacion', ?, NOW())`,
+                (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
+              VALUES (?, ?, 1, 'instalacion', ?, NOW())`,
               [tecnicoId, onuProd.producto_id, `Orden #${orden.nro_orden} — ${orden.abonado || ""}`]
             );
           }

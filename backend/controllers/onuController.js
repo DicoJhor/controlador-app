@@ -196,6 +196,8 @@ exports.getMisOnus = async (req, res) => {
        JOIN productos p ON p.id = o.producto_id
        WHERE o.tecnico_id = ?
          AND o.activacion_id IS NULL
+         AND o.averia_id IS NULL
+         AND o.codigo_pon IS NOT NULL
        ORDER BY p.nombre ASC, o.codigo_pon ASC`,
       [tecnico_id]
     )
