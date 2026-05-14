@@ -524,6 +524,7 @@ export default function TecRegistrarSalida() {
             recojosService.getMisRecuperados(),
           ]);
           const recuperadosData = Array.isArray(rec) ? rec : [];
+          console.log("🔍 inv:", JSON.stringify(inv));
           
           setInventario(inv.inventario ?? inv);
           setMisOnus(onus);
