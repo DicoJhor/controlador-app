@@ -33,8 +33,11 @@ async function getFotos(conn, tipo, registro_id) {
 // ── Inventario ─────────────────────────────────────────────────────────────
 
 exports.getMiInventario = async (req, res) => {
+exports.getMiInventario = async (req, res) => {
   try {
     const tecnico_id = req.user.id
+
+    // ── Inventario normal (materiales) ────────────────────────────────────
     const [rows] = await db.query(`
       SELECT
         a.id,
@@ -70,7 +73,23 @@ exports.getMiInventario = async (req, res) => {
       es_medible:        Boolean(r.es_medible),
     }))
 
-    res.json(inventario)
+    // ── ONUs asignadas al técnico (disponibles, sin usar) ─────────────────
+    const [onus] = await db.query(`
+      SELECT
+        o.id,
+        o.codigo_pon,
+        p.id     AS producto_id,
+        p.nombre,
+        p.codigo AS codigo_producto
+      FROM onus o
+      JOIN productos p ON p.id = o.producto_id
+      WHERE o.tecnico_id = ?
+        AND o.activacion_id IS NULL
+        AND o.averia_id IS NULL
+      ORDER BY o.id ASC
+    `, [tecnico_id])
+
+    res.json({ inventario, onus })
   } catch (err) {
     console.error("❌ getMiInventario:", err.message)
     res.status(500).json({ message: "Error al obtener inventario", error: err.message })
