@@ -76,39 +76,9 @@ export default function TecDashboard() {
           const items = data.inventario ?? data;
           setInventario(items);
           
-          // ─── FILTRAR ONUs DISPONIBLES (NO USADAS) ───
+          // ─── ONUs disponibles (ya filtradas por el backend) ───
           const todasLasOnus = data.onus ?? [];
-          
-          // Crear un mapa de cuántas ONUs disponibles por producto_id
-          const disponiblesPorProducto = items
-            .filter(item => item.categoria === "onu")
-            .reduce((map, item) => {
-              map[item.producto_id] = item.disponible; // ← este es el número de ONUs NO usadas
-              return map;
-            }, {});
-          
-          console.log("📊 Disponibles por producto:", disponiblesPorProducto);
-          
-          // Agrupar ONUs por producto_id
-          const onusPorProducto = {};
-          todasLasOnus.forEach(onu => {
-            if (!onusPorProducto[onu.producto_id]) {
-              onusPorProducto[onu.producto_id] = [];
-            }
-            onusPorProducto[onu.producto_id].push(onu);
-          });
-          
-          // Filtrar: solo tomar las primeras N ONUs según 'disponible'
-          const onusFiltradas = [];
-          for (const [productoId, listaOnus] of Object.entries(onusPorProducto)) {
-            const disponibles = disponiblesPorProducto[Number(productoId)] || 0;
-            // Tomar solo las 'disponibles' primeras ONUs
-            const noUsadas = listaOnus.slice(0, disponibles);
-            onusFiltradas.push(...noUsadas);
-            console.log(`📡 Producto ${productoId}: ${listaOnus.length} total, ${disponibles} disponibles, mostrando ${noUsadas.length}`);
-          }
-          
-          setOnusDisponibles(onusFiltradas);
+          setOnusDisponibles(todasLasOnus);
           
           // Guardar en DB local
           await db.inventario.clear();
