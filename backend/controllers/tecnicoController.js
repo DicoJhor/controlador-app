@@ -32,7 +32,7 @@ async function getFotos(conn, tipo, registro_id) {
 
 // ── Inventario ─────────────────────────────────────────────────────────────
 
-exports.getMiInventario = async (req, res) => {
+
 exports.getMiInventario = async (req, res) => {
   try {
     const tecnico_id = req.user.id
