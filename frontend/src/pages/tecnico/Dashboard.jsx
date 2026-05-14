@@ -58,6 +58,7 @@ function StockRow({ item }) {
 
 export default function TecDashboard() {
   const [inventario,    setInventario]    = useState([]);
+  const [onus,          setOnus]          = useState([]);   // ← NUEVO
   const [recuperados,   setRecuperados]   = useState([]);
   const [loading,       setLoading]       = useState(true);
   const [loadingRec,    setLoadingRec]    = useState(true);
@@ -69,9 +70,13 @@ export default function TecDashboard() {
       try {
         if (navigator.onLine) {
           const data = await tecnicoService.getMiInventario();
-          setInventario(data);
+          // ── FIX: el backend retorna { inventario, onus } ──────────────
+          const items = data.inventario ?? data;
+          const onusDisp = data.onus ?? [];
+          setInventario(items);
+          setOnus(onusDisp);                  // ← NUEVO
           await db.inventario.clear();
-          await db.inventario.bulkPut(data);
+          await db.inventario.bulkPut(items);
         } else {
           const data = await db.inventario.toArray();
           setInventario(data);
@@ -101,7 +106,7 @@ export default function TecDashboard() {
     try {
       await recojosService.enviarASede(id);
       setRecuperados(prev => prev.filter(r => r.id !== id));
-      await db.recuperados.delete(id);  // ⬅️ LÍNEA NUEVA
+      await db.recuperados.delete(id);
     } catch (err) {
       alert(err.message);
     } finally {
@@ -116,6 +121,15 @@ export default function TecDashboard() {
   const totalUsado      = inventario.reduce((a, i) => a + (i.es_medible ? 0 : i.usado), 0);
   const totalDisponible = inventario.reduce((a, i) => a + (i.es_medible ? i.asignado_unidades : i.disponible), 0);
   const sinStock        = inventario.filter(i => i.disponible === 0);
+
+  // ── Agrupar ONUs disponibles por producto ──────────────────────────────
+  const onusAgrupadas = onus.reduce((acc, o) => {
+    const key = o.producto_id;
+    if (!acc[key]) acc[key] = { producto_id: key, nombre: o.nombre, codigo: o.codigo_producto, cantidad: 0, pons: [] };
+    acc[key].cantidad++;
+    acc[key].pons.push(o.codigo_pon);
+    return acc;
+  }, {});
 
   return (
     <div>
@@ -136,7 +150,7 @@ export default function TecDashboard() {
         />
         <StatCard
           label="Disponibles"
-          value={formatNumber(totalDisponible)}
+          value={formatNumber(totalDisponible + onus.length)}
           icon="M20 6L9 17l-5-5"
           iconColor="#1A56DB" iconBg="#EFF6FF"
           change={sinStock.length > 0 ? `${sinStock.length} ítem(s) sin stock` : "Todo disponible"}
@@ -179,6 +193,68 @@ export default function TecDashboard() {
           </table>
         </div>
       </div>
+
+      {/* ── ONUs disponibles ── */}
+      {onus.length > 0 && (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div className="card-header">
+            <div>
+              <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <Icon d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"
+                  size={16} color="#1A56DB" />
+                ONUs disponibles
+              </div>
+              <div className="card-subtitle">
+                ONUs con código PON asignado listas para usar
+              </div>
+            </div>
+            <span style={{
+              background: "#EFF6FF", color: "#1A56DB",
+              padding: "3px 10px", borderRadius: 20,
+              fontSize: 12, fontWeight: 700,
+            }}>
+              {onus.length} disponible{onus.length !== 1 ? "s" : ""}
+            </span>
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código producto</th>
+                  <th>Nombre</th>
+                  <th>Cantidad</th>
+                  <th>Códigos PON</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.values(onusAgrupadas).map(g => (
+                  <tr key={g.producto_id}>
+                    <td><span className="mono">{g.codigo ?? "—"}</span></td>
+                    <td><div className="fw-600">{g.nombre}</div></td>
+                    <td>
+                      <span className="mono fw-600" style={{ color: "var(--success)" }}>
+                        {g.cantidad}
+                      </span>
+                    </td>
+                    <td>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+                        {g.pons.map(pon => (
+                          <span key={pon} className="mono" style={{
+                            fontSize: 11, background: "var(--bg-subtle, #f1f5f9)",
+                            padding: "2px 6px", borderRadius: 4, fontWeight: 600,
+                          }}>
+                            {pon}
+                          </span>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
 
       {/* ── Materiales recuperados ── */}
       <div className="card">
