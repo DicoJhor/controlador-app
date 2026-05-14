@@ -526,15 +526,21 @@ export default function TecRegistrarSalida() {
           const recuperadosData = Array.isArray(rec) ? rec : [];
           console.log("🔍 inv:", JSON.stringify(inv));
           
-          setInventario(inv.inventario ?? inv);
+          const invData = inv.inventario ?? inv;  // ← Corrección aquí
+          setInventario(invData);
           setMisOnus(onus);
           setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
           setRecuperados(recuperadosData);
           
-          await db.inventario.clear();    await db.inventario.bulkPut(inv);
-          await db.mis_onus.clear();      await db.mis_onus.bulkPut(onus);
-          await db.catalogo_onus.clear(); await db.catalogo_onus.bulkPut(Array.isArray(catalogo) ? catalogo : []);
-          await db.recuperados.clear();   await db.recuperados.bulkPut(recuperadosData);
+          await db.inventario.clear();    
+          await db.inventario.bulkPut(invData);  // ← Usar invData
+          await db.mis_onus.clear();      
+          await db.mis_onus.bulkPut(onus);
+          await db.catalogo_onus.clear(); 
+          await db.catalogo_onus.bulkPut(Array.isArray(catalogo) ? catalogo : []);
+          await db.recuperados.clear();   
+          await db.recuperados.bulkPut(recuperadosData);
+        
         } else {
           const [inv, onus, cat, rec] = await Promise.all([
             db.inventario.toArray(),
@@ -592,14 +598,20 @@ export default function TecRegistrarSalida() {
       ]);
       const recuperadosData = Array.isArray(rec) ? rec : [];
       
-      setInventario(inv.inventario ?? inv);
+      const invData = inv.inventario ?? inv;  // ← Corrección aquí
+      setInventario(invData);
       setMisOnus(onus);
       setRecuperados(recuperadosData);
       
-      await db.inventario.clear();  await db.inventario.bulkPut(inv);
-      await db.mis_onus.clear();    await db.mis_onus.bulkPut(onus);
-      await db.recuperados.clear(); await db.recuperados.bulkPut(recuperadosData);
-    } catch {}
+      await db.inventario.clear();  
+      await db.inventario.bulkPut(invData);  // ← Usar invData
+      await db.mis_onus.clear();    
+      await db.mis_onus.bulkPut(onus);
+      await db.recuperados.clear(); 
+      await db.recuperados.bulkPut(recuperadosData);
+    } catch (error) {
+      console.error("Error recargando inventario:", error);
+    }
   };
 
   const seleccionar = async (item) => {

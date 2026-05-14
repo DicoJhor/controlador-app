@@ -575,11 +575,6 @@ router.post(
               [registroId, orden.abonado || null, onuId]
             );
             await conn.execute(
-              `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
-              WHERE tecnico_id = ? AND producto_id = ?`,
-              [tecnicoId, onuProd.producto_id]
-            );
-            await conn.execute(
               `INSERT INTO consumo_tecnico
                 (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
               VALUES (?, ?, 1, 'cambio_onu', ?, NOW())`,
@@ -652,11 +647,7 @@ router.post(
               "UPDATE onus SET activacion_id = ?, cliente = ?, tecnico_id = NULL WHERE id = ?",
               [registroId, orden.abonado || null, onuId]
             );
-            await conn.execute(
-              `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
-              WHERE tecnico_id = ? AND producto_id = ?`,
-              [tecnicoId, onuProd.producto_id]
-            );
+          
             await conn.execute(
               `INSERT INTO consumo_tecnico
                 (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)

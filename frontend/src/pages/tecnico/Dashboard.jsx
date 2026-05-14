@@ -31,19 +31,19 @@ function StockRow({ item }) {
         ) : (
           <div className="text-sm text-muted">{item.unidad}</div>
         )}
-      </td>
+       </td>
       <td className="mono">
         {formatNumber(item.asignado)}
         {esRollo && <span className="text-sm text-muted"> m</span>}
-      </td>
+       </td>
       <td className="mono" style={{ color: "var(--warning)", fontWeight: 600 }}>
         {formatNumber(item.usado)}
         {esRollo && <span className="text-sm text-muted"> m</span>}
-      </td>
+       </td>
       <td className="mono fw-600" style={{ color: item.disponible === 0 ? "var(--danger)" : "var(--success)" }}>
         {formatNumber(item.disponible)}
         {esRollo && <span className="text-sm text-muted"> m</span>}
-      </td>
+       </td>
       <td style={{ width: 140 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div className="progress-bar" style={{ flex: 1 }}>
@@ -51,19 +51,19 @@ function StockRow({ item }) {
           </div>
           <span className="text-sm text-muted" style={{ minWidth: 32, textAlign: "right" }}>{pct}%</span>
         </div>
-      </td>
+       </td>
     </tr>
   );
 }
 
 export default function TecDashboard() {
-  const [inventario,    setInventario]    = useState([]);
-  const [onus,          setOnus]          = useState([]);   // ← NUEVO
-  const [recuperados,   setRecuperados]   = useState([]);
-  const [loading,       setLoading]       = useState(true);
-  const [loadingRec,    setLoadingRec]    = useState(true);
-  const [error,         setError]         = useState(null);
-  const [enviando,      setEnviando]      = useState(null);
+  const [inventario, setInventario] = useState([]);
+  const [onusDisponibles, setOnusDisponibles] = useState([]); // ← Solo disponibles
+  const [recuperados, setRecuperados] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingRec, setLoadingRec] = useState(true);
+  const [error, setError] = useState(null);
+  const [enviando, setEnviando] = useState(null);
 
   useEffect(() => {
     const cargar = async () => {
@@ -71,20 +71,61 @@ export default function TecDashboard() {
         if (navigator.onLine) {
           const data = await tecnicoService.getMiInventario();
           console.log("📦 data completa:", data);
-          console.log("📡 onus recibidas:", data.onus);
-        
-          // ── FIX: el backend retorna { inventario, onus } ──────────────
+          
+          // Inventario: materiales normales
           const items = data.inventario ?? data;
-          const onusDisp = data.onus ?? [];
           setInventario(items);
-          setOnus(onusDisp);                  // ← NUEVO
+          
+          // ─── FILTRAR ONUs DISPONIBLES (NO USADAS) ───
+          const todasLasOnus = data.onus ?? [];
+          
+          // Crear un mapa de cuántas ONUs disponibles por producto_id
+          const disponiblesPorProducto = items
+            .filter(item => item.categoria === "onu")
+            .reduce((map, item) => {
+              map[item.producto_id] = item.disponible; // ← este es el número de ONUs NO usadas
+              return map;
+            }, {});
+          
+          console.log("📊 Disponibles por producto:", disponiblesPorProducto);
+          
+          // Agrupar ONUs por producto_id
+          const onusPorProducto = {};
+          todasLasOnus.forEach(onu => {
+            if (!onusPorProducto[onu.producto_id]) {
+              onusPorProducto[onu.producto_id] = [];
+            }
+            onusPorProducto[onu.producto_id].push(onu);
+          });
+          
+          // Filtrar: solo tomar las primeras N ONUs según 'disponible'
+          const onusFiltradas = [];
+          for (const [productoId, listaOnus] of Object.entries(onusPorProducto)) {
+            const disponibles = disponiblesPorProducto[Number(productoId)] || 0;
+            // Tomar solo las 'disponibles' primeras ONUs
+            const noUsadas = listaOnus.slice(0, disponibles);
+            onusFiltradas.push(...noUsadas);
+            console.log(`📡 Producto ${productoId}: ${listaOnus.length} total, ${disponibles} disponibles, mostrando ${noUsadas.length}`);
+          }
+          
+          setOnusDisponibles(onusFiltradas);
+          
+          // Guardar en DB local
           await db.inventario.clear();
           await db.inventario.bulkPut(items);
+          await db.mis_onus?.clear();
+          await db.mis_onus?.bulkPut(onusFiltradas);
+          
         } else {
-          const data = await db.inventario.toArray();
-          setInventario(data);
+          const [items, onus] = await Promise.all([
+            db.inventario.toArray(),
+            db.mis_onus?.toArray() ?? []
+          ]);
+          setInventario(items);
+          setOnusDisponibles(onus);
         }
-      } catch {
+      } catch (err) {
+        console.error(err);
         const data = await db.inventario.toArray();
         setInventario(data);
         if (data.length === 0) setError("No se pudo cargar el inventario");
@@ -120,15 +161,27 @@ export default function TecDashboard() {
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
-  const totalAsignado   = inventario.reduce((a, i) => a + i.asignado_unidades, 0);
-  const totalUsado      = inventario.reduce((a, i) => a + (i.es_medible ? 0 : i.usado), 0);
-  const totalDisponible = inventario.reduce((a, i) => a + (i.es_medible ? i.asignado_unidades : i.disponible), 0);
-  const sinStock        = inventario.filter(i => i.disponible === 0);
+  // Cálculo de estadísticas solo con items NO onus (los onus ya están separados)
+  const itemsNoOnus = inventario.filter(i => i.categoria !== "onu");
+  const totalAsignado   = itemsNoOnus.reduce((a, i) => a + (i.asignado_unidades || 0), 0);
+  const totalUsado      = itemsNoOnus.reduce((a, i) => a + (i.es_medible ? 0 : (i.usado || 0)), 0);
+  const totalDisponible = itemsNoOnus.reduce((a, i) => a + (i.es_medible ? (i.asignado_unidades || 0) : (i.disponible || 0)), 0);
+  const sinStock        = itemsNoOnus.filter(i => i.disponible === 0);
 
-  // ── Agrupar ONUs disponibles por producto ──────────────────────────────
-  const onusAgrupadas = onus.reduce((acc, o) => {
+  // Calcular total de ONUs disponibles (debería coincidir con onusDisponibles.length)
+  const totalOnusDisponibles = onusDisponibles.length;
+  const totalItemsGeneral = totalDisponible + totalOnusDisponibles;
+
+  // Agrupar ONUs disponibles por producto para mostrar
+  const onusAgrupadas = onusDisponibles.reduce((acc, o) => {
     const key = o.producto_id;
-    if (!acc[key]) acc[key] = { producto_id: key, nombre: o.nombre, codigo: o.codigo_producto, cantidad: 0, pons: [] };
+    if (!acc[key]) acc[key] = { 
+      producto_id: key, 
+      nombre: o.nombre, 
+      codigo: o.codigo_producto, 
+      cantidad: 0, 
+      pons: [] 
+    };
     acc[key].cantidad++;
     acc[key].pons.push(o.codigo_pon);
     return acc;
@@ -153,7 +206,7 @@ export default function TecDashboard() {
         />
         <StatCard
           label="Disponibles"
-          value={formatNumber(totalDisponible + onus.length)}
+          value={formatNumber(totalItemsGeneral)}
           icon="M20 6L9 17l-5-5"
           iconColor="#1A56DB" iconBg="#EFF6FF"
           change={sinStock.length > 0 ? `${sinStock.length} ítem(s) sin stock` : "Todo disponible"}
@@ -168,96 +221,68 @@ export default function TecDashboard() {
         </div>
       )}
 
-      {/* ── Inventario asignado ── */}
+      {/* ── Inventario unificado ── */}
       <div className="card" style={{ marginBottom: 24 }}>
         <div className="card-header">
           <div>
-            <div className="card-title">Mi inventario asignado</div>
-            <div className="card-subtitle">Materiales asignados por tu controlador</div>
+            <div className="card-title">Mi inventario disponible</div>
+            <div className="card-subtitle">Materiales y ONUs listos para usar</div>
           </div>
+          <span style={{
+            background: "#EFF6FF", color: "#1A56DB",
+            padding: "3px 10px", borderRadius: 20,
+            fontSize: 12, fontWeight: 700,
+          }}>
+            {totalItemsGeneral} disponible{totalItemsGeneral !== 1 ? "s" : ""}
+          </span>
         </div>
         <div className="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Código</th><th>Ítem</th><th>Asignado</th>
-                <th>Usado</th><th>Disponible</th><th>Uso</th>
+                <th>Código</th>
+                <th>Ítem</th>
+                <th>Disponible</th>
               </tr>
             </thead>
             <tbody>
-              {inventario.length === 0 ? (
+              {/* Materiales normales */}
+              {itemsNoOnus.map(item => (
+                <tr key={item.id}>
+                  <td><span className="mono">{item.codigo ?? "—"}</span></td>
+                  <td><span className="fw-600">{item.nombre}</span></td>
+                  <td>
+                    <span className="mono fw-600" style={{ color: item.disponible === 0 ? "var(--danger)" : "var(--success)" }}>
+                      {formatNumber(item.disponible)}
+                      {item.es_medible && item.metros_por_unidad && <span className="text-sm text-muted"> m</span>}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {/* ONUs disponibles agrupadas */}
+              {Object.values(onusAgrupadas).map(g => (
+                <tr key={`onu-${g.producto_id}`}>
+                  <td><span className="mono">{g.codigo ?? "—"}</span></td>
+                  <td><span className="fw-600">{g.nombre}</span></td>
+                  <td>
+                    <span className="mono fw-600" style={{ color: g.cantidad === 0 ? "var(--danger)" : "var(--success)" }}>
+                      {g.cantidad}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+              {/* Sin ítems */}
+              {itemsNoOnus.length === 0 && Object.keys(onusAgrupadas).length === 0 && (
                 <tr>
-                  <td colSpan={6} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
+                  <td colSpan={3} style={{ textAlign: "center", padding: 32, color: "var(--text-muted)" }}>
                     Sin ítems asignados aún
                   </td>
                 </tr>
-              ) : inventario.map(item => <StockRow key={item.id} item={item} />)}
+              )}
             </tbody>
           </table>
         </div>
       </div>
-
-      {/* ── ONUs disponibles ── */}
-      {onus.length > 0 && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <div className="card-header">
-            <div>
-              <div className="card-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <Icon d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2v-4M9 21H5a2 2 0 01-2-2v-4m0 0h18"
-                  size={16} color="#1A56DB" />
-                ONUs disponibles
-              </div>
-              <div className="card-subtitle">
-                ONUs con código PON asignado listas para usar
-              </div>
-            </div>
-            <span style={{
-              background: "#EFF6FF", color: "#1A56DB",
-              padding: "3px 10px", borderRadius: 20,
-              fontSize: 12, fontWeight: 700,
-            }}>
-              {onus.length} disponible{onus.length !== 1 ? "s" : ""}
-            </span>
-          </div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Código producto</th>
-                  <th>Nombre</th>
-                  <th>Cantidad</th>
-                  <th>Códigos PON</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.values(onusAgrupadas).map(g => (
-                  <tr key={g.producto_id}>
-                    <td><span className="mono">{g.codigo ?? "—"}</span></td>
-                    <td><div className="fw-600">{g.nombre}</div></td>
-                    <td>
-                      <span className="mono fw-600" style={{ color: "var(--success)" }}>
-                        {g.cantidad}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-                        {g.pons.map(pon => (
-                          <span key={pon} className="mono" style={{
-                            fontSize: 11, background: "var(--bg-subtle, #f1f5f9)",
-                            padding: "2px 6px", borderRadius: 4, fontWeight: 600,
-                          }}>
-                            {pon}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
 
       {/* ── Materiales recuperados ── */}
       <div className="card">

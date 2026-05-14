@@ -32,6 +32,9 @@ export default function TecHistorial() {
   const [error,        setError]        = useState(null);
   const [search,       setSearch]       = useState("");
   const [filterMotivo, setFilterMotivo] = useState("todos");
+  const [expandedId, setExpandedId] = useState(null);
+  const [fechaDesde, setFechaDesde] = useState("")
+  const [fechaHasta, setFechaHasta] = useState("")
 
   useEffect(() => {
     const cargarHistorial = async () => {
@@ -42,7 +45,7 @@ export default function TecHistorial() {
           const datos = Array.isArray(data) ? data : [];
           setHistorial(datos);
           await db.historial.clear();
-          await db.historial.bulkPut(datos);
+          await db.historial.bulkPut(datos.map(d => ({ ...d, materiales: JSON.stringify(d.materiales ?? []) })));
         } else {
           // OFFLINE: cargar desde caché local
           const data = await db.historial.toArray();
@@ -65,12 +68,15 @@ export default function TecHistorial() {
 
   const filtered = historial.filter(m => {
     const matchSearch =
-      (m.cliente  ?? "").toLowerCase().includes(search.toLowerCase()) ||
-      (m.codigo   ?? "").toLowerCase().includes(search.toLowerCase()) ||
-      (m.nro_orden ?? "").toLowerCase().includes(search.toLowerCase())
-    const matchMotivo = filterMotivo === "todos" || m.tipo === filterMotivo
-    return matchSearch && matchMotivo
-  })
+    (m.cliente  ?? "").toLowerCase().includes(search.toLowerCase()) ||
+    (m.codigo   ?? "").toLowerCase().includes(search.toLowerCase()) ||
+    (m.nro_orden ?? "").toLowerCase().includes(search.toLowerCase())
+  const matchMotivo = filterMotivo === "todos" || m.tipo === filterMotivo
+  const fechaRegistro = new Date(m.fecha)
+  const matchDesde = !fechaDesde || fechaRegistro >= new Date(fechaDesde)
+  const matchHasta = !fechaHasta || fechaRegistro <= new Date(fechaHasta + "T23:59:59")
+  return matchSearch && matchMotivo && matchDesde && matchHasta
+})
 
   const resumen = {
     total:      historial.length,
@@ -121,6 +127,20 @@ export default function TecHistorial() {
           <option value="activacion">Instalaciones / Cambios</option>
           <option value="averia">Averías / Retiros</option>
         </select>
+        <input
+          type="date"
+          className="filter-select"
+          value={fechaDesde}
+          onChange={e => setFechaDesde(e.target.value)}
+          style={{ fontSize: 14 }}
+        />
+        <input
+          type="date"
+          className="filter-select"
+          value={fechaHasta}
+          onChange={e => setFechaHasta(e.target.value)}
+          style={{ fontSize: 14 }}
+        />
       </div>
 
       {/* ── Lista (cards en mobile) ── */}
@@ -172,46 +192,113 @@ export default function TecHistorial() {
 
           {/* Cards para mobile */}
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {filtered.map(m => (
-              <div key={`${m.tipo}-${m.id}`} style={hs.mCard}>
-                <div style={hs.mCardTop}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 700, fontSize: 15 }}>{m.cliente || "—"}</div>
-                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                      {m.direccion}
+            {filtered.map(m => {
+              const key = `${m.tipo}-${m.id}`;
+              const isOpen = expandedId === key;
+              return (
+                <div
+                  key={key}
+                  style={{ ...hs.mCard, cursor: "pointer" }}
+                  onClick={() => setExpandedId(isOpen ? null : key)}
+                >
+                  {/* Cabecera — igual que antes */}
+                  <div style={hs.mCardTop}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: 700, fontSize: 15 }}>{m.cliente || "—"}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>{m.direccion}</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>{formatDate(m.fecha)}</div>
                     </div>
-                    <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                      {formatDate(m.fecha)}
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                      <div style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: "var(--primary)" }}>{m.codigo}</div>
+                      {m.nro_orden && <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Orden #{m.nro_orden}</div>}
+                      <Icon
+                        d={isOpen ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"}
+                        size={14} color="var(--text-muted)"
+                      />
                     </div>
                   </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: "monospace", fontWeight: 700, fontSize: 13, color: "var(--primary)" }}>
-                      {m.codigo}
-                    </div>
-                    {m.nro_orden && (
-                      <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Orden #{m.nro_orden}</div>
-                    )}
-                  </div>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
-                  <span style={{
-                    fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 20,
-                    background: m.tipo === "activacion" ? "#d1fae5" : "#fee2e2",
-                    color:      m.tipo === "activacion" ? "#065f46" : "#991b1b",
-                    border:     `1px solid ${m.tipo === "activacion" ? "#6ee7b7" : "#fca5a5"}`,
-                  }}>
-                    {m.tipo === "activacion"
-                      ? (m.servicio?.toUpperCase().includes("CAMBIO") ? "Cambio ONU" : "Instalación")
-                      : (m.servicio?.toUpperCase().includes("RETIRO") ? "Retiro" : "Avería")}
-                  </span>
-                  {m.comentario && (
-                    <span style={{ fontSize: 12, color: "var(--text-secondary)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {m.comentario}
+
+                  {/* Badge de tipo */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 20,
+                      background: m.tipo === "activacion" ? "#d1fae5" : "#fee2e2",
+                      color:      m.tipo === "activacion" ? "#065f46" : "#991b1b",
+                      border:     `1px solid ${m.tipo === "activacion" ? "#6ee7b7" : "#fca5a5"}`,
+                    }}>
+                      {m.tipo === "activacion"
+                        ? (m.servicio?.toUpperCase().includes("CAMBIO") ? "Cambio ONU" : "Instalación")
+                        : (m.servicio?.toUpperCase().includes("RETIRO") ? "Retiro" : "Avería")}
                     </span>
+                  </div>
+
+                  {/* Panel desplegable */}
+                  {isOpen && (
+                    <div style={{
+                      marginTop: 12,
+                      paddingTop: 12,
+                      borderTop: "1px solid var(--border)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}>
+                      {/* Datos del cliente */}
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        Cliente
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                        {[
+                          { label: "Nombre",    value: m.cliente },
+                          { label: "Teléfono",  value: m.telefono },
+                          { label: "Dirección", value: m.direccion },
+                          { label: "Servicio",  value: m.servicio },
+                        ].map(({ label, value }) => value ? (
+                          <div key={label}>
+                            <div style={{ fontSize: 10, color: "var(--text-muted)", fontWeight: 600 }}>{label}</div>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{value}</div>
+                          </div>
+                        ) : null)}
+                      </div>
+
+                      {/* Materiales usados */}
+                      {m.materiales?.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.05em", marginTop: 4 }}>
+                            Materiales
+                          </div>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                            {m.materiales.map((mat, i) => (
+                              <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
+                                <span>{mat.nombre}</span>
+                                <span style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--primary)" }}>
+                                  {formatCantidad(mat.cantidad, mat.es_medible)} {mat.unidad}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </>
+                      )}
+
+                      {/* Comentario */}
+                      {m.comentario && (
+                        <div style={{
+                          marginTop: 4,
+                          background: "var(--bg-subtle, #f8fafc)",
+                          borderRadius: 8,
+                          padding: "8px 12px",
+                          fontSize: 13,
+                          color: "var(--text-secondary)",
+                          borderLeft: "3px solid var(--primary)",
+                        }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, color: "var(--text-muted)", marginBottom: 2 }}>COMENTARIO</div>
+                          {m.comentario}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}

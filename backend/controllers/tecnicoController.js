@@ -114,6 +114,21 @@ exports.getMiHistorial = async (req, res) => {
       ORDER BY a.fecha DESC
     `, [tecnico_id])
 
+    // Agregar materiales a cada activación
+    for (const act of activaciones) {
+      const [mats] = await db.query(`
+        SELECT p.nombre, p.unidad, p.es_medible, am.cantidad,
+              o.codigo_pon
+        FROM activacion_materiales am
+        JOIN productos p ON p.id = am.producto_id
+        LEFT JOIN onus o ON o.activacion_id = am.activacion_id
+                  AND o.producto_id = am.producto_id
+                  AND p.categoria = 'onu'
+        WHERE am.activacion_id = ?
+      `, [act.id])
+      act.materiales = mats.map(m => ({ ...m, cantidad: parseFloat(m.cantidad) }))
+    }
+
     const [averias] = await db.query(`
       SELECT
         av.id, av.fecha, av.codigo, av.cliente, av.direccion,
@@ -125,6 +140,17 @@ exports.getMiHistorial = async (req, res) => {
       WHERE av.tecnico_id = ?
       ORDER BY av.fecha DESC
     `, [tecnico_id])
+
+    // Agregar materiales a cada avería
+    for (const av of averias) {
+      const [mats] = await db.query(`
+        SELECT p.nombre, p.unidad, p.es_medible, am.cantidad
+        FROM averia_materiales am
+        JOIN productos p ON p.id = am.producto_id
+        WHERE am.averia_id = ?
+      `, [av.id])
+      av.materiales = mats.map(m => ({ ...m, cantidad: parseFloat(m.cantidad) }))
+    }
 
     // Combinar y ordenar por fecha desc
     const historial = [...activaciones, ...averias]
@@ -295,12 +321,6 @@ exports.registrarSalidaMultiple = async (req, res) => {
         [onuId]
       )
       if (onuProducto) {
-        await conn.query(
-          `UPDATE asignaciones_tecnicos
-           SET cantidad = cantidad - 1
-           WHERE tecnico_id = ? AND producto_id = ?`,
-          [tecnico_id, onuProducto.producto_id]
-        )
         await conn.query(
           `INSERT INTO consumo_tecnico
              (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
@@ -578,10 +598,6 @@ exports.completarOrden = async (req, res) => {
           [activacion_id, onuProd.producto_id]
         )
         await conn.query(
-          `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1 WHERE tecnico_id = ? AND producto_id = ?`,
-          [tecnico_id, onuProd.producto_id]
-        )
-        await conn.query(
           `INSERT INTO consumo_tecnico (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
           VALUES (?, ?, 1, 'activacion', ?, NOW())`,
           [tecnico_id, onuProd.producto_id, `Activación ${codigo} — ${orden.abonado}`]
@@ -648,11 +664,6 @@ exports.completarOrden = async (req, res) => {
         await conn.query(
           "INSERT INTO activacion_materiales (activacion_id, producto_id, cantidad) VALUES (?,?,1)",
           [activacion_id, onuProd.producto_id]
-        )
-        await conn.query(
-          `UPDATE asignaciones_tecnicos SET cantidad = cantidad - 1
-          WHERE tecnico_id = ? AND producto_id = ?`,
-          [tecnico_id, onuProd.producto_id]
         )
         await conn.query(
           `INSERT INTO consumo_tecnico (tecnico_id, producto_id, cantidad, motivo, descripcion, fecha)
