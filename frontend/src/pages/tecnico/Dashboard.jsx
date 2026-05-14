@@ -70,6 +70,9 @@ export default function TecDashboard() {
       try {
         if (navigator.onLine) {
           const data = await tecnicoService.getMiInventario();
+          console.log("📦 data completa:", data);
+          console.log("📡 onus recibidas:", data.onus);
+        
           // ── FIX: el backend retorna { inventario, onus } ──────────────
           const items = data.inventario ?? data;
           const onusDisp = data.onus ?? [];
