@@ -525,7 +525,7 @@ export default function TecRegistrarSalida() {
           ]);
           const recuperadosData = Array.isArray(rec) ? rec : [];
           
-          setInventario(inv);
+          setInventario(inv.inventario ?? inv);
           setMisOnus(onus);
           setCatalogoOnus(Array.isArray(catalogo) ? catalogo : []);
           setRecuperados(recuperadosData);
@@ -591,7 +591,7 @@ export default function TecRegistrarSalida() {
       ]);
       const recuperadosData = Array.isArray(rec) ? rec : [];
       
-      setInventario(inv);
+      setInventario(inv.inventario ?? inv);
       setMisOnus(onus);
       setRecuperados(recuperadosData);
       
