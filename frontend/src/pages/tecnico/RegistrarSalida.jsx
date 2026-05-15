@@ -313,16 +313,23 @@ function ItemSelector({ inventario, misOnus, recuperados = [], items, onChange }
                 <select className="form-input" value={item.producto_id}
                   onChange={e => update(idx, "producto_id", e.target.value)} style={{ fontSize: 14 }}>
                   <option value="">Seleccionar ítem...</option>
-                  {inventario.map(i => (
-                    <option key={i.producto_id} value={i.producto_id}
-                      disabled={
-                        (yaAgregados.includes(String(i.producto_id)) &&
-                         String(i.producto_id) !== String(item.producto_id)) ||
-                        i.disponible <= 0
-                      }>
-                      {i.nombre} — disp: {i.disponible} {i.es_medible ? "m" : i.unidad}
-                    </option>
-                  ))}
+                  {inventario.map(i => {
+                    const esOnu = i.categoria === "onu";
+                    const dispReal = esOnu
+                      ? misOnus.filter(o => String(o.producto_id) === String(i.producto_id)).length
+                      : i.disponible;
+
+                    return (
+                      <option key={i.producto_id} value={i.producto_id}
+                        disabled={
+                          (yaAgregados.includes(String(i.producto_id)) &&
+                          String(i.producto_id) !== String(item.producto_id)) ||
+                          dispReal <= 0
+                        }>
+                        {i.nombre} — disp: {dispReal} {i.es_medible ? "m" : i.unidad}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
               {!esOnu && (
@@ -524,7 +531,6 @@ export default function TecRegistrarSalida() {
             recojosService.getMisRecuperados(),
           ]);
           const recuperadosData = Array.isArray(rec) ? rec : [];
-          console.log("🔍 inv:", JSON.stringify(inv));
           
           const invData = inv.inventario ?? inv;  // ← Corrección aquí
           setInventario(invData);
@@ -587,6 +593,7 @@ export default function TecRegistrarSalida() {
     } finally { setLoadingOrdenes(false); }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { cargarOrdenes(); }, []);
 
   const recargarInventario = async () => {
@@ -715,7 +722,6 @@ export default function TecRegistrarSalida() {
 
         const res = await tecnicoService.completarOrden(ordenActual.id, fd);
 
-        // Marcar materiales recuperados como usados
         // Marcar materiales recuperados como usados
         await Promise.allSettled(
           itemsRecuperados.map(async (i) => {

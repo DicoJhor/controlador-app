@@ -122,7 +122,6 @@ exports.getMiHistorial = async (req, res) => {
         FROM activacion_materiales am
         JOIN productos p ON p.id = am.producto_id
         LEFT JOIN onus o ON o.activacion_id = am.activacion_id
-                  AND o.producto_id = am.producto_id
                   AND p.categoria = 'onu'
         WHERE am.activacion_id = ?
       `, [act.id])
@@ -676,8 +675,6 @@ exports.completarOrden = async (req, res) => {
     // Leer coordenadas del body
     const lat = req.body.lat ? parseFloat(req.body.lat) : null
     const lng = req.body.lng ? parseFloat(req.body.lng) : null
-
-    console.log("📍 lat:", req.body.lat, "→", lat, "| lng:", req.body.lng, "→", lng)
 
     // Marcar orden como completada
     await conn.query(

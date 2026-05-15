@@ -1,11 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { db } from "../../db/localDB";
 import { fileToBase64 } from "../../services/syncService";
 import { useOnlineStatus } from "../../hooks/useOnlineStatus";
 import ordenesService from "../../services/ordenesService";
 import tecnicoService from "../../services/tecnicoService";
-
-const BASE_URL = import.meta.env.VITE_API_URL?.replace("/api", "") ?? "";
 
 function formatFecha(fecha) {
   if (!fecha) return "—";
@@ -48,7 +46,7 @@ function limpiarTelefono(raw = "") {
   return `51${digits.slice(-9)}`;
 }
 
-function BtnWhatsApp({ telefono, servicio, abonado }) {
+function BtnWhatsApp({ telefono, abonado }) {
   const numero = limpiarTelefono(telefono);
   if (!numero) return null;
   const nombre = (abonado || "").split(" ")[0];
@@ -253,7 +251,7 @@ function OrdenCard({ orden, onSeleccionar }) {
 
 /* ─── Componente principal ── */
 export default function TecRecojos() {
-  const online = useOnlineStatus();
+  useOnlineStatus();
   const [ordenes,    setOrdenes]    = useState([]);
   const [loading,    setLoading]    = useState(true);
   const [catalogo,   setCatalogo]   = useState([]);

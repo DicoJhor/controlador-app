@@ -84,7 +84,7 @@ export default function TecDashboard() {
           await db.inventario.clear();
           await db.inventario.bulkPut(items);
           await db.mis_onus?.clear();
-          await db.mis_onus?.bulkPut(onusFiltradas);
+          await db.mis_onus?.bulkPut(todasLasOnus);
           
         } else {
           const [items, onus] = await Promise.all([

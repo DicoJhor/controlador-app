@@ -37,6 +37,11 @@ export default function TecHistorial() {
   const [fechaHasta, setFechaHasta] = useState("")
 
   useEffect(() => {
+    const conMas = historial.find(h => h.materiales?.length > 3);
+    if (conMas) console.log("📋 registro completo:", JSON.stringify(conMas));
+  }, [historial]);
+
+  useEffect(() => {
     const cargarHistorial = async () => {
       try {
         if (navigator.onLine) {
@@ -51,7 +56,7 @@ export default function TecHistorial() {
           const data = await db.historial.toArray();
           setHistorial(data);
         }
-      } catch (error) {
+      } catch {
         // Error de red: usar caché como fallback
         const data = await db.historial.toArray();
         setHistorial(data);
