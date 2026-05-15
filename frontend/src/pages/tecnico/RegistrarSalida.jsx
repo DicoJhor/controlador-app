@@ -634,6 +634,15 @@ export default function TecRegistrarSalida() {
     setOnuRecogidaPon(""); setOnuRecogidaProducto("");
     setErrors({});
 
+    // Recuperar ubicación guardada si existe
+    try {
+      const saved = localStorage.getItem(`ubicacion_orden_${item.id}`);
+      if (saved) setUbicacion(JSON.parse(saved));
+      else setUbicacion(null);
+    } catch {
+      setUbicacion(null);
+    }
+
     const u = (item.servicio ?? "").toUpperCase();
     if (u.includes("INSTALACION") || u.includes("CAMBIO DE EQUIPO")) {
       try {
@@ -649,6 +658,15 @@ export default function TecRegistrarSalida() {
     setItems([]); setFotos([]); setComentario("");
     setOnuRecogidaPon(""); setOnuRecogidaProducto("");
     setErrors({});
+
+    // Recuperar ubicación guardada si existe
+    try {
+      const saved = localStorage.getItem(`ubicacion_orden_${orden.id}`);
+      if (saved) setUbicacion(JSON.parse(saved));
+      else setUbicacion(null);
+    } catch {
+      setUbicacion(null);
+    }
     const u = (orden.servicio ?? "").toUpperCase();
     if (u.includes("INSTALACION") || u.includes("CAMBIO DE EQUIPO")) {
       try {
@@ -684,7 +702,9 @@ export default function TecRegistrarSalida() {
     try {
       const { Geolocation } = await import("@capacitor/geolocation");
       const pos = await Geolocation.getCurrentPosition({ timeout: 10000 });
-      setUbicacion({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+      setUbicacion(coords);
+      localStorage.setItem(`ubicacion_orden_${ordenActual.id}`, JSON.stringify(coords));
     } catch (err) {
       alert("No se pudo obtener la ubicación: " + err.message);
     } finally {
@@ -777,12 +797,13 @@ export default function TecRegistrarSalida() {
           setDuoActual(null);
           setDuoCompletadas([]);
           try { await db.duo_estado.delete(duoActual.clave); } catch {}
+          localStorage.removeItem(`ubicacion_orden_${ordenActual.id}`);
           setOrdenActual(null);
           setItems([]); setFotos([]); setComentario("");
           setOnuRecogidaPon(""); setOnuRecogidaProducto("");
           setUbicacion(null);
         } else {
-          // Solo una completada → volver al selector del duo para que el técnico elija la otra
+          localStorage.removeItem(`ubicacion_orden_${ordenActual.id}`);
           setItems([]); setFotos([]); setComentario("");
           setOnuRecogidaPon(""); setOnuRecogidaProducto("");
           setUbicacion(null);
@@ -793,6 +814,7 @@ export default function TecRegistrarSalida() {
         return;
       }
 
+      localStorage.removeItem(`ubicacion_orden_${ordenActual.id}`);
       setOrdenActual(null);
       setItems([]); setFotos([]); setComentario("");
       setOnuRecogidaPon(""); setOnuRecogidaProducto("");
@@ -1228,17 +1250,14 @@ export default function TecRegistrarSalida() {
                 <span style={{ fontSize: 12, fontFamily: "monospace", color: "#166534", flex: 1 }}>
                   {ubicacion.lat.toFixed(6)}, {ubicacion.lng.toFixed(6)}
                 </span>
-                <button type="button" onClick={() => setUbicacion(null)}
-                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-                  <Icon d={IC.x} size={13} color="#16a34a" />
-                </button>
+                <span style={{ fontSize: 11, color: "#16a34a", fontWeight: 600 }}>✓ Guardada</span>
               </div>
             ) : (
               <button type="button" className="btn btn-outline btn-full"
                 onClick={capturarUbicacion} disabled={loadingUbic}
                 style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, minHeight: 44 }}>
                 <Icon d={IC.mapPin} size={15} />
-                {loadingUbic ? "Obteniendo ubicación..." : "Registrar mi ubicación actual"}
+                {loadingUbic ? "Obteniendo ubicación..." : "Registrar ubicación del cliente"}
               </button>
             )}
           </div>
