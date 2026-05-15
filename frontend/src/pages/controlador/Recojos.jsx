@@ -214,7 +214,15 @@ const filteredOrdenes = ordenes.filter(o => {
                   <div style={{ fontSize:11, color:"var(--text-muted)", fontFamily:"monospace" }}>{d.nro_contrato}</div>
                   <div style={{ fontSize:11, color:"var(--text-muted)" }}>Orden #{d.nro_orden} · {d.fecha_crea}</div>
                 </div>
-                <button className="btn btn-warning btn-sm" onClick={() => confirmarDuplicado(i, d.orden_id, d)}>Reemplazar</button>
+                {d.protegida ? (
+                  <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>
+                    ✓ Ya completada — no se puede reemplazar
+                  </span>
+                ) : (
+                  <button className="btn btn-warning btn-sm" onClick={() => confirmarDuplicado(i, d.orden_id, d)}>
+                    Reemplazar
+                  </button>
+                )}
               </div>
             ))}
           </div>

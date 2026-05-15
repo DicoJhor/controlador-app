@@ -35,6 +35,7 @@ function parsearExcel(buffer) {
     "Fecha Crea": "fecha_crea",
     "Tecnico Jefe": "tecnico_jefe",
     "Tecnico Asistente": "tecnico_asistente",
+    "Vendedor": "vendedor_nombre",
     "Abonado": "abonado",
     "Doc. Identidad": "doc_identidad",
     "Telefono": "telefono",
@@ -86,7 +87,7 @@ router.post(
           nro_contrato, nro_orden, servicio, tecnologia,
           estado_orden, sector, via, direccion, referencia,
           abonado, doc_identidad, telefono, observacion,
-          tecnico_jefe, tecnico_asistente, fecha_crea,
+          tecnico_jefe, tecnico_asistente, vendedor_nombre, fecha_crea,
         } = fila;
 
         let clienteId = null;
@@ -122,16 +123,31 @@ router.post(
         console.log("Resultado dup:", dup); // ← Y ACÁ
 
         if (dup.length > 0) {
-          // ES DUPLICADO detectado por SELECT
-          resumen.duplicadas.push({
-            orden_id: dup[0].id,
-            estado_app: dup[0].estado_app,
-            nro_contrato, nro_orden, abonado, fecha_crea,
-            servicio, tecnologia, estado_orden,
-            sector, via, direccion, referencia,
-            doc_identidad, telefono, observacion,
-            tecnico_jefe, tecnico_asistente,
-          });
+          if (dup[0].estado_app === "completada") {
+            // Orden ya completada — no tocar, solo notificar
+            resumen.duplicadas.push({
+              orden_id: dup[0].id,
+              estado_app: "completada",   // el frontend puede usar esto para mostrar distinto
+              protegida: true,            // flag para que el frontend sepa que no se puede reemplazar
+              nro_contrato, nro_orden, abonado, fecha_crea,
+              servicio, tecnologia, estado_orden,
+              sector, via, direccion, referencia,
+              doc_identidad, telefono, observacion,
+              tecnico_jefe, tecnico_asistente, vendedor_nombre,
+            });
+          } else {
+            // Orden pendiente — preguntar si reemplazar (comportamiento actual)
+            resumen.duplicadas.push({
+              orden_id: dup[0].id,
+              estado_app: dup[0].estado_app,
+              protegida: false,
+              nro_contrato, nro_orden, abonado, fecha_crea,
+              servicio, tecnologia, estado_orden,
+              sector, via, direccion, referencia,
+              doc_identidad, telefono, observacion,
+              tecnico_jefe, tecnico_asistente, vendedor_nombre,
+            });
+          }
         } else {
           try {
             await conn.execute(
@@ -139,14 +155,14 @@ router.post(
                 (nro_orden, nro_contrato, cliente_id, abonado, doc_identidad, telefono,
                   servicio, tecnologia, estado_orden,
                   sector, via, direccion, referencia,
-                  observacion, tecnico_jefe, tecnico_asistente,
+                  observacion, tecnico_jefe, tecnico_asistente, vendedor_nombre,
                   fecha_crea, sede_id)
-              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
               [
                 nro_orden, nro_contrato, clienteId, abonado, doc_identidad || null, telefono || null,
                 servicio, tecnologia || null, estado_orden,
                 sector || null, via || null, direccion || null, referencia || null,
-                observacion || null, tecnico_jefe || null, tecnico_asistente || null,
+                observacion || null, tecnico_jefe || null, tecnico_asistente || null, vendedor_nombre || null,
                 fecha_crea || null, sedeId,
               ]
             );
@@ -158,18 +174,20 @@ router.post(
             if (insertErr.code === "ER_DUP_ENTRY") {
               const [dupTardio] = await conn.execute(
                 `SELECT id, estado_app
-                 FROM ordenes_servicio
-                 WHERE nro_contrato = ? AND fecha_crea = ? AND sede_id = ?`,
+                FROM ordenes_servicio
+                WHERE nro_contrato = ? AND fecha_crea = ? AND sede_id = ?`,
                 [nro_contrato, fecha_crea, sedeId]
               );
+              const estaCompletada = dupTardio[0]?.estado_app === "completada";
               resumen.duplicadas.push({
                 orden_id: dupTardio[0]?.id ?? null,
                 estado_app: dupTardio[0]?.estado_app ?? null,
+                protegida: estaCompletada,
                 nro_contrato, nro_orden, abonado, fecha_crea,
                 servicio, tecnologia, estado_orden,
                 sector, via, direccion, referencia,
                 doc_identidad, telefono, observacion,
-                tecnico_jefe, tecnico_asistente,
+                tecnico_jefe, tecnico_asistente, vendedor_nombre,
               });
             } else {
               throw insertErr;
@@ -214,7 +232,17 @@ router.post(
       if (found.length === 0) return res.status(404).json({ error: "Orden no encontrada." });
       resolvedOrdenId = found[0].id;
     }
+    // DESPUÉS
     if (!resolvedOrdenId) return res.status(400).json({ error: "No se pudo identificar la orden." });
+
+    // Verificar que la orden no esté completada antes de actualizar
+    const [[ordenActual]] = await db.execute(
+      "SELECT estado_app FROM ordenes_servicio WHERE id = ? AND sede_id = ?",
+      [resolvedOrdenId, req.user.sede_id]
+    );
+    if (ordenActual?.estado_app === "completada") {
+      return res.status(400).json({ error: "No se puede reemplazar una orden ya completada." });
+    }
 
     try {
       await db.execute(
@@ -222,7 +250,7 @@ router.post(
           nro_orden=?, servicio=?, tecnologia=?, estado_orden=?,
           sector=?, via=?, direccion=?, referencia=?,
           abonado=?, doc_identidad=?, telefono=?,
-          observacion=?, tecnico_jefe=?, tecnico_asistente=?,
+          observacion=?, tecnico_jefe=?, tecnico_asistente=?, vendedor_nombre=?,
           fecha_crea=?, estado_app='pendiente',
           averia_id=NULL, activacion_id=NULL,
           tecnico_id=NULL, completada_en=NULL,
@@ -232,11 +260,11 @@ router.post(
           datos.nro_orden, datos.servicio, datos.tecnologia ?? null, datos.estado_orden,
           datos.sector ?? null, datos.via ?? null, datos.direccion ?? null, datos.referencia ?? null,
           datos.abonado, datos.doc_identidad ?? null, datos.telefono ?? null,
-          datos.observacion ?? null, datos.tecnico_jefe ?? null, datos.tecnico_asistente ?? null,
+          datos.observacion ?? null, datos.tecnico_jefe ?? null, datos.tecnico_asistente ?? null, datos.vendedor_nombre ?? null,
           datos.fecha_crea ?? null,
           req.user.sede_id,
           resolvedOrdenId,
-          req.user.sede_id,  // ← nuevo
+          req.user.sede_id,
         ]
       );
       res.json({ ok: true });

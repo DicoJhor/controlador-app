@@ -103,6 +103,7 @@ export default function ServiciosList() {
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [copiadoMat,     setCopiadoMat]     = useState(false);
   const [copiadoTodo,    setCopiadoTodo]    = useState(false);
+  const [filtroFecha, setFiltroFecha] = useState({ desde: "", hasta: "" });
 
   const { user } = useAuth();
 
@@ -186,7 +187,10 @@ export default function ServiciosList() {
       (o.abonado ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
       (o.nro_contrato ?? "").toLowerCase().includes(searchOrdenes.toLowerCase()) ||
       String(o.nro_orden).includes(searchOrdenes);
-    return matchRed && matchTipo && matchSearch;
+    const fechaOrden = o.fecha_crea ? new Date(o.fecha_crea) : null;
+    const matchDesde = !filtroFecha.desde || (fechaOrden && fechaOrden >= new Date(filtroFecha.desde));
+    const matchHasta = !filtroFecha.hasta || (fechaOrden && fechaOrden <= new Date(filtroFecha.hasta + "T23:59:59"));
+    return matchRed && matchTipo && matchSearch && matchDesde && matchHasta;
   });
 
   // Dropdown helper
@@ -237,6 +241,105 @@ export default function ServiciosList() {
   const currentEstado = estadoOpts.find(o => o.key === filtroEstado)?.label ?? "Pendientes";
   const currentRed    = redOpts.find(o => o.key === filtroRed) ?? redOpts[0];
   const currentTipo   = filtroTipo === "todas" ? "Todos los tipos" : filtroTipo;
+
+  const imprimirOrden = (orden) => {
+    const mats = orden.materiales ?? [];
+    const html = `
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <title>Orden #${orden.nro_orden}</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: Arial, sans-serif; font-size: 11px; color: #000; padding: 16px; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #000; padding-bottom: 8px; margin-bottom: 10px; }
+    .empresa { font-size: 13px; font-weight: bold; }
+    .titulo { font-size: 14px; font-weight: bold; text-align: center; text-transform: uppercase; letter-spacing: 1px; }
+    .subtitulo { font-size: 11px; text-align: center; color: #555; margin-top: 2px; }
+    .seccion { border: 1px solid #000; margin-bottom: 8px; }
+    .seccion-title { background: #000; color: #fff; font-weight: bold; font-size: 10px; padding: 3px 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; }
+    .campo { padding: 5px 8px; border-bottom: 1px solid #ddd; }
+    .campo:nth-child(odd) { border-right: 1px solid #ddd; }
+    .campo label { font-size: 9px; color: #555; display: block; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 2px; }
+    .campo span { font-size: 11px; font-weight: 600; }
+    .span2 { grid-column: span 2; }
+    table { width: 100%; border-collapse: collapse; }
+    th { background: #333; color: #fff; font-size: 9px; text-transform: uppercase; padding: 4px 6px; text-align: left; letter-spacing: 0.5px; }
+    td { padding: 4px 6px; border-bottom: 1px solid #eee; font-size: 11px; }
+    tr:nth-child(even) td { background: #f9f9f9; }
+    .sin-mat { padding: 10px 8px; color: #888; font-style: italic; }
+    .footer { display: grid; grid-template-columns: 1fr 1fr 1fr; border: 1px solid #000; margin-top: 8px; }
+    .firma { padding: 32px 12px 8px; border-right: 1px solid #000; }
+    .firma:last-child { border-right: none; }
+    .firma-label { font-size: 9px; color: #555; text-transform: uppercase; border-top: 1px solid #000; padding-top: 4px; margin-top: 4px; }
+    .badge { display: inline-block; background: #f0f4ff; border: 1px solid #c7d7f9; padding: 1px 8px; border-radius: 20px; font-size: 10px; font-weight: 700; color: #1e40af; }
+    @media print { body { padding: 8px; } }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="empresa">Cable &amp; Internet</div>
+      <div style="font-size:10px;color:#555">Orden de Servicio Técnico</div>
+    </div>
+    <div style="text-align:center">
+      <div class="titulo">Orden de Servicio Técnico</div>
+      <div class="subtitulo">Estado: ${orden.estado_app === "completada" ? "COMPLETADA" : "PENDIENTE"}</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:20px;font-weight:900;letter-spacing:-1px">#${orden.nro_orden}</div>
+      <div style="font-size:10px;color:#555">${orden.fecha_crea || "—"}</div>
+    </div>
+  </div>
+
+  <div class="seccion">
+    <div class="seccion-title">Información del Contrato</div>
+    <div class="grid2">
+      <div class="campo"><label>N° Contrato</label><span>${orden.nro_contrato || "—"}</span></div>
+      <div class="campo"><label>Servicio</label><span class="badge">${labelServicio(orden.servicio || "")}</span></div>
+      <div class="campo"><label>Abonado</label><span>${orden.abonado || "—"}</span></div>
+      <div class="campo"><label>Técnico asignado</label><span>${orden.tecnico_nombre || "—"}</span></div>
+      <div class="campo"><label>Vendedor</label><span>${orden.vendedor_nombre || "—"}</span></div>
+      <div class="campo span2"><label>Dirección</label><span>${orden.direccion || "—"}</span></div>
+      <div class="campo span2"><label>Observación</label><span>${orden.observacion || "—"}</span></div>
+      <div class="campo span2"><label>Comentario del técnico</label><span>${orden.comentario_tecnico || "—"}</span></div>
+    </div>
+  </div>
+
+  <div class="seccion">
+    <div class="seccion-title">Liquidación de Materiales</div>
+    ${mats.length === 0
+      ? `<div class="sin-mat">Sin materiales registrados en esta orden</div>`
+      : `<table>
+          <thead><tr><th>Material</th><th>Código PON</th><th style="text-align:center">Cantidad</th><th>Unidad</th></tr></thead>
+          <tbody>${mats.map(m => `
+            <tr>
+              <td>${m.nombre}</td>
+              <td style="font-family:monospace;font-size:10px">${m.codigo_pon || "—"}</td>
+              <td style="text-align:center;font-weight:700">${m.cantidad}</td>
+              <td>${m.unidad || "—"}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>`
+    }
+  </div>
+
+  <div class="footer">
+    <div class="firma"><div>${orden.abonado || ""}</div><div class="firma-label">Firma del Cliente</div></div>
+    <div class="firma"><div></div><div class="firma-label">Jefe de Grupo</div></div>
+    <div class="firma"><div>${orden.tecnico_nombre || ""}</div><div class="firma-label">Técnico</div></div>
+  </div>
+</body>
+</html>`;
+
+    const win = window.open("", "_blank", "width=800,height=900");
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+    setTimeout(() => win.print(), 400);
+  };
 
   return (
     <>
@@ -320,6 +423,35 @@ export default function ServiciosList() {
               onChange={e => setSearchOrdenes(e.target.value)}
             />
           </div>
+
+          <div style={styles.divider} />
+
+          {/* Filtro por fecha */}
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Desde</span>
+            <input
+              type="date"
+              value={filtroFecha.desde}
+              onChange={e => setFiltroFecha(prev => ({ ...prev, desde: e.target.value }))}
+              style={styles.dateInput}
+            />
+            <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>Hasta</span>
+            <input
+              type="date"
+              value={filtroFecha.hasta}
+              onChange={e => setFiltroFecha(prev => ({ ...prev, hasta: e.target.value }))}
+              style={styles.dateInput}
+            />
+            {(filtroFecha.desde || filtroFecha.hasta) && (
+              <button
+                onClick={() => setFiltroFecha({ desde: "", hasta: "" })}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: "2px 4px" }}
+                title="Limpiar fechas"
+              >
+                <Icon d={IC.x} size={13} />
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Tabla */}
@@ -380,11 +512,20 @@ export default function ServiciosList() {
                 <div style={{ fontWeight: 700, fontSize: 15 }}>Orden #{ordenDetalle.nro_orden}</div>
                 <div style={{ fontSize: 12, color: "var(--text-muted)", fontFamily: "monospace" }}>{ordenDetalle.nro_contrato}</div>
               </div>
-              <button onClick={cerrarDetalle} style={{ background: "none", border: "none", cursor: "pointer" }}>
-                <Icon d={IC.x} size={18} />
-              </button>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <button
+                  onClick={() => imprimirOrden(ordenDetalle)}
+                  style={{ ...styles.refreshBtn, fontSize: 12, padding: "6px 10px" }}
+                  title="Imprimir orden"
+                >
+                  <Icon d="M6 9V2h12v7 M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2 M6 14h12v8H6z" size={14} />
+                  Imprimir
+                </button>
+                <button onClick={cerrarDetalle} style={{ background: "none", border: "none", cursor: "pointer" }}>
+                  <Icon d={IC.x} size={18} />
+                </button>
+              </div>
             </div>
-
             <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
 
               {/* Info */}
@@ -393,6 +534,7 @@ export default function ServiciosList() {
                 <DetRow label="Dirección"  value={ordenDetalle.direccion} />
                 <DetRow label="Servicio"   value={labelServicio(ordenDetalle.servicio || "")} />
                 <DetRow label="Técnico"    value={ordenDetalle.tecnico_nombre} />
+                <DetRow label="Vendedor"   value={ordenDetalle.vendedor_nombre} />
                 <DetRow label="Fecha"      value={ordenDetalle.fecha_crea} />
                 <DetRow label="Observación" value={ordenDetalle.observacion} />
                 <DetRow label="Comentario técnico" value={ordenDetalle.comentario_tecnico} />
@@ -527,5 +669,10 @@ const styles = {
   copyBtnOk: {
     background: "#F0FDF4", color: "var(--success)",
     border: "0.5px solid #86EFAC",
+  },
+  dateInput: {
+    padding: "6px 10px", borderRadius: 8, fontSize: 12,
+    border: "0.5px solid var(--border)", background: "white",
+    color: "var(--text)", cursor: "pointer",
   },
 };

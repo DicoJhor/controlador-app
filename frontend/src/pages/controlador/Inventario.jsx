@@ -127,6 +127,7 @@ export default function CtrlInventario() {
   const [salida,   setSalida]   = useState(emptySalida);
   const [onusDisponibles, setOnusDisponibles] = useState({}); // { producto_id: [{ id, codigo_pon }] }
   const [onusSeleccionadas, setOnusSeleccionadas] = useState({}); // { producto_id: [onu_id, ...] }
+  const [onuSearch, setOnuSearch] = useState({}); // { producto_id: "texto buscador" }
   const [saving,   setSaving]   = useState(false);
   const [success,  setSuccess]  = useState(null);
 
@@ -1342,8 +1343,23 @@ export default function CtrlInventario() {
                           Sin ONUs con PON-SN disponibles en esta sede
                         </div>
                       ) : (
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                          {disponibles.map(onu => {
+                        <>
+                          <div className="search-box" style={{ marginBottom: 8 }}>
+                            <Icon d={IC.search} size={14} color="var(--text-muted)" />
+                            <input
+                              placeholder="Filtrar por código PON..."
+                              value={onuSearch[item.producto_id] ?? ""}
+                              onChange={e => setOnuSearch(prev => ({ ...prev, [item.producto_id]: e.target.value }))}
+                              style={{ fontSize: 12, fontFamily: "monospace" }}
+                            />
+                          </div>
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                            {disponibles
+                              .filter(onu =>
+                                !onuSearch[item.producto_id] ||
+                                onu.codigo_pon?.toLowerCase().includes(onuSearch[item.producto_id].toLowerCase())
+                              )
+                              .map(onu => {
                             const seleccionada = seleccionadas.includes(onu.id);
                             return (
                               <button key={onu.id} type="button"
@@ -1372,6 +1388,7 @@ export default function CtrlInventario() {
                             );
                           })}
                         </div>
+                         </>
                       )}
                     </div>
                   )}
