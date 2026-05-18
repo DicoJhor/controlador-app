@@ -274,7 +274,14 @@ export default function TecHistorial() {
                           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                             {m.materiales.map((mat, i) => (
                               <div key={i} style={{ display: "flex", justifyContent: "space-between", fontSize: 13 }}>
-                                <span>{mat.nombre}</span>
+                                <span>
+                                  {mat.nombre}
+                                  {mat.codigo_pon && (
+                                    <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>
+                                      · {mat.codigo_pon}
+                                    </span>
+                                  )}
+                                </span>
                                 <span style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--primary)" }}>
                                   {formatCantidad(mat.cantidad, mat.es_medible)} {mat.unidad}
                                 </span>
