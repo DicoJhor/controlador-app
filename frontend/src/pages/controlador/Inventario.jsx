@@ -1291,7 +1291,8 @@ export default function CtrlInventario() {
                   .filter(s =>
                     (s.producto.toLowerCase().includes(busquedaItem.toLowerCase()) ||
                     (s.codigo ?? "").toLowerCase().includes(busquedaItem.toLowerCase())) &&
-                    !productosYaAgregados.includes(String(s.producto_id))
+                    !productosYaAgregados.includes(String(s.producto_id)) &&
+                    s.cantidad > 0   // ← SOLO CON STOCK DISPONIBLE
                   )
                   .map(s => (
                     <div key={s.producto_id}
@@ -1601,7 +1602,8 @@ export default function CtrlInventario() {
                     .filter(s =>
                       (s.producto.toLowerCase().includes(salidaDirectaSearch.toLowerCase()) ||
                       (s.codigo ?? "").toLowerCase().includes(salidaDirectaSearch.toLowerCase())) &&
-                      !yaAgregadosSD.includes(String(s.producto_id))
+                      !yaAgregadosSD.includes(String(s.producto_id)) &&
+                      s.cantidad > 0   // ← AGREGAR ESTA LÍNEA
                     )
                     .map(s => (
                       <div key={s.producto_id}
