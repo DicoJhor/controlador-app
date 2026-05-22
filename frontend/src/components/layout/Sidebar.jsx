@@ -79,15 +79,16 @@ const navConfig = {
         { to: "/controlador/dashboard",   label: "Dashboard",    icon: IC.dashboard },
         { to: "/controlador/tecnicos",    label: "Mis Técnicos", icon: IC.users     },
         { to: "/controlador/recojos",     label: "Operaciones",  icon: IC.package   },
-        { to: "/controlador/clientes",     label: "Clientes",  icon: IC.package   },
+        { to: "/controlador/clientes",    label: "Clientes",     icon: IC.package   },
+        { to: "/controlador/servicios",   label: "Servicios",    icon: IC.audit     }, // ← NUEVO
       ],
     },
     {
       section: "Inventario",
       items: [
-        { to: "/controlador/inventario",  label: "Inventario",   icon: IC.inventory },
+        { to: "/controlador/inventario",      label: "Inventario",      icon: IC.inventory },
         { to: "/controlador/onus-recicladas", label: "ONUs Recicladas", icon: IC.recycle   },
-        { to: "/controlador/auditoria",   label: "Auditoría",    icon: IC.audit     },
+        { to: "/controlador/auditoria",       label: "Auditoría",       icon: IC.audit     },
       ],
     },
   ],

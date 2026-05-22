@@ -32,18 +32,26 @@ exports.crearOnu = async (req, res) => {
 }
 
 // GET /api/onus/sede/:sede_id/producto/:producto_id — ONUs de una sede/producto
+// DESPUÉS
 exports.getBySedeProducto = async (req, res) => {
   try {
     const { sede_id, producto_id } = req.params
+    const { solo_disponibles } = req.query
 
-    const [rows] = await db.query(
-      `SELECT id, codigo_pon, tecnico_id, activacion_id, cliente, created_at
-       FROM onus
-       WHERE sede_id = ? AND producto_id = ?
-       ORDER BY created_at DESC`,
-      [sede_id, producto_id]
-    )
+    let query = `
+      SELECT id, codigo_pon, tecnico_id, activacion_id, cliente, created_at, salida_directa
+      FROM onus
+      WHERE sede_id = ? AND producto_id = ?`
 
+    if (solo_disponibles === "true") {
+      query += ` AND tecnico_id IS NULL
+                 AND activacion_id IS NULL
+                 AND salida_directa = 0`
+    }
+
+    query += ` ORDER BY created_at DESC`
+
+    const [rows] = await db.query(query, [sede_id, producto_id])
     res.json(rows)
   } catch (err) {
     console.error("❌ Error getBySedeProducto:", err.message)
@@ -97,6 +105,7 @@ exports.getDisponiblesSede = async (req, res) => {
          AND codigo_pon IS NOT NULL
          AND tecnico_id IS NULL
          AND activacion_id IS NULL
+         AND salida_directa = 0
        ORDER BY codigo_pon ASC`,
       [sede_id, producto_id]
     )

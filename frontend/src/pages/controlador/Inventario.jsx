@@ -58,8 +58,9 @@ const emptyVarianteInline = {
 };
 
 // ── Estado inicial entrada y salida ───────────────────────────────────────────
-const emptyEntrada = { motivo: "", comentario: "", items: [] };
-const emptySalida  = { tecnico_id: "", motivo: "", comentario: "", items: [] };
+const emptyEntrada       = { motivo: "", comentario: "", items: [] };
+const emptySalida        = { tecnico_id: "", motivo: "", comentario: "", items: [] };
+const emptySalidaDirecta = { comentario: "", items: [] };
 const emptyItem    = { producto_id: "", cantidad: "", metros: "" };
 const emptyActivoForm = { nombre: "", descripcion: "", nro_serie: "", estado: "operativo", area: "NOC" };
 
@@ -128,8 +129,13 @@ export default function CtrlInventario() {
   const [onusDisponibles, setOnusDisponibles] = useState({}); // { producto_id: [{ id, codigo_pon }] }
   const [onusSeleccionadas, setOnusSeleccionadas] = useState({}); // { producto_id: [onu_id, ...] }
   const [onuSearch, setOnuSearch] = useState({}); // { producto_id: "texto buscador" }
-  const [saving,   setSaving]   = useState(false);
-  const [success,  setSuccess]  = useState(null);
+  const [saving,              setSaving]              = useState(false);
+  const [success,             setSuccess]             = useState(null);
+  const [salidaDirecta,           setSalidaDirecta]           = useState(emptySalidaDirecta);
+  const [salidaDirectaSearch,     setSalidaDirectaSearch]      = useState("");
+  const [onusDisponiblesSD,       setOnusDisponiblesSD]        = useState({});
+  const [onusSeleccionadasSD,     setOnusSeleccionadasSD]      = useState({});
+  const [onuSearchSD,             setOnuSearchSD]              = useState({});
 
   const [onuModal,      setOnuModal]      = useState(false)
   const [onuModalItem,  setOnuModalItem]  = useState(null)
@@ -451,6 +457,42 @@ export default function CtrlInventario() {
     }
   };
 
+  const handleSalidaDirecta = async () => {
+    setSaving(true);
+    try {
+      const todasLasOnusSD = Object.values(onusSeleccionadasSD).flat();
+
+      const itemsNormalesSD = salidaDirecta.items
+        .filter(i => {
+          const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+          return prod?.categoria !== "onu";
+        })
+        .map(i => ({
+          producto_id: Number(i.producto_id),
+          cantidad:    Number(i.cantidad),
+        }));
+
+      await stockService.salidaDirecta({
+        comentario: salidaDirecta.comentario,
+        items:      itemsNormalesSD,
+        onu_ids:    todasLasOnusSD,
+      });
+      const data = await stockService.getStock();
+      setStock(data);
+      setModal(false);
+      setSalidaDirecta(emptySalidaDirecta);
+      setSalidaDirectaSearch("");
+      setOnusSeleccionadasSD({});
+      setOnusDisponiblesSD({});
+      setSuccess("salidaDirecta");
+      setTimeout(() => setSuccess(null), 3500);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const productosYaAgregados = salida.items.map(i => String(i.producto_id));
 
   const openOnuModal = async (item) => {
@@ -460,7 +502,8 @@ export default function CtrlInventario() {
     setOnuCodigo("")
     setLoadingOnus(true)
     try {
-      const data = await onuService.getBySedeProducto(sedeId, item.producto_id)
+      // DESPUÉS
+      const data = await onuService.getBySedeProducto(sedeId, item.producto_id, true)
       console.log("onus:", JSON.stringify(data))
       setOnusLista(data)
     } catch {
@@ -510,6 +553,12 @@ export default function CtrlInventario() {
         <div className="alert alert-success">
           <Icon d={IC.check} size={15} color="var(--success)" />
           Producto creado y agregado al inventario de tu sede.
+        </div>
+      )}
+      {success === "salidaDirecta" && (
+        <div className="alert alert-warning">
+          <Icon d={IC.check} size={15} color="var(--warning)" />
+          Salida directa registrada correctamente.
         </div>
       )}
 
@@ -562,6 +611,14 @@ export default function CtrlInventario() {
             <button className="btn btn-outline" onClick={openCrearProducto}>
               <Icon d={IC.plus} size={15} />
               Nuevo producto
+            </button>
+            <button className="btn btn-outline" onClick={() => {
+              setSalidaDirecta(emptySalidaDirecta);
+              setSalidaDirectaSearch("");
+              setModal("salidaDirecta");
+            }}>
+              <Icon d={IC.exit} size={15} />
+              Salida directa
             </button>
             <button className="btn btn-primary" onClick={() => { setSalida(emptySalida); setModal("salida"); }}>
               <Icon d={IC.exit} size={15} />
@@ -1490,6 +1547,249 @@ export default function CtrlInventario() {
           )}
         </Modal>
       )}
+
+      {modal === "salidaDirecta" && (() => {
+        const sdValida =
+          salidaDirecta.items.length > 0 &&
+          salidaDirecta.items.every(i => {
+            if (!i.producto_id) return false;
+            const prod = stock.find(s => String(s.producto_id) === String(i.producto_id));
+            if (prod?.categoria === "onu") {
+              return (onusSeleccionadasSD[i.producto_id] ?? []).length > 0;
+            }
+            return Number(i.cantidad) > 0;
+          }) &&
+          !!salidaDirecta.comentario.trim();
+
+        const yaAgregadosSD = salidaDirecta.items.map(i => String(i.producto_id));
+
+        return (
+          <Modal
+            title="Salida directa de stock"
+            onClose={() => setModal(false)}
+            footer={
+              <>
+                <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>
+                  Cancelar
+                </button>
+                <button className="btn btn-primary" onClick={handleSalidaDirecta} disabled={saving || !sdValida}>
+                  <Icon d={IC.check} size={15} />
+                  {saving ? "Registrando..." : `Confirmar (${salidaDirecta.items.length} ítem${salidaDirecta.items.length !== 1 ? "s" : ""})`}
+                </button>
+              </>
+            }
+          >
+            <div className="form-group">
+              <label className="form-label">Buscar producto</label>
+              <div className="search-box">
+                <Icon d={IC.search} size={16} color="var(--text-muted)" />
+                <input
+                  placeholder="Nombre o código..."
+                  value={salidaDirectaSearch}
+                  onChange={e => setSalidaDirectaSearch(e.target.value)}
+                  autoFocus
+                />
+              </div>
+
+              {salidaDirectaSearch.length > 0 && (
+                <div style={{
+                  border: "1px solid var(--border)", borderRadius: 8,
+                  marginTop: 4, maxHeight: 200, overflowY: "auto",
+                  background: "white", boxShadow: "0 4px 12px rgba(0,0,0,.08)"
+                }}>
+                  {stock
+                    .filter(s =>
+                      (s.producto.toLowerCase().includes(salidaDirectaSearch.toLowerCase()) ||
+                      (s.codigo ?? "").toLowerCase().includes(salidaDirectaSearch.toLowerCase())) &&
+                      !yaAgregadosSD.includes(String(s.producto_id))
+                    )
+                    .map(s => (
+                      <div key={s.producto_id}
+                        onClick={() => {
+                          setSalidaDirecta(prev => ({
+                            ...prev,
+                            items: [...prev.items, { producto_id: String(s.producto_id), cantidad: "" }]
+                          }));
+                          if (s.categoria === "onu") {
+                            onuService.getDisponibles(s.producto_id).then(data => {
+                              setOnusDisponiblesSD(prev => ({ ...prev, [s.producto_id]: data }));
+                              setOnusSeleccionadasSD(prev => ({ ...prev, [s.producto_id]: [] }));
+                            }).catch(() => {});
+                          }
+                          setSalidaDirectaSearch("");
+                        }}
+                        style={{
+                          padding: "9px 14px", cursor: "pointer", fontSize: 13,
+                          borderBottom: "1px solid var(--border)",
+                          display: "flex", justifyContent: "space-between", alignItems: "center",
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                        onMouseLeave={e => e.currentTarget.style.background = "white"}
+                      >
+                        <div>
+                          <span style={{ fontWeight: 600 }}>{s.producto}</span>
+                          {s.codigo && <span className="mono" style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 8 }}>{s.codigo}</span>}
+                          {s.categoria && <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 6 }}>· {s.categoria}</span>}
+                        </div>
+                        <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", marginLeft: 12 }}>
+                          disp: <strong>{s.cantidad}</strong>
+                        </span>
+                      </div>
+                    ))}
+                  {stock.filter(s =>
+                    (s.producto.toLowerCase().includes(salidaDirectaSearch.toLowerCase()) ||
+                    (s.codigo ?? "").toLowerCase().includes(salidaDirectaSearch.toLowerCase())) &&
+                    !yaAgregadosSD.includes(String(s.producto_id))
+                  ).length === 0 && (
+                    <div style={{ padding: "12px 14px", color: "var(--text-muted)", fontSize: 13 }}>
+                      Sin resultados
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {salidaDirecta.items.length > 0 && (
+              <div className="form-group">
+                <label className="form-label">Productos a descontar ({salidaDirecta.items.length})</label>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {salidaDirecta.items.map((item, idx) => {
+                    const prod = stock.find(s => String(s.producto_id) === String(item.producto_id));
+                    return (
+                      <div key={idx} style={{ marginBottom: 6 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: 600, fontSize: 13 }}>{prod?.producto ?? "—"}</div>
+                            {prod?.codigo && <div className="mono" style={{ fontSize: 11, color: "var(--text-muted)" }}>{prod.codigo}</div>}
+                          </div>
+                          {prod?.categoria !== "onu" && (
+                            <>
+                              <input
+                                className="form-input"
+                                type="number" min="1" max={prod?.cantidad}
+                                placeholder="Cantidad"
+                                value={item.cantidad}
+                                onChange={e => setSalidaDirecta(prev => ({
+                                  ...prev,
+                                  items: prev.items.map((it, i) => i === idx ? { ...it, cantidad: e.target.value } : it)
+                                }))}
+                                style={{ width: 100, textAlign: "center" }}
+                              />
+                              <span style={{ fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                                / {prod?.cantidad ?? 0}
+                              </span>
+                            </>
+                          )}
+                          <button
+                            className="btn btn-danger-outline btn-sm btn-icon"
+                            onClick={() => setSalidaDirecta(prev => ({
+                              ...prev,
+                              items: prev.items.filter((_, i) => i !== idx)
+                            }))}
+                            type="button"
+                          >
+                            <Icon d={IC.remove} size={12} />
+                          </button>
+                        </div>
+
+                        {prod?.categoria === "onu" && item.producto_id && (() => {
+                          const disponiblesSD   = onusDisponiblesSD[item.producto_id] ?? [];
+                          const seleccionadasSD = onusSeleccionadasSD[item.producto_id] ?? [];
+                          return (
+                            <div style={{
+                              marginTop: 6, padding: "10px 12px",
+                              background: "var(--hover)", borderRadius: 8,
+                              border: "1px solid var(--border)",
+                            }}>
+                              <div style={{
+                                fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
+                                textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8,
+                              }}>
+                                Seleccionar ONUs a retirar ({seleccionadasSD.length} seleccionadas)
+                              </div>
+                              {disponiblesSD.length === 0 ? (
+                                <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                                  Sin ONUs disponibles en esta sede
+                                </div>
+                              ) : (
+                                <>
+                                  <div className="search-box" style={{ marginBottom: 8 }}>
+                                    <Icon d={IC.search} size={14} color="var(--text-muted)" />
+                                    <input
+                                      placeholder="Filtrar por código PON..."
+                                      value={onuSearchSD[item.producto_id] ?? ""}
+                                      onChange={e => setOnuSearchSD(prev => ({ ...prev, [item.producto_id]: e.target.value }))}
+                                      style={{ fontSize: 12, fontFamily: "monospace" }}
+                                    />
+                                  </div>
+                                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                                    {disponiblesSD
+                                      .filter(onu =>
+                                        !onuSearchSD[item.producto_id] ||
+                                        onu.codigo_pon?.toLowerCase().includes(onuSearchSD[item.producto_id].toLowerCase())
+                                      )
+                                      .map(onu => {
+                                        const seleccionada = seleccionadasSD.includes(onu.id);
+                                        return (
+                                          <button key={onu.id} type="button"
+                                            onClick={() => {
+                                              setOnusSeleccionadasSD(prev => {
+                                                const actual = prev[item.producto_id] ?? [];
+                                                const nuevas = seleccionada
+                                                  ? actual.filter(id => id !== onu.id)
+                                                  : [...actual, onu.id];
+                                                return { ...prev, [item.producto_id]: nuevas };
+                                              });
+                                            }}
+                                            style={{
+                                              padding: "4px 10px", borderRadius: 6,
+                                              fontSize: 12, fontFamily: "monospace",
+                                              cursor: "pointer", fontWeight: 600,
+                                              border: "1px solid",
+                                              borderColor: seleccionada ? "var(--primary)" : "var(--border)",
+                                              background:  seleccionada ? "var(--primary)" : "white",
+                                              color:       seleccionada ? "white" : "var(--text)",
+                                              transition: "all .15s",
+                                            }}
+                                          >
+                                            {onu.codigo_pon}
+                                          </button>
+                                        );
+                                      })}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {salidaDirecta.items.length === 0 && salidaDirectaSearch.length === 0 && (
+              <div style={{ padding: "12px 0", color: "var(--text-muted)", fontSize: 13, fontStyle: "italic" }}>
+                Buscá y seleccioná los productos a descontar.
+              </div>
+            )}
+
+            <div className="form-group">
+              <label className="form-label">
+                Motivo / comentario <span style={{ color: "var(--danger)" }}>*</span>
+              </label>
+              <textarea
+                className="form-input"
+                placeholder="Ej: Rotura durante instalación, uso en obra, merma..."
+                value={salidaDirecta.comentario}
+                onChange={e => setSalidaDirecta(prev => ({ ...prev, comentario: e.target.value }))}
+                rows={2}
+              />
+            </div>
+          </Modal>
+        );
+      })()}
 
       {/* Modal crear / editar activo */}
       {(activoModal === "crear" || activoModal === "editar") && (

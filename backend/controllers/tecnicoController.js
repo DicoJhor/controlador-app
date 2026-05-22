@@ -696,3 +696,5 @@ exports.completarOrden = async (req, res) => {
     conn.release()
   }
 }
+
+

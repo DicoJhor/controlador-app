@@ -96,6 +96,7 @@ export default function AppRouter() {
             <Route path="/controlador/recojos"  element={<CtrlRecojos />} />
             <Route path="/controlador/onus-recicladas"  element={<CtrlOnusRecicladas />} />
             <Route path="/controlador/clientes"  element={<CtrlClientes />} />
+            <Route path="/controlador/servicios"  element={<ServiciosList />} />
 
 
           </Route>

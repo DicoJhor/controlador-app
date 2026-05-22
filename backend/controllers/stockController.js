@@ -284,8 +284,18 @@ exports.auditoriaControlador = async (req, res) => {
       JOIN usuarios u ON ct.tecnico_id = u.id
       WHERE u.sede_id = ?
 
+      UNION ALL
+
+      SELECT sd.id, sd.fecha, 'salida_directa' as tipo,
+        p.nombre as item, sd.cantidad,
+        NULL as tecnico, NULL as tecnico_id,
+        NULL as motivo, sd.comentario
+      FROM salidas_directas sd
+      JOIN productos p ON sd.producto_id = p.id
+      WHERE sd.sede_id = ?
+
       ORDER BY fecha DESC
-    `, [sede_id, sede_id])
+    `, [sede_id, sede_id, sede_id])
 
     res.json(rows)
   } catch (err) {
@@ -389,6 +399,80 @@ exports.asignarCompleto = async (req, res) => {
     await conn.rollback()
     console.error("❌ Error asignarCompleto:", err.message)
     res.status(500).json({ message: "Error al registrar asignación", error: err.message })
+  } finally {
+    conn.release()
+  }
+}
+
+// SALIDA DIRECTA (sin técnico)
+exports.salidaDirecta = async (req, res) => {
+  const conn = await db.getConnection()
+  try {
+    await conn.beginTransaction()
+
+    const { comentario, items, onu_ids } = req.body
+    const sede_id        = req.user.sede_id
+    const registrado_por = req.user.id
+
+    const tieneItems = Array.isArray(items)   && items.length   > 0
+    const tieneOnus  = Array.isArray(onu_ids) && onu_ids.length > 0
+
+    if (!comentario?.trim() || (!tieneItems && !tieneOnus))
+      return res.status(400).json({ message: "Faltan campos obligatorios" })
+
+    for (const item of (items ?? [])) {
+      const [[stockActual]] = await conn.query(
+        "SELECT cantidad FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
+        [sede_id, item.producto_id]
+      )
+      if (!stockActual || stockActual.cantidad < item.cantidad) {
+        await conn.rollback()
+        return res.status(400).json({ message: `Stock insuficiente para producto ID ${item.producto_id}` })
+      }
+
+      await conn.query(
+        "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
+        [item.cantidad, sede_id, item.producto_id]
+      )
+
+      await conn.query(
+        `INSERT INTO salidas_directas (producto_id, sede_id, cantidad, comentario, registrado_por, fecha)
+         VALUES (?, ?, ?, ?, ?, NOW())`,
+        [item.producto_id, sede_id, item.cantidad, comentario, registrado_por]
+      )
+    }
+
+    // ONUs
+    for (const onu_id of (onu_ids ?? [])) {
+      const [[onu]] = await conn.query(
+        "SELECT id, producto_id FROM onus WHERE id = ? AND sede_id = ? AND tecnico_id IS NULL AND activacion_id IS NULL AND salida_directa = 0",
+        [onu_id, sede_id]
+      )
+      if (!onu) {
+        await conn.rollback()
+        return res.status(400).json({ message: `ONU ID ${onu_id} no disponible` })
+      }
+
+      await conn.query("UPDATE onus SET salida_directa = 1 WHERE id = ?", [onu_id])
+
+      await conn.query(
+        `INSERT INTO salidas_directas (producto_id, sede_id, cantidad, comentario, registrado_por, fecha)
+         VALUES (?, ?, 1, ?, ?, NOW())`,
+        [onu.producto_id, sede_id, comentario, registrado_por]
+      )
+
+      await conn.query(
+        "UPDATE stock_sede SET cantidad = cantidad - 1 WHERE sede_id = ? AND producto_id = ?",
+        [sede_id, onu.producto_id]
+      )
+    }
+
+    await conn.commit()
+    res.json({ message: "Salida directa registrada correctamente" })
+  } catch (err) {
+    await conn.rollback()
+    console.error("❌ Error salidaDirecta:", err.message)
+    res.status(500).json({ message: "Error al registrar salida directa", error: err.message })
   } finally {
     conn.release()
   }

@@ -4,8 +4,11 @@ const onuService = {
   crearOnu: (data) =>
     api.post("/onus", data),
 
-  getBySedeProducto: (sede_id, producto_id) =>
-    api.get(`/onus/sede/${sede_id}/producto/${producto_id}`),
+  // DESPUÉS
+  getBySedeProducto: (sede_id, producto_id, soloDisponibles = false) =>
+    api.get(`/onus/sede/${sede_id}/producto/${producto_id}`, {
+      params: { solo_disponibles: soloDisponibles }
+    }),
 
   actualizarCodigo: (id, codigo_pon) =>
     api.patch(`/onus/${id}/codigo`, { codigo_pon }),
