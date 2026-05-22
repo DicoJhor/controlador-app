@@ -44,6 +44,9 @@ exports.update = async (req, res) => {
     const { id } = req.params
     const { nombre, email, rol, sede_id, estado } = req.body
 
+    if (!nombre || !email || !rol)
+      return res.status(400).json({ message: "Faltan campos obligatorios: nombre, email y rol son requeridos" })
+
     await db.query(
       "UPDATE usuarios SET nombre=?, email=?, rol=?, sede_id=?, estado=? WHERE id=?",
       [nombre, email, rol, sede_id || null, estado, id]

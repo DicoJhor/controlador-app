@@ -28,7 +28,10 @@ exports.verStock = async (req, res) => {
 
 // REGISTRAR ENTRADA DE STOCK
 exports.entradaStock = async (req, res) => {
+  const conn = await db.getConnection()
   try {
+    await conn.beginTransaction()
+
     const { producto_id, cantidad, motivo, comentario } = req.body
     const sede_id = req.user.sede_id
     const registrado_por = req.user.id
@@ -36,43 +39,50 @@ exports.entradaStock = async (req, res) => {
     if (!producto_id || !cantidad || !motivo)
       return res.status(400).json({ message: "Faltan campos obligatorios" })
 
-    await db.query(
+    await conn.query(
       "INSERT INTO entradas_stock (producto_id, cantidad, fecha, registrado_por) VALUES (?, ?, NOW(), ?)",
       [producto_id, cantidad, registrado_por]
     )
 
-    const [existing] = await db.query(
+    const [existing] = await conn.query(
       "SELECT id FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
       [sede_id, producto_id]
     )
 
     if (existing.length > 0) {
-      await db.query(
+      await conn.query(
         "UPDATE stock_sede SET cantidad = cantidad + ? WHERE sede_id = ? AND producto_id = ?",
         [cantidad, sede_id, producto_id]
       )
     } else {
-      await db.query(
+      await conn.query(
         "INSERT INTO stock_sede (sede_id, producto_id, cantidad) VALUES (?, ?, ?)",
         [sede_id, producto_id, cantidad]
       )
     }
 
-    await db.query(
+    await conn.query(
       "UPDATE productos SET stock_total = stock_total + ? WHERE id = ?",
       [cantidad, producto_id]
     )
 
+    await conn.commit()
     res.json({ message: "Entrada registrada correctamente" })
   } catch (err) {
+    await conn.rollback()
     console.error("❌ Error entradaStock:", err.message)
     res.status(500).json({ message: "Error al registrar entrada", error: err.message })
+  } finally {
+    conn.release()
   }
 }
 
 // REGISTRAR SALIDA SIMPLE
 exports.salidaStock = async (req, res) => {
+  const conn = await db.getConnection()
   try {
+    await conn.beginTransaction()
+
     const { producto_id, tecnico_id, cantidad, motivo, comentario } = req.body
     const sede_id = req.user.sede_id
     const registrado_por = req.user.id
@@ -80,45 +90,51 @@ exports.salidaStock = async (req, res) => {
     if (!producto_id || !tecnico_id || !cantidad || !motivo)
       return res.status(400).json({ message: "Faltan campos obligatorios" })
 
-    const [[stockActual]] = await db.query(
+    const [[stockActual]] = await conn.query(
       "SELECT cantidad FROM stock_sede WHERE sede_id = ? AND producto_id = ?",
       [sede_id, producto_id]
     )
 
-    if (!stockActual || stockActual.cantidad < cantidad)
+    if (!stockActual || stockActual.cantidad < cantidad) {
+      await conn.rollback()
       return res.status(400).json({ message: "Stock insuficiente en la sede" })
+    }
 
-    await db.query(
+    await conn.query(
       "INSERT INTO entregas_tecnicos (producto_id, tecnico_id, cantidad, fecha, registrado_por) VALUES (?, ?, ?, NOW(), ?)",
       [producto_id, tecnico_id, cantidad, registrado_por]
     )
 
-    await db.query(
+    await conn.query(
       "UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?",
       [cantidad, sede_id, producto_id]
     )
 
-    const [asignacion] = await db.query(
+    const [asignacion] = await conn.query(
       "SELECT id FROM asignaciones_tecnicos WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
       [tecnico_id, producto_id, sede_id]
     )
 
     if (asignacion.length > 0) {
-      await db.query(
+      await conn.query(
         "UPDATE asignaciones_tecnicos SET cantidad = cantidad + ? WHERE tecnico_id = ? AND producto_id = ? AND sede_id = ?",
         [cantidad, tecnico_id, producto_id, sede_id]
       )
     } else {
-      await db.query(
+      await conn.query(
         "INSERT INTO asignaciones_tecnicos (tecnico_id, producto_id, sede_id, cantidad, fecha) VALUES (?, ?, ?, ?, NOW())",
         [tecnico_id, producto_id, sede_id, cantidad]
       )
     }
 
+    await conn.commit()
     res.json({ message: "Salida registrada correctamente" })
   } catch (err) {
+    await conn.rollback()
     console.error("❌ Error salidaStock:", err.message)
     res.status(500).json({ message: "Error al registrar salida", error: err.message })
+  } finally {
+    conn.release()
   }
 }
 

@@ -1,6 +1,0 @@
-[33m659815d[m ultima actualizacion, se termino con apartado de tecnico e inventariado para onus recicladas
-[33mf782319[m fix: permitir múltiples orígenes en CORS
-[33m438cdce[m fix: eliminar require duplicados en routes
-[33m14f512b[m feat: activaciones y averías de técnicos, panel controlador con recojos/activaciones/averías, fotos organizadas por cliente, activos en panel controlador
-[33m6a06e4b[m feat: superadmin/admin roles, activos por sede NOC/ADMIN, inventario por sede, fix auditoría envíos entrada/salida, dashboard stock bajo global por sede
-[33mdecd88f[m first commit

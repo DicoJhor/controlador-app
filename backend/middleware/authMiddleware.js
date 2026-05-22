@@ -7,10 +7,8 @@ const verificarToken = (req, res, next) => {
     const token = authHeader.split(" ")[1]
     jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
         if (err) {
-            console.log("❌ Error JWT:", err.message)
             return res.status(401).json({ message: err.message })
         }
-        console.log("✅ Token válido, usuario:", user)
         req.user = user
         next()
     })
@@ -18,9 +16,7 @@ const verificarToken = (req, res, next) => {
 
 const requireRol = (roles) => (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: "No autenticado" })
-    console.log("⚠️ requireRol check:", req.user.rol, "→ roles permitidos:", roles)
     if (!roles.includes(req.user.rol)) {
-        console.log("❌ BLOQUEADO:", req.user.rol)
         return res.status(403).json({ message: "No tienes permisos para esto" })
     }
     next()
