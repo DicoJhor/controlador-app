@@ -31,6 +31,7 @@ const app = express()
 // CORS configurado para frontend (Vite)
 const allowedOrigins = [
   ...(process.env.FRONTEND_URL?.split(',').map(o => o.trim()) || []),
+  "https://inventario.evelynsac.com",
   "http://localhost:5173",
   "capacitor://localhost",
   "http://localhost",
