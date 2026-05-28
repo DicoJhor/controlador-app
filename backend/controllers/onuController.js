@@ -46,6 +46,7 @@ exports.getBySedeProducto = async (req, res) => {
     if (solo_disponibles === "true") {
       query += ` AND tecnico_id IS NULL
                  AND activacion_id IS NULL
+                 AND averia_id IS NULL
                  AND salida_directa = 0`
     }
 
