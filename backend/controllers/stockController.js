@@ -18,6 +18,7 @@ exports.verStock = async (req, res) => {
       FROM stock_sede ss
       JOIN productos p ON ss.producto_id = p.id
       WHERE ss.sede_id = ?
+        AND ss.cantidad > 0
     `, [sede_id])
     res.json(rows)
   } catch (err) {
