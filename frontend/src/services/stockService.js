@@ -9,6 +9,8 @@ const stockService = {
   registrarSalidaMultiple: (data) => api.post("/stock/salida-multiple",  data),
   salidaDirecta:           (data) => api.post("/stock/salida-directa",   data),
   asignarCompleto:         (data) => api.post("/stock/asignar-completo", data),
+  getTecnicoInventario:   (id) => api.get(`/stock/tecnico/${id}/inventario`),
+  getTecnicoActividadHoy: (id) => api.get(`/stock/tecnico/${id}/actividad-hoy`),
 }
 
 export default stockService

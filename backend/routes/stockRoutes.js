@@ -3,7 +3,8 @@ const router = express.Router()
 const {
   verStock, entradaStock, salidaStock,
   salidaStockMultiple, statsControlador, auditoriaControlador,
-  asignarCompleto, salidaDirecta
+  asignarCompleto, salidaDirecta,
+  inventarioTecnico, actividadHoyTecnico
 } = require("../controllers/stockController")
 const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
@@ -16,5 +17,7 @@ router.post("/salida-directa",   verificarToken, verificarRol("controlador", "ad
 router.get("/stats",             verificarToken, verificarRol("controlador"), statsControlador)
 router.get("/auditoria",         verificarToken, verificarRol("controlador"), auditoriaControlador)
 router.post("/asignar-completo", verificarToken, verificarRol("controlador", "admin"), asignarCompleto)
+router.get("/tecnico/:id/inventario",     verificarToken, verificarRol("controlador"), inventarioTecnico)
+router.get("/tecnico/:id/actividad-hoy",  verificarToken, verificarRol("controlador"), actividadHoyTecnico)
 
 module.exports = router

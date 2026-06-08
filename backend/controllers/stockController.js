@@ -494,3 +494,87 @@ exports.salidaDirecta = async (req, res) => {
     conn.release()
   }
 }
+// INVENTARIO ACTUAL DE UN TÉCNICO
+exports.inventarioTecnico = async (req, res) => {
+  try {
+    const { id } = req.params
+    const sede_id = req.user.sede_id
+
+    const [items] = await db.query(`
+      SELECT p.nombre, p.categoria, p.unidad, a.cantidad
+      FROM asignaciones_tecnicos a
+      JOIN productos p ON a.producto_id = p.id
+      WHERE a.tecnico_id = ? AND a.sede_id = ? AND a.cantidad > 0
+      ORDER BY p.categoria, p.nombre
+    `, [id, sede_id])
+
+    const [onus] = await db.query(`
+      SELECT o.codigo_pon, p.nombre as modelo
+      FROM onus o
+      JOIN productos p ON o.producto_id = p.id
+      WHERE o.tecnico_id = ?
+    `, [id])
+
+    res.json({ items, onus })
+  } catch (err) {
+    console.error("❌ inventarioTecnico:", err.message)
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// ACTIVIDAD DE HOY DE UN TÉCNICO (órdenes completadas + materiales usados)
+exports.actividadHoyTecnico = async (req, res) => {
+  try {
+    const { id } = req.params
+    const sede_id = req.user.sede_id
+
+    const [ordenes] = await db.query(`
+      SELECT 
+        o.id, o.nro_orden, o.abonado, o.direccion, o.servicio,
+        o.completada_en,
+        CASE
+          WHEN o.activacion_id IS NOT NULL THEN 'activacion'
+          WHEN o.averia_id     IS NOT NULL THEN 'averia'
+          ELSE 'otro'
+        END as tipo,
+        o.activacion_id, o.averia_id
+      FROM ordenes_servicio o
+      WHERE o.tecnico_id = ?
+        AND o.sede_id = ?
+        AND DATE(o.completada_en) = CURDATE()
+        AND o.estado_app = 'completada'
+      ORDER BY o.completada_en DESC
+    `, [id, sede_id])
+
+    // Para cada orden, traer los materiales usados
+    for (const orden of ordenes) {
+      if (orden.tipo === 'activacion' && orden.activacion_id) {
+        const [mats] = await db.query(`
+          SELECT p.nombre, p.unidad, am.cantidad
+          FROM activacion_materiales am
+          JOIN productos p ON am.producto_id = p.id
+          WHERE am.activacion_id = ?
+        `, [orden.activacion_id])
+        orden.materiales = mats
+      } else if (orden.tipo === 'averia' && orden.averia_id) {
+        const [mats] = await db.query(`
+          SELECT p.nombre, p.unidad, am.cantidad
+          FROM averia_materiales am
+          JOIN productos p ON am.producto_id = p.id
+          WHERE am.averia_id = ?
+        `, [orden.averia_id])
+        orden.materiales = mats
+      } else {
+        orden.materiales = []
+      }
+      // limpiar campos internos
+      delete orden.activacion_id
+      delete orden.averia_id
+    }
+
+    res.json(ordenes)
+  } catch (err) {
+    console.error("❌ actividadHoyTecnico:", err.message)
+    res.status(500).json({ message: err.message })
+  }
+}

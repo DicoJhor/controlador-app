@@ -33,6 +33,8 @@ const allowedOrigins = [
   ...(process.env.FRONTEND_URL?.split(',').map(o => o.trim()) || []),
   "https://inventario.evelynsac.com",
   "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
   "capacitor://localhost",
   "http://localhost",
   "https://localhost",
@@ -40,6 +42,7 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
+    console.log("🌐 ORIGIN:", origin)
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true)
     } else {

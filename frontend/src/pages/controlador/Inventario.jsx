@@ -8,6 +8,7 @@ import activosService from "../../services/activosService";
 import productosService from "../../services/productosService";
 import onuService from "../../services/onuService";
 import { useAuth } from "../../hooks/useAuth";
+import * as XLSX from "xlsx"
 
 function Icon({ d, size = 16, color = "currentColor" }) {
   return (
@@ -493,6 +494,61 @@ export default function CtrlInventario() {
     }
   };
 
+  const exportarExcel = async () => {
+    const wb = XLSX.utils.book_new()
+
+    // ── Hoja 1: Stock ──────────────────────────────────────
+    const stockData = stock.map(i => ({
+      "Código":         i.codigo ?? "—",
+      "Producto":       i.producto,
+      "Categoría":      i.categoria ?? "—",
+      "Cantidad":       Number(i.cantidad),
+      "Unidad":         i.unidad ?? "—",
+      "Metros disp.":   i.metros_disponibles ? Number(i.metros_disponibles) : "—",
+      "Stock mínimo":   i.stock_minimo ?? 0,
+      "Estado":         i.stock_minimo > 0 && i.cantidad <= i.stock_minimo
+                          ? "Bajo stock"
+                          : i.stock_minimo > 0 && i.cantidad <= i.stock_minimo * 1.5
+                          ? "Atención"
+                          : "OK",
+    }))
+    const wsStock = XLSX.utils.json_to_sheet(stockData)
+    XLSX.utils.book_append_sheet(wb, wsStock, "Stock")
+
+    // ── Hoja 2: ONUs ───────────────────────────────────────
+    const onusItems = stock.filter(i => i.categoria === "onu")
+    let onuData = []
+
+    for (const item of onusItems) {
+      try {
+        const onus = await onuService.getBySedeProducto(sedeId, item.producto_id, false)
+        for (const onu of onus) {
+          onuData.push({
+            "Producto":     item.producto,
+            "Código PON":   onu.codigo_pon ?? "Sin código",
+            "Estado":       onu.activacion_id ? "Instalada"
+                          : onu.tecnico_id   ? "Asignada a técnico"
+                          : onu.salida_directa ? "Salida directa"
+                          : "Disponible",
+            "Cliente":      onu.cliente ?? "—",
+            "Fecha registro": onu.created_at
+                              ? new Date(onu.created_at).toLocaleDateString("es-PE")
+                              : "—",
+          })
+        }
+      } catch (e) {
+        console.error("Error cargando ONUs para export:", e)
+      }
+    }
+
+    const wsOnus = XLSX.utils.json_to_sheet(onuData.length > 0 ? onuData : [{ "Info": "Sin ONUs registradas" }])
+    XLSX.utils.book_append_sheet(wb, wsOnus, "ONUs")
+
+    // ── Descargar ──────────────────────────────────────────
+    const fecha = new Date().toISOString().slice(0, 10)
+    XLSX.writeFile(wb, `inventario_${fecha}.xlsx`)
+  }
+
   const productosYaAgregados = salida.items.map(i => String(i.producto_id));
 
   const openOnuModal = async (item) => {
@@ -500,6 +556,7 @@ export default function CtrlInventario() {
     setOnuModal(true)
     setOnuEditando(null)
     setOnuCodigo("")
+    setOnusLista([])
     setLoadingOnus(true)
     try {
       // DESPUÉS
@@ -612,6 +669,12 @@ export default function CtrlInventario() {
               <Icon d={IC.plus} size={15} />
               Nuevo producto
             </button>
+            <button className="btn btn-outline" onClick={exportarExcel}>
+              <Icon d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4 M7 10l5 5 5-5 M12 15V3" size={15} />
+              Exportar Excel
+            </button>
+
+
             <button className="btn btn-outline" onClick={() => {
               setSalidaDirecta(emptySalidaDirecta);
               setSalidaDirectaSearch("");
