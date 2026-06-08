@@ -544,11 +544,13 @@ exports.inventarioTecnico = async (req, res) => {
         p.codigo AS codigo_producto
       FROM onus o
       JOIN productos p ON p.id = o.producto_id
-      WHERE o.tecnico_id = ?
+      WHERE o.sede_id = ?
+        AND o.tecnico_id IS NULL
         AND o.activacion_id IS NULL
         AND o.averia_id IS NULL
+        AND o.salida_directa = 0
       ORDER BY o.id ASC
-    `, [id])
+    `, [sede_id])
 
     res.json({ items, onus })
   } catch (err) {
