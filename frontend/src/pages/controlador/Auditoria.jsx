@@ -87,12 +87,11 @@ function TecnicoCard({ tecnico }) {
   const [expanded,   setExpanded]   = useState(false);
   const [inventario, setInventario] = useState(null);
   const [actividad,  setActividad]  = useState(null);
-  const [loading,    setLoading]    = useState(false);
-  const [tab,        setTab]        = useState("actividad"); // "actividad" | "inventario"
+  const [loading,    setLoading]    = useState(true);
+  const [tab,        setTab]        = useState("actividad");
 
-  const toggle = async () => {
-    if (!expanded && !inventario) {
-      setLoading(true);
+  useEffect(() => {
+    const cargar = async () => {
       try {
         const [inv, act] = await Promise.all([
           stockService.getTecnicoInventario(tecnico.id),
@@ -105,15 +104,17 @@ function TecnicoCard({ tecnico }) {
       } finally {
         setLoading(false);
       }
-    }
-    setExpanded(v => !v);
-  };
+    };
+    cargar();
+  }, [tecnico.id]);
 
-  const totalOrdenes  = actividad?.length ?? 0;
-  const totalItems = inventario
+  const toggle = () => setExpanded(v => !v);
+
+  const totalOrdenes = actividad?.length ?? null;
+  const totalItems   = inventario
     ? inventario.items.reduce((s, i) => s + Number(i.cantidad), 0)
-    : Number(tecnico.itemsAsignados) || 0;
-  const totalOnus     = inventario?.onus?.length ?? 0;
+    : null;
+  const totalOnus    = inventario?.onus?.length ?? null;
 
   return (
     <div style={{ ...S.tecCard, ...(expanded ? S.tecCardOpen : {}) }}>
@@ -131,18 +132,24 @@ function TecnicoCard({ tecnico }) {
         <div style={S.quickStats}>
           <div style={S.quickStat}>
             <Icon d={IC.check} size={13} color="var(--success, #059669)" />
-            <span style={{ color: "var(--success, #059669)", fontWeight: 700 }}>{totalOrdenes}</span>
+            <span style={{ color: "var(--success, #059669)", fontWeight: 700 }}>
+              {totalOrdenes ?? "—"}
+            </span>
             <span style={{ color: "var(--text-muted)", fontSize: 11 }}>hoy</span>
           </div>
           <div style={S.quickStat}>
             <Icon d={IC.box} size={13} color="var(--primary, #2563eb)" />
-            <span style={{ color: "var(--primary, #2563eb)", fontWeight: 700 }}>{totalItems}</span>
+            <span style={{ color: "var(--primary, #2563eb)", fontWeight: 700 }}>
+              {totalItems ?? "—"}
+            </span>
             <span style={{ color: "var(--text-muted)", fontSize: 11 }}>items</span>
           </div>
-          {totalOnus > 0 && (
+          {(totalOnus === null || totalOnus > 0) && (
             <div style={S.quickStat}>
               <Icon d={IC.onu} size={13} color="var(--ctrl, #7c3aed)" />
-              <span style={{ color: "var(--ctrl, #7c3aed)", fontWeight: 700 }}>{totalOnus}</span>
+              <span style={{ color: "var(--ctrl, #7c3aed)", fontWeight: 700 }}>
+                {totalOnus ?? "—"}
+              </span>
               <span style={{ color: "var(--text-muted)", fontSize: 11 }}>ONUs</span>
             </div>
           )}
