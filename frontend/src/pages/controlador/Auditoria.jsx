@@ -111,8 +111,8 @@ function TecnicoCard({ tecnico }) {
   const toggle = () => setExpanded(v => !v);
 
   const totalOrdenes = actividad?.length ?? null;
-  const totalItems   = inventario
-    ? inventario.items.reduce((s, i) => s + Number(i.cantidad), 0)
+  const totalItems = inventario
+    ? inventario.items.reduce((s, i) => s + Number(i.disponible), 0)
     : null;
   const totalOnus    = inventario?.onus?.length ?? null;
 
@@ -211,7 +211,7 @@ function TecnicoCard({ tecnico }) {
                       <thead>
                         <tr>
                           <th style={S.th}>Producto</th>
-                          <th style={{ ...S.th, textAlign: "right" }}>Cantidad</th>
+                          <th style={{ ...S.th, textAlign: "right" }}>Disponible</th>
                           <th style={{ ...S.th, color: "var(--text-muted)" }}>Unidad</th>
                         </tr>
                       </thead>
@@ -224,8 +224,12 @@ function TecnicoCard({ tecnico }) {
                                 <span style={{ fontWeight: 600, fontSize: 13 }}>{item.nombre}</span>
                               </div>
                             </td>
-                            <td style={{ ...S.td, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
-                              {item.cantidad}
+                            <td style={{ ...S.td, textAlign: "right", fontWeight: 700, fontVariantNumeric: "tabular-nums",
+                              color: item.disponible === 0 ? "var(--danger)" : "var(--success)" }}>
+                              {item.disponible}
+                              {item.es_medible && item.metros_por_unidad && (
+                                <span style={{ fontSize: 11, color: "var(--text-muted)", marginLeft: 4 }}>m</span>
+                              )}
                             </td>
                             <td style={{ ...S.td, color: "var(--text-muted)", fontSize: 12 }}>
                               {item.unidad ?? "—"}
