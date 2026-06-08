@@ -37,6 +37,7 @@ exports.getBySedeProducto = async (req, res) => {
   try {
     const { sede_id, producto_id } = req.params
     const { solo_disponibles } = req.query
+    console.log("solo_disponibles:", solo_disponibles, typeof solo_disponibles)
 
     let query = `
       SELECT id, codigo_pon, tecnico_id, activacion_id, cliente, created_at, salida_directa
