@@ -497,22 +497,57 @@ exports.salidaDirecta = async (req, res) => {
 // INVENTARIO ACTUAL DE UN TÉCNICO
 exports.inventarioTecnico = async (req, res) => {
   try {
-    const { id } = req.params
-    const sede_id = req.user.sede_id
+    const { id }    = req.params
+    const sede_id   = req.user.sede_id
 
-    const [items] = await db.query(`
-      SELECT p.nombre, p.categoria, p.unidad, a.cantidad
+    const [rows] = await db.query(`
+      SELECT
+        a.id,
+        p.id       AS producto_id,
+        p.codigo,
+        p.nombre,
+        p.unidad,
+        p.es_medible,
+        p.categoria,
+        p.metros_por_unidad,
+        a.cantidad AS asignado_unidades,
+        CASE
+          WHEN p.es_medible = 1 AND p.metros_por_unidad IS NOT NULL
+          THEN a.cantidad * p.metros_por_unidad
+          ELSE a.cantidad
+        END AS asignado,
+        COALESCE(SUM(c.cantidad), 0) AS usado
       FROM asignaciones_tecnicos a
       JOIN productos p ON a.producto_id = p.id
-      WHERE a.tecnico_id = ? AND a.sede_id = ? AND a.cantidad > 0
-      ORDER BY p.categoria, p.nombre
-    `, [id, sede_id])
+      LEFT JOIN consumo_tecnico c
+        ON c.producto_id = p.id AND c.tecnico_id = a.tecnico_id
+      WHERE a.tecnico_id = ?
+      GROUP BY a.id, p.id
+    `, [id])
+
+    const items = rows.map(r => ({
+      ...r,
+      asignado:          parseFloat(r.asignado),
+      asignado_unidades: parseFloat(r.asignado_unidades),
+      metros_por_unidad: r.metros_por_unidad ? parseFloat(r.metros_por_unidad) : null,
+      usado:             parseFloat(r.usado),
+      disponible:        parseFloat(r.asignado) - parseFloat(r.usado),
+      es_medible:        Boolean(r.es_medible),
+    }))
 
     const [onus] = await db.query(`
-      SELECT o.codigo_pon, p.nombre as modelo
+      SELECT
+        o.id,
+        o.codigo_pon,
+        p.id     AS producto_id,
+        p.nombre,
+        p.codigo AS codigo_producto
       FROM onus o
-      JOIN productos p ON o.producto_id = p.id
+      JOIN productos p ON p.id = o.producto_id
       WHERE o.tecnico_id = ?
+        AND o.activacion_id IS NULL
+        AND o.averia_id IS NULL
+      ORDER BY o.id ASC
     `, [id])
 
     res.json({ items, onus })
