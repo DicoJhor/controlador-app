@@ -560,7 +560,7 @@ export default function CtrlInventario() {
     setLoadingOnus(true)
     try {
       // DESPUÉS
-      const data = await onuService.getBySedeProducto(sedeId, item.producto_id, false)
+      const data = await onuService.getBySedeProducto(sedeId, item.producto_id, true)
       console.log("onus:", JSON.stringify(data))
       setOnusLista(data)
     } catch {
@@ -1562,11 +1562,6 @@ export default function CtrlInventario() {
                       <span style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
                         Sin código PON
                       </span>
-                    )}
-                    {onu.tecnico_id && (
-                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                        Asignada a técnico
-                      </div>
                     )}
                   </div>
 
