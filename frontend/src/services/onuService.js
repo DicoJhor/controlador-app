@@ -6,9 +6,7 @@ const onuService = {
 
   // DESPUÉS
   getBySedeProducto: (sede_id, producto_id, soloDisponibles = false) =>
-    api.get(`/onus/sede/${sede_id}/producto/${producto_id}`, {
-      params: { solo_disponibles: soloDisponibles }
-    }),
+    api.get(`/onus/sede/${sede_id}/producto/${producto_id}?solo_disponibles=${soloDisponibles}`),
 
   actualizarCodigo: (id, codigo_pon) =>
     api.patch(`/onus/${id}/codigo`, { codigo_pon }),
