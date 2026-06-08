@@ -560,7 +560,7 @@ export default function CtrlInventario() {
     setLoadingOnus(true)
     try {
       // DESPUÉS
-      const data = await onuService.getBySedeProducto(sedeId, item.producto_id, true)
+      const data = await onuService.getBySedeProducto(sedeId, item.producto_id, false)
       console.log("onus:", JSON.stringify(data))
       setOnusLista(data)
     } catch {
