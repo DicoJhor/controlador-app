@@ -23,6 +23,7 @@ function Icon({ d, size = 16, color = "currentColor" }) {
 const IC = {
   search:  "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
   x:       "M18 6L6 18 M6 6l12 12",
+  upload:  "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4 M17 8l-5-5-5 5 M12 3v12",
   copy:    "M8 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-2 M8 4a2 2 0 012-2h4a2 2 0 012 2v0a2 2 0 01-2 2h-4a2 2 0 01-2-2z",
   check:   "M20 6L9 17l-5-5",
   refresh: "M23 4v6h-6 M1 20v-6h6 M3.51 9a9 9 0 0114.85-3.36L23 10 M1 14l4.64 4.36A9 9 0 0020.49 15",
@@ -103,7 +104,11 @@ export default function ServiciosList() {
   const [loadingDetalle, setLoadingDetalle] = useState(false);
   const [copiadoMat,     setCopiadoMat]     = useState(false);
   const [copiadoTodo,    setCopiadoTodo]    = useState(false);
-  const [filtroFecha, setFiltroFecha] = useState({ desde: "", hasta: "" });
+  const [filtroFecha,   setFiltroFecha]   = useState({ desde: "", hasta: "" });
+  const [subiendoExcel, setSubiendoExcel] = useState(false);
+  const [uploadResult,  setUploadResult]  = useState(null);
+  const [duplicados,    setDuplicados]    = useState([]);
+  const fileInputRef = useRef();
 
   const { user } = useAuth();
 
@@ -121,6 +126,37 @@ export default function ServiciosList() {
   };
 
   useEffect(() => { cargarOrdenes(); }, [filtroEstado]);
+
+  const handleExcelChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = "";
+    setSubiendoExcel(true);
+    setUploadResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("archivo", file);
+      const res = await ordenesService.uploadExcel(fd);
+      setUploadResult(res.resumen);
+      if (res.resumen.duplicadas?.length > 0) setDuplicados(res.resumen.duplicadas);
+      await cargarOrdenes();
+    } catch (err) {
+      alert("Error al procesar el Excel: " + err.message);
+    } finally {
+      setSubiendoExcel(false);
+    }
+  };
+
+  const confirmarDuplicado = async (index, ordenId, datos) => {
+    try {
+      await ordenesService.confirmarDuplicado(ordenId, datos);
+      const restantes = duplicados.filter((_, i) => i !== index);
+      setDuplicados(restantes);
+      if (restantes.length === 0) await cargarOrdenes();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
   const abrirDetalle = async (orden) => {
     setOrdenDetalle({ ...orden, materiales: null, fotos: null });
@@ -343,6 +379,61 @@ export default function ServiciosList() {
 
   return (
     <>
+      {/* Alerta resultado Excel */}
+      {uploadResult && (
+        <div className="alert alert-success" style={{ marginBottom: 12, fontSize: 13, display: "flex", alignItems: "center", gap: 10 }}>
+          <Icon d={IC.check} size={15} color="var(--success)" />
+          <span>
+            Excel procesado: <strong>{uploadResult.insertadas} nuevas</strong>
+            {uploadResult.actualizadas > 0 && <>, <strong>{uploadResult.actualizadas} actualizadas</strong></>}
+            {uploadResult.duplicadas?.length > 0 && (
+              <> · <strong style={{ color: "#856404" }}>{uploadResult.duplicadas.length} duplicadas</strong></>
+            )}
+          </span>
+          <button onClick={() => setUploadResult(null)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer" }}>
+            <Icon d={IC.x} size={13} />
+          </button>
+        </div>
+      )}
+
+      {/* Modal duplicados */}
+      {duplicados.length > 0 && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "rgba(0,0,0,.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "white", borderRadius: 14, maxWidth: 520, width: "100%", boxShadow: "0 8px 40px rgba(0,0,0,.2)", overflow: "hidden" }}>
+            <div style={{ padding: "16px 20px", background: "#fff3cd", borderBottom: "1px solid #ffc107", display: "flex", alignItems: "center", gap: 10 }}>
+              <Icon d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z M12 9v4 M12 17h.01" size={18} color="#856404" />
+              <div style={{ fontWeight: 700, fontSize: 15, color: "#856404" }}>Órdenes duplicadas — ¿reemplazar?</div>
+              <button onClick={() => setDuplicados([])} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer" }}>
+                <Icon d={IC.x} size={16} color="#856404" />
+              </button>
+            </div>
+            <div style={{ padding: 16, maxHeight: 320, overflowY: "auto" }}>
+              {duplicados.map((d, i) => (
+                <div key={i} style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid var(--border)", marginBottom: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: 13 }}>{d.abonado}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "monospace" }}>{d.nro_contrato}</div>
+                    <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Orden #{d.nro_orden} · {d.fecha_crea}</div>
+                  </div>
+                  {d.protegida ? (
+                    <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>
+                      ✓ Ya completada — no se puede reemplazar
+                    </span>
+                  ) : (
+                    <button className="btn btn-warning btn-sm" onClick={() => confirmarDuplicado(i, d.orden_id, d)}>
+                      Reemplazar
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div style={{ padding: "12px 20px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end" }}>
+              <button className="btn btn-outline btn-sm" onClick={() => setDuplicados([])}>Ignorar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}
         onClick={() => setOpenDD(null)}>
 
@@ -355,10 +446,28 @@ export default function ServiciosList() {
             </div>
             <div style={styles.sectionSubtitle}>Vista de secretaria — solo lectura</div>
           </div>
-          <button type="button" onClick={cargarOrdenes} style={styles.refreshBtn}>
-            <Icon d={IC.refresh} size={14} />
-            Actualizar
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xls,.xlsx"
+              style={{ display: "none" }}
+              onChange={handleExcelChange}
+              disabled={subiendoExcel}
+            />
+            <button
+              className="btn btn-primary"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={subiendoExcel}
+            >
+              <Icon d={IC.upload} size={15} />
+              {subiendoExcel ? "Cargando..." : "Cargar Excel"}
+            </button>
+            <button type="button" onClick={cargarOrdenes} style={styles.refreshBtn}>
+              <Icon d={IC.refresh} size={14} />
+              Actualizar
+            </button>
+          </div>
         </div>
 
         {/* Filtros */}

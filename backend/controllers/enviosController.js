@@ -13,6 +13,15 @@ exports.crearEnvio = async (req, res) => {
 
     if (!sede_id)     return res.status(400).json({ message: "La sede es obligatoria" })
     if (!guia)        return res.status(400).json({ message: "La guía es obligatoria" })
+
+    // Verificar que la sede origen tenga permiso de envío
+    const [[sedeOrigen]] = await conn.query(
+      "SELECT puede_enviar FROM sedes WHERE id = ?",
+      [sede_origen_id]
+    )
+    if (!sedeOrigen?.puede_enviar) {
+      return res.status(403).json({ message: "Tu sede no tiene permiso para realizar envíos." })
+    }
     if (!fecha_envio) return res.status(400).json({ message: "La fecha es obligatoria" })
     if (!productos || productos.length === 0)
       return res.status(400).json({ message: "Debe seleccionar al menos un producto" })

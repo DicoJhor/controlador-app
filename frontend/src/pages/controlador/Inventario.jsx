@@ -113,6 +113,7 @@ function VarianteBadge({ talla, genero }) {
 export default function CtrlInventario() {
   const { user } = useAuth();
   const sedeId = user?.sede_id;
+  const [puedoEnviar, setPuedoEnviar] = useState(false);
 
   // ── Tabs ───────────────────────────────────────────────
   const [tab, setTab] = useState("stock");
@@ -162,8 +163,23 @@ export default function CtrlInventario() {
   const [activoForm,     setActivoForm]     = useState(emptyActivoForm);
 
   const [busquedaItem, setBusquedaItem] = useState("");
+  const [sedes,        setSedes]        = useState([]);
+  const [envioForm,    setEnvioForm]    = useState({ sede_id: "", guia: "", comentario: "", fecha_envio: new Date().toISOString().split("T")[0], productos: [] });
+  const [envioSearch,  setEnvioSearch]  = useState("");
+  const [envioError,   setEnvioError]   = useState("");
 
-  useEffect(() => { cargarDatos(); }, []);
+  useEffect(() => {
+    cargarDatos();
+    if (sedeId) {
+      import("../../services/sedesService").then(m =>
+        m.default.getAll().then(todasSedes => {
+          const miSede = todasSedes.find(s => s.id === sedeId);
+          setPuedoEnviar(miSede?.puede_enviar === 1 || sedeId === 2);
+          setSedes(todasSedes.filter(s => s.id !== sedeId));
+        }).catch(() => {})
+      );
+    }
+  }, []);
 
   const cargarDatos = () =>
     Promise.all([stockService.getStock(), stockService.getStats()])
@@ -587,6 +603,40 @@ export default function CtrlInventario() {
     }
   }
 
+  const handleEnviar = async () => {
+    setEnvioError("");
+    if (!envioForm.sede_id)               return setEnvioError("Seleccioná una sede destino.");
+    if (!envioForm.guia.trim())           return setEnvioError("Ingresá el número de guía.");
+    if (!envioForm.fecha_envio)           return setEnvioError("Ingresá la fecha de envío.");
+    if (envioForm.productos.length === 0) return setEnvioError("Agregá al menos un producto.");
+    for (const p of envioForm.productos) {
+      if (!p.cantidad || p.cantidad <= 0)  return setEnvioError(`Cantidad inválida en "${p.nombre}".`);
+      if (p.cantidad > p.stock_disponible) return setEnvioError(`Stock insuficiente para "${p.nombre}". Disponible: ${p.stock_disponible}.`);
+    }
+    setSaving(true);
+    try {
+      const { default: enviosService } = await import("../../services/enviosService");
+      await enviosService.create({
+        sede_id:     envioForm.sede_id,
+        guia:        envioForm.guia,
+        comentario:  envioForm.comentario,
+        fecha_envio: envioForm.fecha_envio,
+        productos:   envioForm.productos.map(p => ({ producto_id: p.producto_id, cantidad: p.cantidad })),
+      });
+      const data = await stockService.getStock();
+      setStock(data);
+      setModal(false);
+      setEnvioForm({ sede_id: "", guia: "", comentario: "", fecha_envio: new Date().toISOString().split("T")[0], productos: [] });
+      setEnvioSearch("");
+      setSuccess("envio");
+      setTimeout(() => setSuccess(null), 3500);
+    } catch (err) {
+      setEnvioError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <div style={{ padding: 32, color: "var(--text-muted)" }}>Cargando inventario...</div>;
   if (error)   return <div className="alert alert-danger">{error}</div>;
 
@@ -610,6 +660,12 @@ export default function CtrlInventario() {
         <div className="alert alert-success">
           <Icon d={IC.check} size={15} color="var(--success)" />
           Producto creado y agregado al inventario de tu sede.
+        </div>
+      )}
+      {success === "envio" && (
+        <div className="alert alert-success">
+          <Icon d={IC.check} size={15} color="var(--success)" />
+          Envío registrado correctamente.
         </div>
       )}
       {success === "salidaDirecta" && (
@@ -655,6 +711,17 @@ export default function CtrlInventario() {
               <Icon d={IC.search} size={16} color="var(--text-muted)" />
               <input placeholder="Buscar ítem..." value={search} onChange={e => setSearch(e.target.value)} />
             </div>
+            {puedoEnviar && (
+              <button className="btn btn-outline" onClick={() => {
+                setEnvioForm({ sede_id: "", guia: "", comentario: "", fecha_envio: new Date().toISOString().split("T")[0], productos: [] });
+                setEnvioSearch("");
+                setEnvioError("");
+                setModal("envio");
+              }}>
+                <Icon d="M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z" size={15} />
+                Enviar productos
+              </button>
+            )}
             <button className="btn btn-outline" onClick={async () => {
               setEntrada(emptyEntrada);
               setEntradaSearch("");
@@ -1850,6 +1917,129 @@ export default function CtrlInventario() {
           </Modal>
         );
       })()}
+
+      {/* Modal Enviar productos */}
+      {modal === "envio" && (
+        <Modal title="Enviar productos a sede" onClose={() => setModal(false)}
+          footer={
+            <>
+              <button className="btn btn-outline" onClick={() => setModal(false)} disabled={saving}>Cancelar</button>
+              <button className="btn btn-primary" onClick={handleEnviar} disabled={saving}>
+                {saving ? "Enviando..." : "Confirmar envío"}
+              </button>
+            </>
+          }
+        >
+          {envioError && (
+            <div className="alert alert-danger" style={{ marginBottom: 12 }}>
+              <Icon d={IC.alert} size={14} color="var(--danger)" /> {envioError}
+            </div>
+          )}
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Sede destino *</label>
+              <select className="form-input" value={envioForm.sede_id}
+                onChange={e => setEnvioForm(prev => ({ ...prev, sede_id: e.target.value }))}>
+                <option value="">Seleccionar sede...</option>
+                {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
+              </select>
+            </div>
+            <div className="form-group">
+              <label className="form-label">Fecha de envío *</label>
+              <input className="form-input" type="date" value={envioForm.fecha_envio}
+                onChange={e => setEnvioForm(prev => ({ ...prev, fecha_envio: e.target.value }))} />
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Número de guía *</label>
+            <input className="form-input" placeholder="Ej: GU-2024-001" value={envioForm.guia}
+              onChange={e => setEnvioForm(prev => ({ ...prev, guia: e.target.value }))} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Comentario</label>
+            <input className="form-input" placeholder="Opcional..." value={envioForm.comentario}
+              onChange={e => setEnvioForm(prev => ({ ...prev, comentario: e.target.value }))} />
+          </div>
+          <div className="form-group" style={{ position: "relative" }}>
+            <label className="form-label">Agregar productos *</label>
+            <div className="search-box">
+              <Icon d={IC.search} size={15} color="var(--text-muted)" />
+              <input placeholder="Buscar producto del stock..." value={envioSearch}
+                onChange={e => setEnvioSearch(e.target.value)} />
+            </div>
+            {envioSearch.length > 0 && (
+              <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50,
+                background: "white", border: "1px solid var(--border)", borderRadius: 8,
+                maxHeight: 200, overflowY: "auto", boxShadow: "0 4px 12px rgba(0,0,0,.1)" }}>
+                {stock
+                  .filter(s =>
+                    (s.producto.toLowerCase().includes(envioSearch.toLowerCase()) ||
+                    (s.codigo ?? "").toLowerCase().includes(envioSearch.toLowerCase())) &&
+                    s.cantidad > 0 &&
+                    !envioForm.productos.find(p => p.producto_id === s.producto_id)
+                  )
+                  .map(s => (
+                    <div key={s.producto_id}
+                      onClick={() => {
+                        setEnvioForm(prev => ({
+                          ...prev,
+                          productos: [...prev.productos, {
+                            producto_id:      s.producto_id,
+                            nombre:           s.producto,
+                            codigo:           s.codigo,
+                            stock_disponible: s.cantidad,
+                            unidad:           s.unidad,
+                            cantidad:         1,
+                          }]
+                        }));
+                        setEnvioSearch("");
+                      }}
+                      style={{ padding: "8px 14px", cursor: "pointer", fontSize: 13,
+                        display: "flex", justifyContent: "space-between",
+                        borderBottom: "1px solid var(--border)" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "var(--hover)"}
+                      onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      <span><strong>{s.codigo ?? "—"}</strong> — {s.producto}</span>
+                      <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Stock: {s.cantidad}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+          {envioForm.productos.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
+              {envioForm.productos.map(p => (
+                <div key={p.producto_id} style={{ display: "flex", alignItems: "center", gap: 8,
+                  padding: "8px 10px", background: "var(--hover)", borderRadius: 8,
+                  border: "1px solid var(--border)" }}>
+                  <div style={{ flex: 1, fontSize: 13 }}>
+                    <span className="fw-600">{p.codigo ?? "—"}</span> — {p.nombre}
+                    <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 12 }}>
+                      (disp: {p.stock_disponible} {p.unidad ?? ""})
+                    </span>
+                  </div>
+                  <input type="number" min={1} max={p.stock_disponible} value={p.cantidad}
+                    onChange={e => setEnvioForm(prev => ({
+                      ...prev,
+                      productos: prev.productos.map(x =>
+                        x.producto_id === p.producto_id ? { ...x, cantidad: Number(e.target.value) } : x
+                      )
+                    }))}
+                    style={{ width: 70, padding: "4px 8px", borderRadius: 6,
+                      border: "1px solid var(--border)", fontSize: 13 }} />
+                  <button className="btn btn-danger-outline btn-sm btn-icon"
+                    onClick={() => setEnvioForm(prev => ({
+                      ...prev,
+                      productos: prev.productos.filter(x => x.producto_id !== p.producto_id)
+                    }))}>
+                    <Icon d={IC.remove} size={12} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
 
       {/* Modal crear / editar activo */}
       {(activoModal === "crear" || activoModal === "editar") && (

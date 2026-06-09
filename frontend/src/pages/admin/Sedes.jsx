@@ -17,6 +17,7 @@ function Icon({ d, size = 16, color = "currentColor" }) {
 const IC = {
   plus:     "M12 5v14 M5 12h14",
   search:   "M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0",
+  send:     "M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z",
   edit:     "M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7 M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z",
   trash:    "M3 6h18 M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6 M10 11v6 M14 11v6 M9 6V4h6v2",
   building: "M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z",
@@ -104,6 +105,16 @@ export default function AdminSedes() {
       setModal(false);
     } catch (err) { alert(err.message); }
     finally { setSaving(false); }
+  };
+
+  const togglePuedeEnviar = async (sede) => {
+    const nuevo = sede.puede_enviar ? 0 : 1;
+    try {
+      await sedesService.update(sede.id, { ...sede, puede_enviar: nuevo });
+      setSedes(prev => prev.map(s =>
+        s.id === sede.id ? { ...s, puede_enviar: nuevo } : s
+      ));
+    } catch (err) { alert(err.message); }
   };
 
   const field = (key) => ({
@@ -270,10 +281,29 @@ export default function AdminSedes() {
                 </div>
               </div>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                 <Badge variant={s.estado === 1 ? "active" : "inactive"}>
                   {s.estado === 1 ? "Activa" : "Inactiva"}
                 </Badge>
+                {/* Toggle puede_enviar — solo superadmin, solo sedes no centrales */}
+                {isSuperadmin && s.id !== 2 && (
+                  <button
+                    onClick={() => togglePuedeEnviar(s)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 6,
+                      padding: "5px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600,
+                      border: "1.5px solid",
+                      borderColor: s.puede_enviar ? "#16a34a" : "var(--border)",
+                      background:  s.puede_enviar ? "#dcfce7" : "white",
+                      color:       s.puede_enviar ? "#16a34a" : "var(--text-muted)",
+                      cursor: "pointer", transition: "all .15s",
+                    }}
+                    title={s.puede_enviar ? "Quitar permiso de envío" : "Dar permiso de envío"}
+                  >
+                    <Icon d={IC.send} size={13} color={s.puede_enviar ? "#16a34a" : "var(--text-muted)"} />
+                    {s.puede_enviar ? "Puede enviar" : "Sin permiso envío"}
+                  </button>
+                )}
                 <button className="btn btn-outline btn-sm" onClick={() => openEditar(s)}>
                   <Icon d={IC.edit} size={13} /> Editar
                 </button>

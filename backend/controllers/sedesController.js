@@ -4,7 +4,7 @@ const db = require("../config/db")
 exports.getAll = async (req, res) => {
   try {
     const [rows] = await db.query(
-      "SELECT id, nombre, direccion, estado FROM sedes"
+      "SELECT id, nombre, direccion, estado, puede_enviar FROM sedes"
     )
     res.json(rows)
   } catch (err) {
@@ -34,11 +34,10 @@ exports.create = async (req, res) => {
 exports.update = async (req, res) => {
   try {
     const { id } = req.params
-    const { nombre, direccion, estado } = req.body
-
+    const { nombre, direccion, estado, puede_enviar } = req.body
     await db.query(
-      "UPDATE sedes SET nombre=?, direccion=?, estado=? WHERE id=?",
-      [nombre, direccion || null, estado, id]
+      "UPDATE sedes SET nombre=?, direccion=?, estado=?, puede_enviar=? WHERE id=?",
+      [nombre, direccion || null, estado, puede_enviar ?? 0, id]
     )
     res.json({ message: "Sede actualizada" })
   } catch (err) {

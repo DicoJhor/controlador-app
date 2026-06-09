@@ -415,7 +415,7 @@ router.get(
               observacion, fecha_crea, estado_app
        FROM ordenes_servicio
        WHERE sede_id = ? AND estado_app = 'pendiente'
-         AND servicio LIKE '%RETIRO DE EQUIPO%'
+         AND (servicio LIKE '%RETIRO DE EQUIPO%' OR servicio LIKE '%RECOJO DE EQUIPO%')
        ORDER BY fecha_crea DESC, nro_orden ASC`,
       [sedeId]
     );
@@ -497,7 +497,7 @@ router.post(
 
     const u = (orden.servicio ?? "").toUpperCase();
     const esCambioOnu = u.includes("CAMBIO DE EQUIPO");
-    const esRetiroEquipo = u.includes("RETIRO DE EQUIPO");
+    const esRetiroEquipo = u.includes("RETIRO DE EQUIPO") || u.includes("RECOJO DE EQUIPO");
     const esAveria = u.includes("AVERIA") || esCambioOnu;
 
     let items = [];
@@ -721,9 +721,10 @@ router.post(
 /* ── helpers locales ─────────────────────────────────────────────────────── */
 function clasificarServicio(s = "") {
   const u = s.toUpperCase();
-  if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia", tipoAveria: "cambio_onu" };
-  if (u.includes("AVERIA")) return { tab: "averia", tipoAveria: "comun" };
-  return { tab: "activacion", tipoAveria: null };
+  if (u.includes("RETIRO DE EQUIPO") || u.includes("RECOJO DE EQUIPO")) return { tab: "recojo",     tipoAveria: null };
+  if (u.includes("CAMBIO DE EQUIPO"))                                    return { tab: "averia",     tipoAveria: "cambio_onu" };
+  if (u.includes("AVERIA"))                                              return { tab: "averia",     tipoAveria: "comun" };
+  return                                                                        { tab: "activacion", tipoAveria: null };
 }
 
 function generarCodigo(prefijo) {

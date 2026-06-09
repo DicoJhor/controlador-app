@@ -84,10 +84,10 @@ function BtnWhatsApp({ telefono, servicio, abonado }) {
 
 function clasificarServicio(s = "") {
   const u = s.toUpperCase();
-  if (u.includes("RETIRO DE EQUIPO")) return { tab: "recojo",  tipoAveria: null };
-  if (u.includes("CAMBIO DE EQUIPO")) return { tab: "averia",  tipoAveria: "cambio_onu" };
-  if (u.includes("AVERIA"))           return { tab: "averia",  tipoAveria: "comun" };
-  return { tab: "activacion", tipoAveria: null };
+  if (u.includes("RETIRO DE EQUIPO") || u.includes("RECOJO DE EQUIPO")) return { tab: "recojo",     tipoAveria: null };
+  if (u.includes("CAMBIO DE EQUIPO"))                                    return { tab: "averia",     tipoAveria: "cambio_onu" };
+  if (u.includes("AVERIA"))                                              return { tab: "averia",     tipoAveria: "comun" };
+  return                                                                        { tab: "activacion", tipoAveria: null };
 }
 
 function labelServicio(s = "") {
