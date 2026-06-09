@@ -6,7 +6,7 @@ exports.crearEnvio = async (req, res) => {
   try {
     await conn.beginTransaction()
 
-    const { guia, comentario, fecha_envio, productos } = req.body
+    const { guia, comentario, fecha_envio, productos, onu_ids = [] } = req.body
     const sede_id      = Number(req.body.sede_id)
     const usuario_id   = req.user.id
     const sede_origen_id = req.user.sede_id || 2
@@ -145,14 +145,39 @@ exports.crearEnvio = async (req, res) => {
           [item.producto_id]
         )
         if (prod?.categoria === "onu") {
-          for (let i = 0; i < item.cantidad; i++) {
-            await conn.query(
-              "INSERT INTO onus (producto_id, sede_id, codigo_pon) VALUES (?, ?, NULL)",
-              [item.producto_id, sede_id]
-            )
+          // Solo sede central crea registros nuevos sin código
+          if (sede_origen_id === 2) {
+            for (let i = 0; i < item.cantidad; i++) {
+              await conn.query(
+                "INSERT INTO onus (producto_id, sede_id, codigo_pon) VALUES (?, ?, NULL)",
+                [item.producto_id, sede_id]
+              )
+            }
           }
+          // Las demás sedes mueven sus ONUs existentes vía onu_ids (se maneja abajo)
         }
       }
+    }
+
+    // Mover ONUs seleccionadas (solo sedes no centrales)
+    if (onu_ids.length > 0) {
+      const placeholders = onu_ids.map(() => "?").join(",")
+      const [onusVerificadas] = await conn.query(
+        `SELECT id FROM onus 
+         WHERE id IN (${placeholders}) 
+         AND sede_id = ? 
+         AND tecnico_id IS NULL 
+         AND activacion_id IS NULL`,
+        [...onu_ids, sede_origen_id]
+      )
+      if (onusVerificadas.length !== onu_ids.length) {
+        await conn.rollback()
+        return res.status(400).json({ message: "Algunas ONUs no están disponibles en tu sede." })
+      }
+      await conn.query(
+        `UPDATE onus SET sede_id = ? WHERE id IN (${placeholders})`,
+        [sede_id, ...onu_ids]
+      )
     }
 
     await conn.commit()

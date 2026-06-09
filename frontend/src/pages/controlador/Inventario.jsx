@@ -167,6 +167,9 @@ export default function CtrlInventario() {
   const [envioForm,    setEnvioForm]    = useState({ sede_id: "", guia: "", comentario: "", fecha_envio: new Date().toISOString().split("T")[0], productos: [] });
   const [envioSearch,  setEnvioSearch]  = useState("");
   const [envioError,   setEnvioError]   = useState("");
+  const [onusDisponiblesEnvio,   setOnusDisponiblesEnvio]   = useState({})
+  const [onusSeleccionadasEnvio, setOnusSeleccionadasEnvio] = useState({})
+  const [onuSearchEnvio,         setOnuSearchEnvio]         = useState({})
 
   useEffect(() => {
     cargarDatos();
@@ -616,18 +619,30 @@ export default function CtrlInventario() {
     setSaving(true);
     try {
       const { default: enviosService } = await import("../../services/enviosService");
+      const productosNormales = envioForm.productos
+        .filter(p => !p.es_onu || sedeId === 2)
+        .map(p => ({ producto_id: p.producto_id, cantidad: p.cantidad }))
+
+      const onuIds = sedeId !== 2
+        ? Object.values(onusSeleccionadasEnvio).flat()
+        : []
+
       await enviosService.create({
         sede_id:     envioForm.sede_id,
         guia:        envioForm.guia,
         comentario:  envioForm.comentario,
         fecha_envio: envioForm.fecha_envio,
-        productos:   envioForm.productos.map(p => ({ producto_id: p.producto_id, cantidad: p.cantidad })),
+        productos:   productosNormales,
+        onu_ids:     onuIds,
       });
       const data = await stockService.getStock();
       setStock(data);
       setModal(false);
       setEnvioForm({ sede_id: "", guia: "", comentario: "", fecha_envio: new Date().toISOString().split("T")[0], productos: [] });
       setEnvioSearch("");
+      setOnusDisponiblesEnvio({});
+      setOnusSeleccionadasEnvio({});
+      setOnuSearchEnvio({});
       setSuccess("envio");
       setTimeout(() => setSuccess(null), 3500);
     } catch (err) {
@@ -716,6 +731,9 @@ export default function CtrlInventario() {
                 setEnvioForm({ sede_id: "", guia: "", comentario: "", fecha_envio: new Date().toISOString().split("T")[0], productos: [] });
                 setEnvioSearch("");
                 setEnvioError("");
+                setOnusDisponiblesEnvio({});
+                setOnusSeleccionadasEnvio({});
+                setOnuSearchEnvio({});
                 setModal("envio");
               }}>
                 <Icon d="M22 2L11 13 M22 2L15 22l-4-9-9-4 22-7z" size={15} />
@@ -1984,14 +2002,18 @@ export default function CtrlInventario() {
                         setEnvioForm(prev => ({
                           ...prev,
                           productos: [...prev.productos, {
-                            producto_id:      s.producto_id,
-                            nombre:           s.producto,
-                            codigo:           s.codigo,
-                            stock_disponible: s.cantidad,
-                            unidad:           s.unidad,
-                            cantidad:         1,
+                            producto_id: s.producto_id, nombre: s.producto,
+                            codigo: s.codigo, stock_disponible: s.cantidad,
+                            unidad: s.unidad, cantidad: 1,
+                            es_onu: s.categoria === "onu",
                           }]
                         }));
+                        if (s.categoria === "onu" && sedeId !== 2) {
+                          onuService.getDisponibles(s.producto_id).then(data => {
+                            setOnusDisponiblesEnvio(prev => ({ ...prev, [s.producto_id]: data }));
+                            setOnusSeleccionadasEnvio(prev => ({ ...prev, [s.producto_id]: [] }));
+                          }).catch(() => {});
+                        }
                         setEnvioSearch("");
                       }}
                       style={{ padding: "8px 14px", cursor: "pointer", fontSize: 13,
@@ -2009,31 +2031,92 @@ export default function CtrlInventario() {
           {envioForm.productos.length > 0 && (
             <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 8 }}>
               {envioForm.productos.map(p => (
-                <div key={p.producto_id} style={{ display: "flex", alignItems: "center", gap: 8,
-                  padding: "8px 10px", background: "var(--hover)", borderRadius: 8,
-                  border: "1px solid var(--border)" }}>
-                  <div style={{ flex: 1, fontSize: 13 }}>
-                    <span className="fw-600">{p.codigo ?? "—"}</span> — {p.nombre}
-                    <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 12 }}>
-                      (disp: {p.stock_disponible} {p.unidad ?? ""})
-                    </span>
+                <div key={p.producto_id} style={{ marginBottom: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8,
+                    padding: "8px 10px", background: "var(--hover)", borderRadius: 8,
+                    border: "1px solid var(--border)" }}>
+                    <div style={{ flex: 1, fontSize: 13 }}>
+                      <span className="fw-600">{p.codigo ?? "—"}</span> — {p.nombre}
+                      <span style={{ color: "var(--text-muted)", marginLeft: 6, fontSize: 12 }}>
+                        (disp: {p.stock_disponible} {p.unidad ?? ""})
+                      </span>
+                    </div>
+                    {/* Sede central o producto no ONU → input cantidad normal */}
+                    {(sedeId === 2 || !p.es_onu) && (
+                      <input type="number" min={1} max={p.stock_disponible}
+                        value={p.cantidad}
+                        onChange={e => setEnvioForm(prev => ({
+                          ...prev,
+                          productos: prev.productos.map(x =>
+                            x.producto_id === p.producto_id ? { ...x, cantidad: Number(e.target.value) } : x
+                          )
+                        }))}
+                        style={{ width: 70, padding: "4px 8px", borderRadius: 6,
+                          border: "1px solid var(--border)", fontSize: 13 }} />
+                    )}
+                    <button className="btn btn-danger-outline btn-sm btn-icon"
+                      onClick={() => setEnvioForm(prev => ({
+                        ...prev,
+                        productos: prev.productos.filter(x => x.producto_id !== p.producto_id)
+                      }))}>
+                      <Icon d={IC.remove} size={12} />
+                    </button>
                   </div>
-                  <input type="number" min={1} max={p.stock_disponible} value={p.cantidad}
-                    onChange={e => setEnvioForm(prev => ({
-                      ...prev,
-                      productos: prev.productos.map(x =>
-                        x.producto_id === p.producto_id ? { ...x, cantidad: Number(e.target.value) } : x
-                      )
-                    }))}
-                    style={{ width: 70, padding: "4px 8px", borderRadius: 6,
-                      border: "1px solid var(--border)", fontSize: 13 }} />
-                  <button className="btn btn-danger-outline btn-sm btn-icon"
-                    onClick={() => setEnvioForm(prev => ({
-                      ...prev,
-                      productos: prev.productos.filter(x => x.producto_id !== p.producto_id)
-                    }))}>
-                    <Icon d={IC.remove} size={12} />
-                  </button>
+
+                  {/* Sede no central + es ONU → selector por código */}
+                  {p.es_onu && sedeId !== 2 && (() => {
+                    const disponibles   = onusDisponiblesEnvio[p.producto_id] ?? []
+                    const seleccionadas = onusSeleccionadasEnvio[p.producto_id] ?? []
+                    return (
+                      <div style={{ marginTop: 4, padding: "10px 12px",
+                        background: "var(--hover)", borderRadius: 8,
+                        border: "1px solid var(--border)" }}>
+                        <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-muted)",
+                          textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 8 }}>
+                          Seleccionar ONUs a enviar ({seleccionadas.length} seleccionadas)
+                        </div>
+                        {disponibles.length === 0 ? (
+                          <div style={{ fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
+                            Sin ONUs disponibles en esta sede
+                          </div>
+                        ) : (
+                          <>
+                            <div className="search-box" style={{ marginBottom: 8 }}>
+                              <Icon d={IC.search} size={14} color="var(--text-muted)" />
+                              <input placeholder="Filtrar por código PON..."
+                                value={onuSearchEnvio[p.producto_id] ?? ""}
+                                onChange={e => setOnuSearchEnvio(prev => ({ ...prev, [p.producto_id]: e.target.value }))}
+                                style={{ fontSize: 12, fontFamily: "monospace" }} />
+                            </div>
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                              {disponibles
+                                .filter(onu => !onuSearchEnvio[p.producto_id] ||
+                                  onu.codigo_pon?.toLowerCase().includes(onuSearchEnvio[p.producto_id].toLowerCase()))
+                                .map(onu => {
+                                  const sel = seleccionadas.includes(onu.id)
+                                  return (
+                                    <button key={onu.id} type="button"
+                                      onClick={() => setOnusSeleccionadasEnvio(prev => {
+                                        const actual = prev[p.producto_id] ?? []
+                                        const nuevas = sel ? actual.filter(id => id !== onu.id) : [...actual, onu.id]
+                                        return { ...prev, [p.producto_id]: nuevas }
+                                      })}
+                                      style={{ padding: "4px 10px", borderRadius: 6,
+                                        fontSize: 12, fontFamily: "monospace", cursor: "pointer", fontWeight: 600,
+                                        border: "1px solid",
+                                        borderColor: sel ? "var(--primary)" : "var(--border)",
+                                        background:  sel ? "var(--primary)" : "white",
+                                        color:       sel ? "white" : "var(--text)" }}>
+                                      {onu.codigo_pon ?? `ONU #${onu.id}`}
+                                    </button>
+                                  )
+                                })}
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               ))}
             </div>
