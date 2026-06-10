@@ -18,7 +18,6 @@ exports.verStock = async (req, res) => {
       FROM stock_sede ss
       JOIN productos p ON ss.producto_id = p.id
       WHERE ss.sede_id = ?
-        AND ss.cantidad > 0
     `, [sede_id])
     res.json(rows)
   } catch (err) {
@@ -544,13 +543,11 @@ exports.inventarioTecnico = async (req, res) => {
         p.codigo AS codigo_producto
       FROM onus o
       JOIN productos p ON p.id = o.producto_id
-      WHERE o.sede_id = ?
-        AND o.tecnico_id IS NULL
+      WHERE o.tecnico_id = ?
         AND o.activacion_id IS NULL
         AND o.averia_id IS NULL
-        AND o.salida_directa = 0
       ORDER BY o.id ASC
-    `, [sede_id])
+    `, [id])
 
     res.json({ items, onus })
   } catch (err) {
@@ -612,6 +609,91 @@ exports.actividadHoyTecnico = async (req, res) => {
     res.json(ordenes)
   } catch (err) {
     console.error("❌ actividadHoyTecnico:", err.message)
+    res.status(500).json({ message: err.message })
+  console.error("❌ actividadHoyTecnico:", err.message)
+    res.status(500).json({ message: err.message })
+  }
+}
+
+// HISTORIAL DE ASIGNACIONES A TÉCNICOS
+exports.getAsignaciones = async (req, res) => {
+  try {
+    const sede_id    = req.user.sede_id
+    const { tecnico_id, desde, hasta } = req.query
+
+    let where = "WHERE u.sede_id = ?"
+    const params = [sede_id]
+
+    if (tecnico_id) { where += " AND et.tecnico_id = ?";      params.push(tecnico_id) }
+    if (desde)      { where += " AND DATE(et.fecha) >= ?";    params.push(desde) }
+    if (hasta)      { where += " AND DATE(et.fecha) <= ?";    params.push(hasta) }
+
+    const [rows] = await db.query(`
+      SELECT
+        et.tecnico_id,
+        u.nombre        AS tecnico_nombre,
+        DATE_FORMAT(et.fecha, '%Y-%m-%dT%H:%i:%s') AS fecha,
+        et.producto_id,
+        p.nombre        AS producto_nombre,
+        p.codigo,
+        p.unidad,
+        et.cantidad
+      FROM entregas_tecnicos et
+      JOIN usuarios  u ON u.id = et.tecnico_id
+      JOIN productos p ON p.id = et.producto_id
+      ${where}
+      ORDER BY et.fecha DESC
+    `, params)
+
+    // Agrupar por tecnico + minuto (cada lote entra casi al mismo tiempo)
+    const grupos = []
+    const mapa   = new Map()
+
+    for (const row of rows) {
+      const clave = `${row.tecnico_id}_${row.fecha.slice(0, 16)}` // YYYY-MM-DDTHH:MM
+      if (!mapa.has(clave)) {
+        const grupo = {
+          tecnico_id:      row.tecnico_id,
+          tecnico_nombre:  row.tecnico_nombre,
+          fecha:           row.fecha,
+          items:           [],
+          onus:            [],
+        }
+        mapa.set(clave, grupo)
+        grupos.push(grupo)
+      }
+      mapa.get(clave).items.push({
+        producto_id: row.producto_id,
+        nombre:      row.producto_nombre,
+        codigo:      row.codigo,
+        unidad:      row.unidad,
+        cantidad:    row.cantidad,
+      })
+    }
+
+    // Agregar ONUs por técnico en el rango
+    const onuWhere  = ["o.sede_id = ?"]
+    const onuParams = [sede_id]
+    if (tecnico_id) { onuWhere.push("o.tecnico_id = ?"); onuParams.push(tecnico_id) }
+
+    const [onus] = await db.query(`
+      SELECT o.id, o.tecnico_id, o.codigo_pon, p.nombre AS modelo
+      FROM onus o
+      JOIN productos p ON p.id = o.producto_id
+      WHERE ${onuWhere.join(" AND ")}
+        AND o.tecnico_id IS NOT NULL
+      ORDER BY o.id DESC
+    `, onuParams)
+
+    // Asignar ONUs al grupo del técnico más reciente (mejor aproximación sin tabla envio_onus)
+    for (const onu of onus) {
+      const grupo = grupos.find(g => g.tecnico_id === onu.tecnico_id)
+      if (grupo) grupo.onus.push({ id: onu.id, codigo_pon: onu.codigo_pon, modelo: onu.modelo })
+    }
+
+    res.json(grupos)
+  } catch (err) {
+    console.error("❌ getAsignaciones:", err.message)
     res.status(500).json({ message: err.message })
   }
 }

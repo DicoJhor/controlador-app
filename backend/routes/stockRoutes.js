@@ -4,7 +4,8 @@ const {
   verStock, entradaStock, salidaStock,
   salidaStockMultiple, statsControlador, auditoriaControlador,
   asignarCompleto, salidaDirecta,
-  inventarioTecnico, actividadHoyTecnico
+  inventarioTecnico, actividadHoyTecnico,
+  getAsignaciones
 } = require("../controllers/stockController")
 const verificarToken = require("../middleware/authMiddleware")
 const verificarRol   = require("../middleware/roleMiddleware")
@@ -19,5 +20,6 @@ router.get("/auditoria",         verificarToken, verificarRol("controlador"), au
 router.post("/asignar-completo", verificarToken, verificarRol("controlador", "admin"), asignarCompleto)
 router.get("/tecnico/:id/inventario",     verificarToken, verificarRol("controlador"), inventarioTecnico)
 router.get("/tecnico/:id/actividad-hoy",  verificarToken, verificarRol("controlador"), actividadHoyTecnico)
+router.get("/asignaciones",               verificarToken, verificarRol("controlador"), getAsignaciones)
 
 module.exports = router

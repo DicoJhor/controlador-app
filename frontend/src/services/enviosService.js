@@ -1,7 +1,7 @@
 import api from "./api"
 
 const enviosService = {
-  getAll:  ()       => api.get("/envios"),
+  getAll:  (params) => api.get("/envios", { params }),
   create:  (data)   => api.post("/envios", data),
 }
 

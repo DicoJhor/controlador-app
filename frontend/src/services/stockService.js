@@ -11,6 +11,7 @@ const stockService = {
   asignarCompleto:         (data) => api.post("/stock/asignar-completo", data),
   getTecnicoInventario:   (id) => api.get(`/stock/tecnico/${id}/inventario`),
   getTecnicoActividadHoy: (id) => api.get(`/stock/tecnico/${id}/actividad-hoy`),
+  getAsignaciones: (params) => api.get("/stock/asignaciones", { params }),
 }
 
 export default stockService

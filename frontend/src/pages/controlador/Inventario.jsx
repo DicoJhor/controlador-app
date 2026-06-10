@@ -612,16 +612,31 @@ export default function CtrlInventario() {
     if (!envioForm.guia.trim())           return setEnvioError("Ingresá el número de guía.");
     if (!envioForm.fecha_envio)           return setEnvioError("Ingresá la fecha de envío.");
     if (envioForm.productos.length === 0) return setEnvioError("Agregá al menos un producto.");
-    for (const p of envioForm.productos) {
+  for (const p of envioForm.productos) {
+    if (p.es_onu && sedeId !== 2) {
+      const selCount = (onusSeleccionadasEnvio[p.producto_id] ?? []).length;
+      if (selCount === 0) return setEnvioError(`Seleccioná al menos una ONU de "${p.nombre}".`);
+    } else {
       if (!p.cantidad || p.cantidad <= 0)  return setEnvioError(`Cantidad inválida en "${p.nombre}".`);
       if (p.cantidad > p.stock_disponible) return setEnvioError(`Stock insuficiente para "${p.nombre}". Disponible: ${p.stock_disponible}.`);
     }
+  }
     setSaving(true);
     try {
       const { default: enviosService } = await import("../../services/enviosService");
       const productosNormales = envioForm.productos
         .filter(p => !p.es_onu || sedeId === 2)
         .map(p => ({ producto_id: p.producto_id, cantidad: p.cantidad }))
+
+      // Para ONUs de sede no-central: agregar una entrada por producto con cantidad = seleccionadas
+      const productosOnu = sedeId !== 2
+        ? envioForm.productos
+            .filter(p => p.es_onu)
+            .map(p => ({
+              producto_id: p.producto_id,
+              cantidad: (onusSeleccionadasEnvio[p.producto_id] ?? []).length,
+            }))
+        : []
 
       const onuIds = sedeId !== 2
         ? Object.values(onusSeleccionadasEnvio).flat()
@@ -632,7 +647,7 @@ export default function CtrlInventario() {
         guia:        envioForm.guia,
         comentario:  envioForm.comentario,
         fecha_envio: envioForm.fecha_envio,
-        productos:   productosNormales,
+        productos:   [...productosNormales, ...productosOnu],  // ← merged
         onu_ids:     onuIds,
       });
       const data = await stockService.getStock();

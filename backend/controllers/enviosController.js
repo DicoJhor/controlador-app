@@ -41,17 +41,41 @@ exports.crearEnvio = async (req, res) => {
         if (varianteSede.cantidad < item.cantidad)
           return res.status(400).json({ message: `Stock insuficiente para variante ${varianteSede.genero} - ${varianteSede.talla}. Disponible en sede: ${varianteSede.cantidad}` })
       } else {
-        const [[stockSede]] = await conn.query(
-          `SELECT ss.cantidad, p.nombre
-           FROM stock_sede ss
-           JOIN productos p ON p.id = ss.producto_id
-           WHERE ss.sede_id = ? AND ss.producto_id = ?`,
-          [sede_origen_id, item.producto_id]
+        const [[prod]] = await conn.query(
+          "SELECT categoria FROM productos WHERE id = ?", [item.producto_id]
         )
-        if (!stockSede)
-          return res.status(404).json({ message: `Producto no encontrado en tu sede (id: ${item.producto_id})` })
-        if (stockSede.cantidad < item.cantidad)
-          return res.status(400).json({ message: `Stock insuficiente para "${stockSede.nombre}". Disponible en sede: ${stockSede.cantidad}` })
+        // ONUs de sedes no-centrales: el stock se valida por onu_ids, no por cantidad numérica
+        const esOnuNocentral = prod?.categoria === "onu" && sede_origen_id !== 2
+        if (!esOnuNocentral) {
+          const [[stockSede]] = await conn.query(
+            `SELECT ss.cantidad, p.nombre
+             FROM stock_sede ss
+             JOIN productos p ON p.id = ss.producto_id
+             WHERE ss.sede_id = ? AND ss.producto_id = ?`,
+            [sede_origen_id, item.producto_id]
+          )
+          if (!stockSede)
+            return res.status(404).json({ message: `Producto no encontrado en tu sede (id: ${item.producto_id})` })
+          if (stockSede.cantidad < item.cantidad)
+            return res.status(400).json({ message: `Stock insuficiente para "${stockSede.nombre}". Disponible en sede: ${stockSede.cantidad}` })
+        }
+      }
+    }
+
+    // ── VALIDAR que onu_ids coincide con cantidad declarada ──
+    if (onu_ids.length > 0 && sede_origen_id !== 2) {
+      let totalOnuEsperadas = 0
+      for (const item of productos) {
+        const [[prod]] = await conn.query(
+          "SELECT categoria FROM productos WHERE id = ?", [item.producto_id]
+        )
+        if (prod?.categoria === "onu") totalOnuEsperadas += item.cantidad
+      }
+      if (onu_ids.length !== totalOnuEsperadas) {
+        await conn.rollback()
+        return res.status(400).json({
+          message: `Cantidad de ONUs no coincide. Esperadas: ${totalOnuEsperadas}, recibidas: ${onu_ids.length}`
+        })
       }
     }
 
@@ -161,23 +185,47 @@ exports.crearEnvio = async (req, res) => {
 
     // Mover ONUs seleccionadas (solo sedes no centrales)
     if (onu_ids.length > 0) {
-      const placeholders = onu_ids.map(() => "?").join(",")
+      const onuIdsParsed = onu_ids.map(id => Number(id))
+      const placeholders = onuIdsParsed.map(() => "?").join(",")
       const [onusVerificadas] = await conn.query(
         `SELECT id FROM onus 
          WHERE id IN (${placeholders}) 
          AND sede_id = ? 
          AND tecnico_id IS NULL 
          AND activacion_id IS NULL`,
-        [...onu_ids, sede_origen_id]
+        [...onuIdsParsed, sede_origen_id]
       )
       if (onusVerificadas.length !== onu_ids.length) {
         await conn.rollback()
         return res.status(400).json({ message: "Algunas ONUs no están disponibles en tu sede." })
       }
+
+      // ✅ Leer producto_id ANTES de mover
+      const [onusMovidas] = await conn.query(
+        `SELECT producto_id, COUNT(*) as cantidad
+         FROM onus WHERE id IN (${placeholders})
+         GROUP BY producto_id`,
+        [...onuIdsParsed]
+      )
+
       await conn.query(
         `UPDATE onus SET sede_id = ? WHERE id IN (${placeholders})`,
-        [sede_id, ...onu_ids]
+        [sede_id, ...onuIdsParsed]
       )
+
+      // ✅ Sincronizar stock_sede origen y destino
+      for (const { producto_id, cantidad } of onusMovidas) {
+        await conn.query(
+          `UPDATE stock_sede SET cantidad = cantidad - ? WHERE sede_id = ? AND producto_id = ?`,
+          [cantidad, sede_origen_id, producto_id]
+        )
+        await conn.query(
+          `INSERT INTO stock_sede (sede_id, producto_id, cantidad)
+           VALUES (?, ?, ?)
+           ON DUPLICATE KEY UPDATE cantidad = cantidad + VALUES(cantidad)`,
+          [sede_id, producto_id, cantidad]
+        )
+      }
     }
 
     await conn.commit()
@@ -194,14 +242,30 @@ exports.crearEnvio = async (req, res) => {
 // LISTAR ENVÍOS
 exports.obtenerEnvios = async (req, res) => {
   try {
+    const sede_origen_id = req.user.sede_id
+    const { sede_destino_id, estado, desde, hasta } = req.query
+
+    let where = "WHERE e.sede_origen_id = ?"
+    const params = [sede_origen_id]
+
+    if (sede_destino_id) { where += " AND e.sede_id = ?";             params.push(sede_destino_id) }
+    if (estado)          { where += " AND e.estado = ?";              params.push(estado) }
+    if (desde)           { where += " AND DATE(e.fecha_envio) >= ?";  params.push(desde) }
+    if (hasta)           { where += " AND DATE(e.fecha_envio) <= ?";  params.push(hasta) }
+
     const [rows] = await db.query(
-      `SELECT e.id, e.guia, e.comentario, e.fecha_envio, e.created_at,
-              s.nombre AS sede_nombre,
-              u.nombre AS usuario_nombre
+      `SELECT e.id, e.guia, e.comentario, e.fecha_envio, e.estado,
+              e.fecha_recepcion, e.created_at,
+              s.nombre  AS sede_destino_nombre,
+              so.nombre AS sede_origen_nombre,
+              u.nombre  AS usuario_nombre
        FROM envios e
-       JOIN sedes s ON s.id = e.sede_id
+       JOIN sedes s  ON s.id  = e.sede_id
+       JOIN sedes so ON so.id = e.sede_origen_id
        JOIN usuarios u ON u.id = e.usuario_id
-       ORDER BY e.created_at DESC`
+       ${where}
+       ORDER BY e.fecha_envio DESC`,
+      params
     )
 
     for (const envio of rows) {
@@ -209,13 +273,34 @@ exports.obtenerEnvios = async (req, res) => {
         `SELECT ed.producto_id, ed.cantidad, ed.variante_id,
                 p.nombre, p.codigo, p.unidad,
                 pv.talla, pv.genero
-        FROM envio_detalles ed
-        JOIN productos p ON p.id = ed.producto_id
-        LEFT JOIN producto_variantes pv ON pv.id = ed.variante_id
-        WHERE ed.envio_id = ?`,
+         FROM envio_detalles ed
+         JOIN productos p ON p.id = ed.producto_id
+         LEFT JOIN producto_variantes pv ON pv.id = ed.variante_id
+         WHERE ed.envio_id = ?`,
         [envio.id]
       )
       envio.productos = detalles
+
+      // ONUs: las que tienen sede_id = destino y fueron movidas en este envío
+      // Como no hay tabla envio_onus, mostramos las ONUs actuales en sede destino
+      // asociadas a los productos de este envío
+      const productoIds = detalles.map(d => d.producto_id)
+      if (productoIds.length > 0) {
+        const placeholders = productoIds.map(() => "?").join(",")
+        const [onus] = await db.query(
+          `SELECT o.id, o.codigo_pon, p.nombre AS modelo
+           FROM onus o
+           JOIN productos p ON p.id = o.producto_id
+           WHERE o.sede_id = ?
+             AND o.producto_id IN (${placeholders})
+             AND o.tecnico_id IS NULL
+             AND o.activacion_id IS NULL`,
+          [envio.sede_id, ...productoIds]
+        )
+        envio.onus = onus
+      } else {
+        envio.onus = []
+      }
     }
 
     res.json(rows)
